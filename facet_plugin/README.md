@@ -4,8 +4,7 @@ Plate-solves astro photos Facet scans (or you backfill) and writes the identifie
 
 ## Install
 
-1. Copy or junction `facet_plugin/astro_id.py` into `<facet>/plugins/` (a junction keeps it current):
-   `New-Item -ItemType Junction` works for folders only, so for one file use a copy or `New-Item -ItemType HardLink` / `SymbolicLink`.
+1. Copy `facet_plugin/astro_id.py` into `<facet>/plugins/` (a junction cannot link a single file; use a copy, or `New-Item -ItemType SymbolicLink` / `HardLink` to keep it current).
 2. Add `plugins/astro_id.py` to `<facet>/.git/info/exclude` so it never ships.
 3. Enable it in the scoring config OVERRIDE file (`%LOCALAPPDATA%\Facet\config\scoring_config.json`):
 
