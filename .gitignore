@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+# never commit photos, outputs, per-folder settings or downloaded catalogs
+*.jpg
+*.JPG
+*.jpeg
+*.arw
+*.ARW
+*.fits
+*-annotated/
+astro-id.json
+astro-id-report.csv
+*.bsp
+hip_main.dat
+dev-notes/

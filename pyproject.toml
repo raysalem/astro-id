@@ -1,0 +1,37 @@
+[project]
+name = "astro-id"
+version = "0.1.0"
+description = "Plate-solve night-sky photos and name the objects in them, with a confidence score per object."
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Ray Salem" }]
+requires-python = ">=3.12"
+dependencies = [
+    "astropy>=7",
+    "numpy>=2",
+    "pillow>=11",
+    "rawpy>=0.28.0",
+    "requests>=2.32",
+    "scipy>=1.14",
+    "skyfield>=1.49",
+    "tzdata>=2026.6",
+]
+
+[project.scripts]
+astro-id = "astro_id.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.10.7,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-root = ""
+module-name = "astro_id"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
