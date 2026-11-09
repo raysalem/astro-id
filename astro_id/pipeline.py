@@ -48,16 +48,20 @@ def empty_frame(path: Path) -> dict:
 
 
 def process(path: Path, offset_flag, tol_flag, site_flag, overlay_dir: Path | None, make_overlay: bool,
-            use_fallback: bool) -> tuple[dict, list[dict]]:
+            use_fallback: bool, time_flag: str | None = None,
+            tz_flag: str | None = None) -> tuple[dict, list[dict]]:
     fr = empty_frame(path)
     rows: list[dict] = []
     try:
-        fc = cfgmod.resolve(path.parent, offset_flag, tol_flag, site_flag)
+        fc = cfgmod.resolve(path.parent, offset_flag, tol_flag, site_flag, time_flag, tz_flag)
         exif = read_exif(path)
         fr["time_tolerance_min"] = int(fc.tolerance_min) if float(fc.tolerance_min).is_integer() else fc.tolerance_min
         fr["time_source"] = fc.time_source
         t_true = None
-        if exif.datetime_original is not None:
+        if fc.time_override is not None:
+            t_true = fc.time_override
+            fr["true_time"] = iso(t_true)
+        elif exif.datetime_original is not None:
             t_true = true_time(exif.datetime_original, fc.offset, fc.timezone)
             fr["true_time"] = iso(t_true)
         log.info("%s: true time %s (offset %s, %s)", path.name, fr["true_time"], format_offset(fc.offset), fc.time_source)

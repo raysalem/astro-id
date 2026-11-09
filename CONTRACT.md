@@ -6,6 +6,7 @@ Fixed before the engine and the plugin are built in parallel. Change it only wit
 
 ```
 astro-id solve <file-or-folder> [--min-confidence 65] [--offset +2559d11h08m]
+               [--time ISO8601 [--timezone IANA]]
                [--time-tolerance 15m] [--site lat,lon[,elev_m]]
                [--overlay-dir DIR] [--json] [--no-overlay] [--no-fallback]
 astro-id site <folder>          # interactive: Google Maps pin -> astro-id.json
@@ -41,7 +42,7 @@ astro-id site <folder>          # interactive: Google Maps pin -> astro-id.json
   "center_ra_deg": 300.1, "center_dec_deg": 40.2, "fov_deg": [84.0, 62.0],
   "true_time": "2026-11-07T20:34:00-08:00",
   "time_tolerance_min": 15,
-  "time_source": "config" | "exif",
+  "time_source": "config" | "exif" | "facet",
   "best_fit_time": "2026-11-07T20:36:00-08:00" | null,
   "time_flag": null | "best_fit_outside_tolerance",
   "overlay": "C:/abs/path/astro-annotated/DSC07610_astro.jpg" | null,
@@ -66,3 +67,10 @@ astro-id site <folder>          # interactive: Google Maps pin -> astro-id.json
 - Unsolved frame: `solved: false`, `objects: []`, `error` set.
 
 A stub with realistic values lives at `tests/fixtures/contract_stub.json`.
+
+## v1 additions (non-breaking, Facet as source of truth)
+
+- `--time <ISO-8601>` (single file only; a folder is a usage error, exit 2): the true local time of that frame, overriding EXIF + offset. With an offset (`2026-11-07T20:34:00-08:00`) it is used as is; a naive value is read in `--timezone`, else the folder's `astro-id.json` timezone, else the zone inferred from the site, else the system zone. The result carries `"time_source": "facet"`; time-dependent IDs are not capped (the time is trusted).
+- `--site lat,lon` without elevation looks it up on USGS EPQS (cached per coordinate rounded to 3 decimals); on failure 0 m is used and a warning is logged.
+- Timezone: when `astro-id.json` has no `timezone` (absent or null) it is inferred from the site lat/lon (timezonefinder), else the system zone. `astro-id site` writes the inferred zone, never null.
+- Consumers must treat unknown `time_source` values as opaque strings.

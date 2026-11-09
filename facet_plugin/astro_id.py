@@ -55,6 +55,8 @@ DEFAULTS = {
     "settle_s": 3.0,       # wait so a scan batch can accumulate before a job starts
     "batch_min": 4,        # this many pending frames in one folder -> one folder run
     "db_path": None,
+    # "time_tolerance_min": 15 -- when set, passed as --time-tolerance (else astro-id.json / engine default)
+    # "timezone": "America/Los_Angeles" -- when set, passed as --timezone with a naive Facet date
 }
 
 _cfg_override: dict | None = None
@@ -150,7 +152,7 @@ def map_results(requested: list[str], results: list[dict]) -> dict[str, dict]:
 
 # ----------------------------------------------------------------- engine ---
 
-def _run_engine(target: str, min_confidence: int, cfg: dict) -> list[dict]:
+def _run_engine(target: str, min_confidence: int, cfg: dict, extra: list[str] | None = None) -> list[dict]:
     """Run ``astro-id solve <target> --json``; return the result frames.
 
     Raises EngineError on failure, timeout, bad JSON or contract != 1."""
@@ -159,6 +161,7 @@ def _run_engine(target: str, min_confidence: int, cfg: dict) -> list[dict]:
         raise EngineError("plugins.astro_id.engine is not configured")
     cmd = [cfg.get("uv") or DEFAULT_UV, "run", "--project", str(engine), "astro-id",
            "solve", target, "--json", "--min-confidence", str(int(min_confidence))]
+    cmd += list(extra or [])
     overlay = cfg.get("overlay_dir")
     if overlay:
         folder = target if os.path.isdir(target) else os.path.dirname(target)
@@ -271,6 +274,46 @@ def write_tags(conn, photo_path: str, tags: list[str]) -> tuple[list[str], list[
     return sorted(after - before), sorted(before - after)
 
 
+def facet_hints(conn, photo_path: str) -> dict:
+    """What Facet knows about one photo, as engine flags.
+
+    SITE: Facet GPS (manual or EXIF) > astro-id.json (engine) > nothing.
+    TIME: manual Facet date (date_manually_set=1) > astro-id.json offset on EXIF (engine) > raw EXIF.
+    A non-manual date_taken is the camera's (wrong) clock, so it is never passed.
+    date_taken is a naive camera-local walltime ('YYYY:MM:DD HH:MM:SS', see utils/capture_dates.py);
+    the engine reads it in the folder's timezone (astro-id.json, else inferred from the site)."""
+    row = conn.execute("SELECT gps_latitude, gps_longitude, date_taken, date_manually_set "
+                       "FROM photos WHERE path = ?", (photo_path,)).fetchone()
+    hints: dict = {"site": None, "time": None}
+    if not row:
+        return hints
+    lat, lon, taken, manual = row
+    if isinstance(lat, (int, float)) and isinstance(lon, (int, float))             and -90 <= lat <= 90 and -180 <= lon <= 180 and not (lat == 0 and lon == 0):
+        hints["site"] = f"{lat:.6f},{lon:.6f}"
+    if manual:
+        try:
+            from utils.capture_dates import parse_capture_date
+            dt = parse_capture_date(taken)
+        except Exception:
+            dt = None
+        if dt is not None:
+            hints["time"] = dt.strftime("%Y-%m-%dT%H:%M:%S")
+    return hints
+
+
+def engine_flags(hints: dict, cfg: dict) -> list[str]:
+    flags: list[str] = []
+    if hints.get("site"):
+        flags += ["--site", hints["site"]]
+    if hints.get("time"):
+        flags += ["--time", hints["time"]]
+        if cfg.get("timezone"):
+            flags += ["--timezone", str(cfg["timezone"])]
+    if cfg.get("time_tolerance_min") is not None:
+        flags += ["--time-tolerance", str(cfg["time_tolerance_min"])]
+    return flags
+
+
 def _open_db(db_path: str):
     import sqlite3
     conn = sqlite3.connect(db_path, timeout=30)
@@ -285,41 +328,58 @@ def process_paths(paths: list[str], cfg: dict, db_path: str, min_confidence: int
 
     Groups by folder; a folder with >= batch_min frames is solved as one folder run."""
     mc = int(cfg.get("min_confidence", 65) if min_confidence is None else min_confidence)
-    folders: dict[str, list[str]] = {}
-    for p in paths:
-        folders.setdefault(os.path.dirname(p), []).append(p)
     changes: dict = {}
     conn = None
     try:
-        for folder, group in folders.items():
-            jobs = ([(folder, group)] if len(group) >= int(cfg.get("batch_min", 4))
-                    else [(p, [p]) for p in group])
-            for target, reqs in jobs:
-                try:
-                    results = _run_engine(target, mc, cfg)
-                except EngineError as ex:
-                    logger.error("astro_id: %s", ex)
+        conn = _open_db(db_path)
+        hints = {}
+        for p in paths:
+            try:
+                hints[p] = facet_hints(conn, p)
+            except Exception:
+                logger.exception("astro_id: cannot read Facet location/time for %s", p)
+                hints[p] = {"site": None, "time": None}
+        # Group by (folder, site): a folder run applies one --site to every frame, and --time is
+        # per file, so only photos sharing folder+site and with no own --time can batch. Else per file.
+        groups: dict = {}
+        for p in paths:
+            groups.setdefault((os.path.dirname(p), hints[p]["site"]), []).append(p)
+        jobs = []
+        for (folder, site), group in groups.items():
+            plain = [p for p in group if not hints[p]["time"]]
+            if len(plain) >= int(cfg.get("batch_min", 4)):
+                jobs.append((folder, plain, engine_flags({"site": site}, cfg)))
+                solo = [p for p in group if hints[p]["time"]]
+            else:
+                solo = group
+            jobs += [(p, [p], engine_flags(hints[p], cfg)) for p in solo]
+        for target, reqs, flags in jobs:
+            try:
+                results = _run_engine(target, mc, cfg, flags)
+            except EngineError as ex:
+                logger.error("astro_id: %s", ex)
+                continue
+            mapped = map_results(reqs, results)
+            for p in reqs:
+                r = mapped.get(p)
+                if r is None:
+                    logger.warning("astro_id: no engine result for %s", p)
                     continue
-                mapped = map_results(reqs, results)
-                for p in reqs:
-                    r = mapped.get(p)
-                    if r is None:
-                        logger.warning("astro_id: no engine result for %s", p)
+                try:
+                    if not conn.execute("SELECT 1 FROM photos WHERE path = ?", (p,)).fetchone():
+                        logger.warning("astro_id: %s is not in the Facet DB", p)
                         continue
-                    try:
-                        conn = conn or _open_db(db_path)
-                        if not conn.execute("SELECT 1 FROM photos WHERE path = ?", (p,)).fetchone():
-                            logger.warning("astro_id: %s is not in the Facet DB", p)
-                            continue
-                        want = desired_tags(r, mc)
-                        if dry_run:
-                            keep = set(plan_tags(conn, p, want))
-                            have = set(current_tags(conn, p))
-                            changes[p] = (sorted(keep - have), sorted(have - keep))
-                        else:
-                            changes[p] = write_tags(conn, p, want)
-                    except Exception:
-                        logger.exception("astro_id: failed writing tags for %s", p)
+                    want = desired_tags(r, mc)
+                    if dry_run:
+                        keep = set(plan_tags(conn, p, want))
+                        have = set(current_tags(conn, p))
+                        changes[p] = (sorted(keep - have), sorted(have - keep))
+                    else:
+                        changes[p] = write_tags(conn, p, want)
+                except Exception:
+                    logger.exception("astro_id: failed writing tags for %s", p)
+    except Exception:
+        logger.exception("astro_id: cannot open the Facet database %s", db_path)
     finally:
         if conn is not None:
             conn.close()

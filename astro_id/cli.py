@@ -20,7 +20,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="report cut used by consumers (default 65); JSON always lists every object")
     s.add_argument("--offset", help="camera clock offset added to EXIF time, e.g. +2559d11h08m")
     s.add_argument("--time-tolerance", help="time uncertainty, e.g. 15m (default 15m or astro-id.json)")
-    s.add_argument("--site", help="lat,lon[,elev_m]")
+    s.add_argument("--site", help="lat,lon[,elev_m] (elevation is looked up on USGS EPQS when omitted)")
+    s.add_argument("--time", help="true local time of a single photo, ISO-8601 (overrides EXIF + offset; "
+                                  "time_source becomes 'facet')")
+    s.add_argument("--timezone", help="IANA zone for a naive --time (default: astro-id.json timezone, else system)")
     s.add_argument("--overlay-dir", help="where overlays and the CSV report go (default: <folder>-annotated)")
     s.add_argument("--json", action="store_true", help="print the contract JSON to stdout")
     s.add_argument("--no-overlay", action="store_true")
@@ -78,6 +81,10 @@ def cmd_solve(args) -> int:
             parse_tolerance(args.time_tolerance)
         if args.site:
             cfgmod.parse_site(args.site)
+        if args.time:
+            if target.is_dir():
+                raise ValueError("--time applies to a single file, not a folder")
+            cfgmod.parse_time_flag(args.time, args.timezone)
     except ValueError as exc:
         log.error("%s", exc)
         return 2
@@ -94,7 +101,7 @@ def cmd_solve(args) -> int:
     for i, f in enumerate(files, 1):
         log.info("[%d/%d] %s", i, len(files), f.name)
         fr, rows = process(f, args.offset, args.time_tolerance, args.site, overlay_dir, not args.no_overlay,
-                           not args.no_fallback)
+                           not args.no_fallback, args.time, args.timezone)
         results.append(fr)
         od = overlay_dir or default_overlay_dir(f.parent)
         rows_by_dir.setdefault(od, []).extend(rows)

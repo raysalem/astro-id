@@ -138,7 +138,7 @@ def _check_contract(doc: dict):
         assert set(fr.keys()) == frame_keys
         assert fr["solver"] in ("astap", "astrometry.net", None)
         assert fr["grade"] in ("A", "B", "C", None)
-        assert fr["time_source"] in ("config", "exif")
+        assert fr["time_source"] in ("config", "exif", "facet")
         assert fr["time_flag"] in (None, "best_fit_outside_tolerance")
         assert isinstance(fr["stars"], int)
         if not fr["solved"]:

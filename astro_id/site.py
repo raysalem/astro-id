@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import unquote
 
-from .config import CONFIG_NAME, Site, load_config, site_from_dict
+from .config import CONFIG_NAME, Site, infer_timezone, load_config, site_from_dict
 from .timeutil import parse_offset
 
 DEFAULT_SITE = Site(32.6064, -116.3239, 1100.0, "Tierra del Sol")
@@ -96,7 +96,7 @@ def fetch_elevation(lat: float, lon: float, timeout: int = 20) -> float | None:
         return None
 
 
-def merge_config(existing: dict, site: Site, offset: str | None = None) -> dict:
+def merge_config(existing: dict, site: Site, offset: str | None = None, timezone: str | None = None) -> dict:
     """New site into an existing astro-id.json dict, keeping clock_offset / tolerance / timezone."""
     out = dict(existing)
     out["site"] = {"name": site.name, "lat": round(site.lat, 6), "lon": round(site.lon, 6),
@@ -104,7 +104,11 @@ def merge_config(existing: dict, site: Site, offset: str | None = None) -> dict:
     if "clock_offset" not in out:
         out["clock_offset"] = offset or ""
     out.setdefault("time_tolerance_min", 15)
-    out.setdefault("timezone", None)
+    if not out.get("timezone"):  # never null: inferred from the site, else omitted (= system local zone)
+        out.pop("timezone", None)
+        tz = timezone or infer_timezone(site.lat, site.lon)
+        if tz:
+            out["timezone"] = tz
     order = ["clock_offset", "time_tolerance_min", "timezone", "site"]
     return {k: out[k] for k in order if k in out} | {k: v for k, v in out.items() if k not in order}
 

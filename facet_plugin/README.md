@@ -43,6 +43,17 @@ cd C:\Users\raysa\facet-wintest
 
 Drop `--dry-run` to write. `--db`, `--config` override the env. Note: a folder run solves every frame in that folder, and only photos that are in Facet's DB receive tags.
 
+## Location and time: Facet is the source of truth
+
+Per photo the plugin reads `gps_latitude/gps_longitude` and `date_taken` + `date_manually_set` from Facet's DB and passes them to the engine:
+
+| Field | Order of precedence |
+|---|---|
+| Site | Facet GPS (set in Set location, or EXIF) > `astro-id.json` site > none (engine runs without a site, time-dependent IDs are capped) |
+| Time | Facet manual date (`date_manually_set=1`, the capture-date shift) > `astro-id.json` `clock_offset` applied to EXIF > raw EXIF (capped) |
+
+`--site lat,lon` is passed without elevation (the engine looks it up on USGS). A non-manual `date_taken` is the camera's wrong clock and is never passed. `date_taken` is a naive camera-local walltime (`YYYY:MM:DD HH:MM:SS`, no timezone); it is sent as a naive `--time`, which the engine reads in the folder's timezone (`astro-id.json`, else inferred from the site), or the plugin's `timezone` key if set. Folder batching only groups photos in the same folder with the same Facet site and no manual date; everything else runs per file. Optional plugin keys: `time_tolerance_min` (passed as `--time-tolerance`), `timezone`.
+
 ## Tag semantics
 
 - Stored in `photo_manual_tags` as `source='user', created_by='astro-id'` (that table's CHECK only allows `user`/`xmp`; `created_by='astro-id'` is the ownership marker).

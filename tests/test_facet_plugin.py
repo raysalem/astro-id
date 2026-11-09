@@ -55,11 +55,16 @@ def db(tmp_path):
 
 @pytest.fixture
 def engine(monkeypatch):
-    calls = []
+    class Calls(list):
+        extras = None
+    calls = Calls()
 
-    def fake(target, mc, cfg):
+    def fake(target, mc, cfg, extra=None):
         calls.append((target, mc))
+        fake.extras.append(extra)
         return ap.parse_engine_output(json.dumps(stub()))
+    fake.extras = []
+    calls.extras = fake.extras
     monkeypatch.setattr(ap, "_run_engine", fake)
     return calls
 
@@ -151,7 +156,7 @@ def test_contract_mismatch_rejected(db):
 
 
 def test_contract_mismatch_writes_nothing(db, monkeypatch):
-    def bad(target, mc, cfg):
+    def bad(target, mc, cfg, extra=None):
         d = stub(); d["contract"] = 9
         return ap.parse_engine_output(json.dumps(d))
     monkeypatch.setattr(ap, "_run_engine", bad)
@@ -211,3 +216,79 @@ def test_worker_end_to_end(db, engine):
             break
         time.sleep(0.1)
     assert "cygnus" in astro_tags(db, P1)
+
+
+# ---- Facet as source of truth for location and time ----
+
+def set_photo(db, path, lat=None, lon=None, taken=None, manual=0):
+    c = sqlite3.connect(db)
+    c.execute("UPDATE photos SET gps_latitude=?, gps_longitude=?, date_taken=?, date_manually_set=? WHERE path=?",
+              (lat, lon, taken, manual, path))
+    c.commit(); c.close()
+
+
+def flags(engine):
+    return engine.extras[-1]
+
+
+def test_manual_date_wins_and_is_passed_as_time(db, engine):
+    set_photo(db, P1, taken="2026:11:07 20:34:00", manual=1)
+    run(db, [P1])
+    f = flags(engine)
+    assert f[f.index("--time") + 1] == "2026-11-07T20:34:00"
+    assert "--site" not in f                      # no GPS, no json from the plugin: engine decides
+
+
+def test_non_manual_date_is_never_passed(db, engine):
+    set_photo(db, P1, taken="2026:11:07 20:34:00", manual=0)   # camera clock = wrong; json offset path
+    run(db, [P1])
+    assert "--time" not in flags(engine)
+
+
+def test_facet_gps_passed_as_site_manual_or_exif(db, engine):
+    set_photo(db, P1, lat=32.6064, lon=-116.3239)               # EXIF GPS also counts
+    run(db, [P1])
+    f = flags(engine)
+    assert f[f.index("--site") + 1] == "32.606400,-116.323900"
+
+
+def test_no_gps_no_manual_date_runs_bare(db, engine):
+    run(db, [P1])
+    assert flags(engine) == []
+
+
+def test_zero_zero_gps_ignored(db, engine):
+    set_photo(db, P1, lat=0.0, lon=0.0)
+    run(db, [P1])
+    assert "--site" not in flags(engine)
+
+
+def test_timezone_and_tolerance_from_plugin_config(db, engine):
+    set_photo(db, P1, taken="2026:11:07 20:34:00", manual=1)
+    ap.configure({"engine": "X", "batch_min": 99, "timezone": "America/Los_Angeles",
+                  "time_tolerance_min": 10}, db)
+    run(db, [P1])
+    f = flags(engine)
+    assert f[f.index("--timezone") + 1] == "America/Los_Angeles"
+    assert f[f.index("--time-tolerance") + 1] == "10"
+
+
+def test_batching_only_groups_same_site_without_own_time(db, engine):
+    ap.configure({"engine": "X", "batch_min": 2}, db)
+    set_photo(db, P1, lat=1.0, lon=2.0)
+    set_photo(db, P2, lat=1.0, lon=2.0)
+    set_photo(db, P3, lat=5.0, lon=6.0)
+    run(db, [P1, P2, P3])
+    targets = [t for t, _ in engine]
+    assert targets.count("C:/photos/night") == 1 and P3 in targets      # P1+P2 batch, P3 alone
+    assert "--site" in engine.extras[0] and engine.extras[0][engine.extras[0].index("--site") + 1] == "1.000000,2.000000"
+
+
+def test_photo_with_manual_time_never_in_folder_run(db, engine):
+    ap.configure({"engine": "X", "batch_min": 2}, db)
+    set_photo(db, P2, taken="2026:11:08 05:11:00", manual=1)
+    run(db, [P1, P2, P3])
+    targets = [t for t, _ in engine]
+    assert P2 in targets and "C:/photos/night" in targets
+    i = targets.index(P2)
+    assert "--time" in engine.extras[i]

@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
-from .timeutil import parse_offset, parse_tolerance
+from .timeutil import get_tz, parse_offset, parse_tolerance
 
+log = logging.getLogger("astro_id")
 CONFIG_NAME = "astro-id.json"
 DEFAULT_TOLERANCE_MIN = 15.0
 
@@ -26,8 +28,9 @@ class FrameConfig:
     tolerance_min: float
     timezone: str | None
     site: Site | None
-    time_source: str  # "config" | "exif"
+    time_source: str  # "config" | "exif" | "facet"
     config_path: Path | None
+    time_override: datetime | None = None  # --time: true local time of this frame (Facet's date)
 
 
 def find_config(folder: Path) -> Path | None:
@@ -69,7 +72,55 @@ def site_from_dict(d: dict | None) -> Site | None:
     return Site(float(d["lat"]), float(d["lon"]), float(d.get("elev_m") or 0.0), d.get("name"))
 
 
-def resolve(folder: Path, offset_flag: str | None, tol_flag: str | None, site_flag: str | None) -> FrameConfig:
+_ELEV_CACHE: dict[tuple[float, float], float] = {}
+
+
+def site_with_elevation(site: Site) -> Site:
+    """Elevation from USGS EPQS (cached per rounded coordinate); 0 m on failure."""
+    from . import site as site_mod
+
+    key = (round(site.lat, 3), round(site.lon, 3))
+    if key not in _ELEV_CACHE:
+        elev = site_mod.fetch_elevation(site.lat, site.lon)
+        if elev is None:
+            log.warning("elevation lookup failed for %.4f,%.4f; using 0 m", site.lat, site.lon)
+            return Site(site.lat, site.lon, 0.0, site.name)  # failures are not cached
+        _ELEV_CACHE[key] = elev
+    return Site(site.lat, site.lon, _ELEV_CACHE[key], site.name)
+
+
+_TZ_CACHE: dict[tuple[float, float], str | None] = {}
+
+
+def infer_timezone(lat: float, lon: float) -> str | None:
+    """IANA zone name for a coordinate (timezonefinder, offline); None if unavailable."""
+    key = (round(lat, 2), round(lon, 2))
+    if key not in _TZ_CACHE:
+        try:
+            from timezonefinder import TimezoneFinder
+
+            _TZ_CACHE[key] = TimezoneFinder().timezone_at(lat=lat, lng=lon)
+        except Exception as exc:
+            log.warning("could not infer timezone for %.4f,%.4f: %s", lat, lon, exc)
+            _TZ_CACHE[key] = None
+    return _TZ_CACHE[key]
+
+
+def parse_time_flag(text: str, tz_name: str | None) -> datetime:
+    """ISO-8601 with offset, or naive + timezone name (else system local) -> aware datetime."""
+    try:
+        t = datetime.fromisoformat(str(text).strip().replace(" ", "T", 1).replace("Z", "+00:00"))
+    except ValueError:
+        raise ValueError(f"--time expects ISO-8601 like 2026-11-07T20:34:00-08:00, got {text!r}") from None
+    if t.tzinfo is None:
+        if tz_name and get_tz(tz_name) is None:
+            raise ValueError(f"unknown timezone {tz_name!r}")
+        t = t.replace(tzinfo=get_tz(tz_name)) if tz_name else t.astimezone()
+    return t
+
+
+def resolve(folder: Path, offset_flag: str | None, tol_flag: str | None, site_flag: str | None,
+            time_flag: str | None = None, tz_flag: str | None = None) -> FrameConfig:
     """Flags override the nearest astro-id.json."""
     cpath = find_config(folder)
     cfg = load_config(cpath)
@@ -77,12 +128,19 @@ def resolve(folder: Path, offset_flag: str | None, tol_flag: str | None, site_fl
     have_offset = offset_txt is not None and str(offset_txt).strip() != ""
     tol = parse_tolerance(tol_flag) if tol_flag is not None else float(cfg.get("time_tolerance_min", DEFAULT_TOLERANCE_MIN))
     site = parse_site(site_flag) if site_flag else site_from_dict(cfg.get("site"))
+    if site_flag and len([p for p in site_flag.split(",") if p.strip()]) == 2:
+        site = site_with_elevation(site)
+    # timezone: astro-id.json, else inferred from the site, else None (= system local zone)
+    tz_name = cfg.get("timezone") or (infer_timezone(site.lat, site.lon) if site else None)
+    t_over = parse_time_flag(time_flag, tz_flag or tz_name) if time_flag else None
     return FrameConfig(
         offset=parse_offset(offset_txt) if have_offset else timedelta(0),
         tolerance_min=tol,
-        timezone=cfg.get("timezone"),
+        timezone=tz_name,
         site=site,
         # a config file that states a clock_offset (even blank = camera clock is right) counts as config
-        time_source="config" if (offset_flag is not None or "clock_offset" in cfg) else "exif",
+        time_source="facet" if t_over else (
+            "config" if (offset_flag is not None or "clock_offset" in cfg) else "exif"),
         config_path=cpath,
+        time_override=t_over,
     )

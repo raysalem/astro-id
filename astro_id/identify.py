@@ -213,7 +213,7 @@ def identify(sol: Solution, t_true: datetime, tol_min: float, site: Site | None,
     bx, by, _ = bright_sources(sol)
     checks: dict = {}
     best_fit = None
-    cap = C.EXIF_TIME_CAP if time_source != "config" else None
+    cap = C.EXIF_TIME_CAP if time_source not in ("config", "facet") else None
     mid = len(times) // 2
     for name, key, kind, mag_fb in PLANETS:
         ra, dec, alt = body_positions(key, times, site)
