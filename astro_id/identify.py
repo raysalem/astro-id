@@ -36,6 +36,7 @@ class Obj:
     sep_deg: float | None = None  # planets/Moon: distance from prediction to nearest bright source
     mag: float | None = None
     figure: list[tuple[float, float, float, float]] = field(default_factory=list)  # constellation segments
+    figure_sky: list[tuple[float, float, float, float]] = field(default_factory=list)  # same segments, (ra,dec,ra,dec) deg
     level: int = TP.LEVEL_STAR
     ra: float | None = None
     dec: float | None = None
@@ -288,11 +289,15 @@ def identify(sol: Solution, t_true: datetime, tol_min: float, site: Site | None,
         n_matched = sum(1 for n, h in enumerate(figure_hips) if inf[n] and _star_seen(sol, h, matched, x[n], y[n], bx, by))
         conf = C.constellation_confidence(q, n_matched, len(figure_hips))
         figure = []
+        figure_sky = []
         for a, b in segs:
-            if a in pos and b in pos and np.isfinite(pos[a]).all() and np.isfinite(pos[b]).all():
-                figure.append((*pos[a], *pos[b]))
+            if a in pos and b in pos:
+                ia, ib = hip_index[a], hip_index[b]
+                figure_sky.append((float(cra[ia]), float(cdec[ia]), float(cra[ib]), float(cdec[ib])))
+                if np.isfinite(pos[a]).all() and np.isfinite(pos[b]).all():
+                    figure.append((*pos[a], *pos[b]))
         objs.append(Obj(data.CONSTELLATION_NAMES.get(abbr, abbr), "constellation", conf, None, None, figure=figure,
-                        level=TP.LEVEL_CONSTELLATION))
+                        level=TP.LEVEL_CONSTELLATION, figure_sky=figure_sky))
 
     # ---- asterisms (named star groups): >= 80% of the member stars in frame and matched
     for aname, ahips in TP.ASTERISMS.items():
@@ -317,7 +322,10 @@ def identify(sol: Solution, t_true: datetime, tol_min: float, site: Site | None,
         figure = [(float(x[a]), float(y[a]), float(x[b]), float(y[b])) for a, b in zip(order, order[1:])
                   if inf[a] and inf[b]]
         rr = np.radians(cra[ii])
+        figure_sky = [(float(cra[ii[a]]), float(cdec[ii[a]]), float(cra[ii[b]]), float(cdec[ii[b]]))
+                      for a, b in zip(order, order[1:])]
         objs.append(Obj(aname, "asterism", conf, float(np.mean(x[vis])), float(np.mean(y[vis])), figure=figure,
+                        figure_sky=figure_sky,
                         level=TP.LEVEL_ASTERISM, mag=float(np.min(cat.vmag[ii])), hips=tuple(members),
                         alt_min=None if amin is None else float(np.min(amin)),
                         ra=float(np.degrees(np.arctan2(np.mean(np.sin(rr)), np.mean(np.cos(rr)))) % 360),

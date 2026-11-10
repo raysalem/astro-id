@@ -1,17 +1,225 @@
-{"contract": 1, "results": [
- {"file": "C:/photos/night/IMG_0001.JPG", "solved": true, "solver": "astap", "grade": "A", "rms_px": 0.9, "stars": 151, "center_ra_deg": 305.2, "center_dec_deg": 41.0, "fov_deg": [84.0, 62.0], "true_time": "2026-11-07T20:34:00-08:00", "time_tolerance_min": 15, "time_source": "config", "best_fit_time": null, "time_flag": null, "overlay": "C:/photos/night-annotated/IMG_0001_astro.jpg", "error": null, "stack_of": null,
-  "objects": [
-   {"name": "Cygnus", "tag": "cygnus", "kind": "constellation", "confidence": 92, "tier": "high", "x": null, "y": null, "level": 1, "magnitude": null, "parent": null, "member_of": null, "taggable": true},
-   {"name": "Deneb", "tag": "deneb", "kind": "star", "confidence": 88, "tier": "high", "x": 4100.2, "y": 1500.7, "level": 5, "magnitude": 1.25, "parent": "cygnus", "member_of": null, "taggable": true},
-   {"name": "M31 Andromeda Galaxy", "tag": "m31 andromeda galaxy", "kind": "galaxy", "confidence": 71, "tier": "likely", "x": 8800.0, "y": 900.0, "level": 3, "magnitude": 3.44, "parent": "andromeda", "member_of": null, "taggable": true},
-   {"name": "M33 Triangulum Galaxy", "tag": "m33 triangulum galaxy", "kind": "galaxy", "confidence": 40, "tier": "candidate", "x": 9200.0, "y": 1800.0, "level": 3, "magnitude": 5.79, "parent": "triangulum", "member_of": null, "taggable": true}
-  ]},
- {"file": "C:/photos/night/IMG_0002.JPG", "solved": true, "solver": "astrometry.net", "grade": "B", "rms_px": 1.6, "stars": 44, "center_ra_deg": 150.0, "center_dec_deg": 15.0, "fov_deg": [84.0, 62.0], "true_time": "2026-11-08T05:11:00-08:00", "time_tolerance_min": 15, "time_source": "config", "best_fit_time": "2026-11-08T05:13:00-08:00", "time_flag": null, "overlay": null, "error": null, "stack_of": null,
-  "objects": [
-   {"name": "Jupiter", "tag": "jupiter", "kind": "planet", "confidence": 95, "tier": "high", "x": 5000.0, "y": 2600.0, "level": 2, "magnitude": -2.3, "parent": "leo", "member_of": null, "taggable": true},
-   {"name": "Mars", "tag": "mars", "kind": "planet", "confidence": 79, "tier": "likely", "x": 5300.0, "y": 2900.0, "level": 2, "magnitude": 1.2, "parent": "leo", "member_of": null, "taggable": true},
-   {"name": "Moon", "tag": "moon", "kind": "moon", "confidence": 66, "tier": "likely", "x": 6000.0, "y": 5800.0, "level": 2, "magnitude": -11.0, "parent": "leo", "member_of": null, "taggable": true}
-  ]},
- {"file": "C:/photos/night/IMG_0003.JPG", "solved": false, "solver": null, "grade": null, "rms_px": null, "stars": 3, "center_ra_deg": null, "center_dec_deg": null, "fov_deg": null, "true_time": "2026-11-08T05:44:00-08:00", "time_tolerance_min": 15, "time_source": "config", "best_fit_time": null, "time_flag": null, "overlay": null, "error": "too few stars (twilight)", "stack_of": null,
-  "objects": []}
-]}
+{
+ "contract": 1,
+ "results": [
+  {
+   "file": "C:/photos/night/IMG_0001.JPG",
+   "solved": true,
+   "solver": "astap",
+   "grade": "A",
+   "rms_px": 0.9,
+   "stars": 151,
+   "center_ra_deg": 305.2,
+   "center_dec_deg": 41.0,
+   "fov_deg": [
+    84.0,
+    62.0
+   ],
+   "true_time": "2026-11-07T20:34:00-08:00",
+   "time_tolerance_min": 15,
+   "time_source": "config",
+   "best_fit_time": null,
+   "time_flag": null,
+   "overlay": "C:/photos/night-annotated/IMG_0001_astro.jpg",
+   "error": null,
+   "stack_of": null,
+   "objects": [
+    {
+     "name": "Cygnus",
+     "tag": "cygnus",
+     "kind": "constellation",
+     "confidence": 92,
+     "tier": "high",
+     "x": null,
+     "y": null,
+     "level": 1,
+     "magnitude": null,
+     "parent": null,
+     "member_of": null,
+     "taggable": true
+    },
+    {
+     "name": "Deneb",
+     "tag": "deneb",
+     "kind": "star",
+     "confidence": 88,
+     "tier": "high",
+     "x": 4100.2,
+     "y": 1500.7,
+     "level": 5,
+     "magnitude": 1.25,
+     "parent": "cygnus",
+     "member_of": null,
+     "taggable": true
+    },
+    {
+     "name": "M31 Andromeda Galaxy",
+     "tag": "m31 andromeda galaxy",
+     "kind": "galaxy",
+     "confidence": 71,
+     "tier": "likely",
+     "x": 8800.0,
+     "y": 900.0,
+     "level": 3,
+     "magnitude": 3.44,
+     "parent": "andromeda",
+     "member_of": null,
+     "taggable": true
+    },
+    {
+     "name": "M33 Triangulum Galaxy",
+     "tag": "m33 triangulum galaxy",
+     "kind": "galaxy",
+     "confidence": 40,
+     "tier": "candidate",
+     "x": 9200.0,
+     "y": 1800.0,
+     "level": 3,
+     "magnitude": 5.79,
+     "parent": "triangulum",
+     "member_of": null,
+     "taggable": true
+    }
+   ],
+   "annotations": {
+    "version": 1,
+    "source": "astro-id",
+    "title": "Sky annotations",
+    "image": {
+     "width": 9504,
+     "height": 6336
+    },
+    "legend": "2026-11-07 20:34 PST ±15 min · ASTAP grade A · 143 stars",
+    "groups": [
+     {
+      "id": "star",
+      "label": "Stars",
+      "default": false
+     }
+    ],
+    "metrics": [
+     {
+      "key": "mag",
+      "label": "Max magnitude",
+      "min": -5,
+      "max": 8,
+      "step": 0.5,
+      "default": 6,
+      "direction": "max"
+     }
+    ],
+    "score": {
+     "label": "Confidence",
+     "min": 0,
+     "max": 100,
+     "default": 65
+    },
+    "items": [
+     {
+      "id": "deneb",
+      "label": "Deneb",
+      "group": "star",
+      "score": 95,
+      "shape": "point",
+      "x": 4100.5,
+      "y": 2300.2,
+      "r": 10,
+      "values": {
+       "mag": 1.25
+      }
+     }
+    ]
+   },
+   "solve_source": "jpg"
+  },
+  {
+   "file": "C:/photos/night/IMG_0002.JPG",
+   "solved": true,
+   "solver": "astrometry.net",
+   "grade": "B",
+   "rms_px": 1.6,
+   "stars": 44,
+   "center_ra_deg": 150.0,
+   "center_dec_deg": 15.0,
+   "fov_deg": [
+    84.0,
+    62.0
+   ],
+   "true_time": "2026-11-08T05:11:00-08:00",
+   "time_tolerance_min": 15,
+   "time_source": "config",
+   "best_fit_time": "2026-11-08T05:13:00-08:00",
+   "time_flag": null,
+   "overlay": null,
+   "error": null,
+   "stack_of": null,
+   "objects": [
+    {
+     "name": "Jupiter",
+     "tag": "jupiter",
+     "kind": "planet",
+     "confidence": 95,
+     "tier": "high",
+     "x": 5000.0,
+     "y": 2600.0,
+     "level": 2,
+     "magnitude": -2.3,
+     "parent": "leo",
+     "member_of": null,
+     "taggable": true
+    },
+    {
+     "name": "Mars",
+     "tag": "mars",
+     "kind": "planet",
+     "confidence": 79,
+     "tier": "likely",
+     "x": 5300.0,
+     "y": 2900.0,
+     "level": 2,
+     "magnitude": 1.2,
+     "parent": "leo",
+     "member_of": null,
+     "taggable": true
+    },
+    {
+     "name": "Moon",
+     "tag": "moon",
+     "kind": "moon",
+     "confidence": 66,
+     "tier": "likely",
+     "x": 6000.0,
+     "y": 5800.0,
+     "level": 2,
+     "magnitude": -11.0,
+     "parent": "leo",
+     "member_of": null,
+     "taggable": true
+    }
+   ],
+   "annotations": null,
+   "solve_source": "jpg"
+  },
+  {
+   "file": "C:/photos/night/IMG_0003.JPG",
+   "solved": false,
+   "solver": null,
+   "grade": null,
+   "rms_px": null,
+   "stars": 3,
+   "center_ra_deg": null,
+   "center_dec_deg": null,
+   "fov_deg": null,
+   "true_time": "2026-11-08T05:44:00-08:00",
+   "time_tolerance_min": 15,
+   "time_source": "config",
+   "best_fit_time": null,
+   "time_flag": null,
+   "overlay": null,
+   "error": "too few stars (twilight)",
+   "stack_of": null,
+   "objects": [],
+   "annotations": null,
+   "solve_source": null
+  }
+ ]
+}

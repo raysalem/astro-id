@@ -38,6 +38,8 @@ import os
 import queue
 import subprocess
 import sys
+import re
+import tempfile
 import threading
 import time
 
@@ -48,6 +50,9 @@ OWNER = "astro-id"            # created_by marker on rows this plugin owns
 SOURCE = "user"               # photo_manual_tags.source (CHECK allows 'user'/'xmp' only)
 TAG_SOLVED = "plate-solved"
 TAG_FAILED = "plate-solve failed"
+ANNOTATION_SOURCE = "astro-id"  # photo_annotations.source
+_UNSET = object()
+_annotation_skip_logged = False
 ASTRO_TAGS = frozenset({"astrophotography", "night sky", "stars", "milky way",
                         "aurora", "nebula"})
 DEFAULT_UV = r"C:\Users\raysa\.local\bin\uv.exe"
@@ -74,6 +79,13 @@ DEFAULTS = {
     # Catch-up after a scan: a facet.py process spawns a detached --pending run at exit.
     "catch_up": True,
     "log_path": None,          # default %LOCALAPPDATA%/Facet/data/logs/astro-id.log
+    # Pixels the solver reads: None = astro-id.json / engine default (jpg); "jpg" | "raw" | "auto".
+    "solve_source": None,
+    # Where tags go: "facet" = manual tags on the Facet row; "raw_xmp" additionally writes the taggable names as
+    # dc:subject keywords into the paired RAW's XMP sidecar (<image><ext>.xmp, exiftool >= 13.28). Default off.
+    "tag_targets": ["facet"],
+    "exiftool": None,          # default %LOCALAPPDATA%/Facet/exiftool/exiftool.exe
+    "overlay_scores": False,   # engine overlay JPG shows "name score" instead of the plain name
     # "time_tolerance_min": 15 -- when set, passed as --time-tolerance (else astro-id.json / engine default)
     # "timezone": "America/Los_Angeles" -- when set, passed as --timezone with a naive Facet date
 }
@@ -95,18 +107,103 @@ def configure(cfg: dict | None = None, db_path: str | None = None) -> None:
     _db_override = db_path
 
 
+KNOWN_KEYS = frozenset(DEFAULTS) | {"time_tolerance_min", "timezone"}
+SOLVE_SOURCES = ("jpg", "raw", "auto")
+TAG_TARGETS = ("facet", "raw_xmp")
+_config_msgs: set = set()
+
+
+def _num(v, lo=None, hi=None, integer=False) -> bool:
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return False
+    if integer and int(v) != v:
+        return False
+    return (lo is None or v >= lo) and (hi is None or v <= hi)
+
+
+def normalize_tag_targets(v) -> list[str]:
+    if isinstance(v, str):
+        v = [x for x in re.split(r"[,\s]+", v.strip()) if x]
+    return list(v)
+
+
+def validate_config(cfg: dict) -> tuple[list[str], list[str]]:
+    """(errors, warnings) for a merged plugin config. Unknown keys warn; a bad value is an error."""
+    errors: list[str] = []
+    warnings = [f"unknown option {k!r} (ignored)" for k in sorted(cfg) if k not in KNOWN_KEYS]
+
+    def need(key, ok, what):
+        if key in cfg and not ok(cfg[key]):
+            errors.append(f"{key}: {what}, got {cfg[key]!r}")
+
+    def opt(f):
+        return lambda v: v is None or f(v)
+    isstr = lambda v: isinstance(v, str) and v.strip() != ""   # noqa: E731
+    for key in ("enabled", "catch_up", "overlay_scores"):
+        need(key, lambda v: isinstance(v, bool), "must be true or false")
+    for key in ("engine", "overlay_dir", "db_path", "log_path", "exiftool", "timezone"):
+        need(key, opt(isstr), "must be a non-empty string or null")
+    need("uv", isstr, "must be a non-empty string")
+    need("min_confidence", lambda v: _num(v, 0, 100, True), "must be an integer 0-100")
+    need("roots", lambda v: isinstance(v, list) and all(isinstance(x, str) for x in v), "must be a list of paths")
+    need("timeout_s", lambda v: _num(v, 1), "must be a number >= 1")
+    need("settle_s", lambda v: _num(v, 0), "must be a number >= 0")
+    need("batch_min", lambda v: _num(v, 1, None, True), "must be an integer >= 1")
+    need("star_mag_limit", opt(lambda v: _num(v)), "must be a number or null")
+    need("max_catalog_mag", opt(lambda v: _num(v)), "must be a number or null")
+    need("time_tolerance_min", opt(lambda v: _num(v, 0)), "must be a number >= 0 or null")
+    need("stack_gap_s", opt(lambda v: _num(v, 1)), "must be a number >= 1 or null")
+    need("tag_style", opt(lambda v: v in ("plain", "kind")), "must be 'plain', 'kind' or null")
+    need("stack_mode", opt(lambda v: v in ("representative", "all")), "must be 'representative', 'all' or null")
+    need("solve_source", opt(lambda v: v in SOLVE_SOURCES), "must be one of jpg, raw, auto or null")
+
+    def levels_ok(v):
+        try:
+            seq = re.split(r"[,\s]+", v.strip()) if isinstance(v, str) else list(v)
+            return all(int(x) in (1, 2, 3, 4, 5) for x in seq if str(x) != "")
+        except (TypeError, ValueError):
+            return False
+    need("tag_levels", opt(levels_ok), "must be levels 1-5 (list or '1,2,3') or null")
+
+    def targets_ok(v):
+        try:
+            t = normalize_tag_targets(v)
+        except TypeError:
+            return False
+        return bool(t) and all(x in TAG_TARGETS for x in t)
+    need("tag_targets", targets_ok, "must be a non-empty list of facet, raw_xmp")
+    return errors, warnings
+
+
 def get_config() -> dict:
-    """Plugin config: DEFAULTS < resolved scoring config ``plugins.astro_id``."""
+    """Plugin config: DEFAULTS < resolved scoring config ``plugins.astro_id``, validated.
+
+    Bad values are logged and the plugin disables itself (``enabled`` false) rather than misbehave."""
     cfg = dict(DEFAULTS)
     if _cfg_override is not None:
         cfg.update(_cfg_override)
-        return cfg
-    try:
-        from config_resolve import load_resolved
-        block = (load_resolved().get("plugins") or {}).get("astro_id") or {}
-        cfg.update(block)
-    except Exception:
-        logger.exception("astro_id: could not read the scoring config")
+    else:
+        try:
+            from config_resolve import load_resolved
+            block = (load_resolved().get("plugins") or {}).get("astro_id") or {}
+            cfg.update(block)
+        except Exception:
+            logger.exception("astro_id: could not read the scoring config")
+    errors, warnings = validate_config(cfg)
+    for m in warnings:
+        if ("w", m) not in _config_msgs:
+            _config_msgs.add(("w", m))
+            logger.warning("astro_id: config: %s", m)
+    if errors:
+        for m in errors:
+            if ("e", m) not in _config_msgs:
+                _config_msgs.add(("e", m))
+                logger.error("astro_id: config: %s", m)
+        if ("e", "off") not in _config_msgs:
+            _config_msgs.add(("e", "off"))
+            logger.error("astro_id: invalid configuration, plugin disabled until it is fixed")
+        cfg["enabled"] = False
+    cfg["tag_targets"] = normalize_tag_targets(cfg["tag_targets"]) if not errors else ["facet"]
     return cfg
 
 
@@ -273,33 +370,95 @@ def plan_tags(conn, photo_path: str, tags: list[str]) -> list[str]:
     return keep
 
 
-def write_tags(conn, photo_path: str, tags: list[str]) -> tuple[list[str], list[str]]:
+def _annotation_api(conn):
+    """(upsert, delete_row) when Facet's annotations helper and table exist, else None (logged once)."""
+    global _annotation_skip_logged
+    try:
+        from db.annotations import upsert_annotation
+    except Exception:
+        upsert_annotation = None
+    has_table = bool(conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'photo_annotations'").fetchone())
+    if upsert_annotation is None or not has_table:
+        if not _annotation_skip_logged:
+            _annotation_skip_logged = True
+            logger.info("astro_id: Facet has no photo_annotations helper/table yet; annotations not stored")
+        return None
+
+    def delete_row(c, photo_path):
+        try:
+            from db.annotations import delete_annotation
+        except Exception:
+            c.execute("DELETE FROM photo_annotations WHERE photo_path = ? AND source = ?",
+                      (photo_path, ANNOTATION_SOURCE))
+        else:
+            delete_annotation(c, photo_path, ANNOTATION_SOURCE)
+    return upsert_annotation, delete_row
+
+
+def write_annotation(conn, photo_path: str, payload: dict | None) -> str | None:
+    """Upsert (dict) or delete (None) this plugin's annotation row. Part of the caller's transaction.
+
+    Returns 'stored', 'deleted' or None when Facet has no annotation support / on error."""
+    api = _annotation_api(conn)
+    if api is None:
+        return None
+    upsert, delete_row = api
+    try:
+        if payload is None:
+            delete_row(conn, photo_path)
+            return "deleted"
+        upsert(conn, photo_path, ANNOTATION_SOURCE, payload)
+        return "stored"
+    except Exception:
+        logger.exception("astro_id: cannot store the annotation for %s", photo_path)
+        return None
+
+
+def write_tags(conn, photo_path: str, tags: list[str], annotation=_UNSET) -> tuple[list[str], list[str]]:
     """Replace this plugin's rows for one photo in ONE transaction.
 
-    Returns (added, removed). Other sources' rows are never touched."""
+    ``annotation`` (a payload dict, or None to delete) is upserted into ``photo_annotations`` in the same
+    transaction; the default leaves annotations alone. Returns (added, removed). Other sources' rows are
+    never touched."""
     from db.manual_tags import insert_manual_tag
-    keep = plan_tags(conn, photo_path, tags)
+    keep = plan_tags(conn, photo_path, tags) if tags is not None else None
     before = set(current_tags(conn, photo_path))
     prev_iso = conn.isolation_level
     conn.isolation_level = None          # explicit transaction control
     try:
         conn.execute("BEGIN IMMEDIATE")
         try:
-            conn.execute("DELETE FROM photo_manual_tags WHERE photo_path = ? AND created_by = ?",
-                         (photo_path, OWNER))
-            for t in keep:
-                insert_manual_tag(conn, photo_path, t, SOURCE, OWNER)
-            # Same cache invalidation the manual-tag API does (tag dropdown row).
-            if conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'stats_cache'").fetchone():
-                conn.execute("DELETE FROM stats_cache WHERE key = 'tags'")
-            conn.execute("COMMIT")
+            if keep is not None:
+                conn.execute("DELETE FROM photo_manual_tags WHERE photo_path = ? AND created_by = ?",
+                             (photo_path, OWNER))
+                for t in keep:
+                    insert_manual_tag(conn, photo_path, t, SOURCE, OWNER)
+                # Same cache invalidation the manual-tag API does (tag dropdown row).
+                if conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'stats_cache'").fetchone():
+                    conn.execute("DELETE FROM stats_cache WHERE key = 'tags'")
+            if annotation is not _UNSET:
+                write_annotation(conn, photo_path, annotation)
+            if conn.in_transaction:      # a helper may have committed already
+                conn.execute("COMMIT")
         except Exception:
             conn.execute("ROLLBACK")
             raise
     finally:
         conn.isolation_level = prev_iso
+    if keep is None:
+        return [], []
     after = set(keep)
     return sorted(after - before), sorted(before - after)
+
+
+def annotation_for(result: dict):
+    """What to do with the annotation row for a frame result: None = delete it (unsolved), a payload dict =
+    replace it, ``_UNSET`` = leave it alone (an older engine, or one whose payload build failed)."""
+    if not result.get("solved"):
+        return None
+    a = result.get("annotations")
+    return a if isinstance(a, dict) and a.get("version") == 1 else _UNSET
 
 
 def facet_hints(conn, photo_path: str) -> dict:
@@ -336,7 +495,8 @@ def policy_flags(cfg: dict) -> list[str]:
     if lv is not None:
         flags += ["--tag-levels", ",".join(str(int(x)) for x in lv) if isinstance(lv, (list, tuple)) else str(lv)]
     for key, flag in (("star_mag_limit", "--star-mag-limit"), ("max_catalog_mag", "--max-catalog-mag"),
-                      ("tag_style", "--tag-style"), ("stack_mode", "--stack-mode"), ("stack_gap_s", "--stack-gap")):
+                      ("tag_style", "--tag-style"), ("stack_mode", "--stack-mode"), ("stack_gap_s", "--stack-gap"),
+                      ("solve_source", "--solve-source")):
         if cfg.get(key) is not None:
             flags += [flag, str(cfg[key])]
     return flags
@@ -352,6 +512,8 @@ def engine_flags(hints: dict, cfg: dict) -> list[str]:
             flags += ["--timezone", str(cfg["timezone"])]
     if cfg.get("time_tolerance_min") is not None:
         flags += ["--time-tolerance", str(cfg["time_tolerance_min"])]
+    if cfg.get("overlay_scores"):
+        flags.append("--overlay-scores")
     return flags
 
 
@@ -364,8 +526,11 @@ def _open_db(db_path: str):
 
 
 def process_paths(paths: list[str], cfg: dict, db_path: str, min_confidence: int | None = None,
-                  dry_run: bool = False) -> dict[str, tuple[list[str], list[str]]]:
+                  dry_run: bool = False, xmp_out: dict | None = None) -> dict[str, tuple[list[str], list[str]]]:
     """Solve ``paths`` (Facet photo paths) and write tags. Returns {path: (added, removed)}.
+
+    ``cfg["tag_targets"]`` picks the targets (facet rows and/or the RAW XMP sidecar); ``xmp_out`` (if given)
+    receives {path: {"sidecar", "added", "removed", ...}} for the sidecar side.
 
     Groups by folder; a folder with >= batch_min frames is solved as one folder run."""
     mc = int(cfg.get("min_confidence", 65) if min_confidence is None else min_confidence)
@@ -411,12 +576,19 @@ def process_paths(paths: list[str], cfg: dict, db_path: str, min_confidence: int
                         logger.warning("astro_id: %s is not in the Facet DB", p)
                         continue
                     want = desired_tags(r, mc)
+                    targets = cfg.get("tag_targets") or ["facet"]
                     if dry_run:
                         keep = set(plan_tags(conn, p, want))
                         have = set(current_tags(conn, p))
                         changes[p] = (sorted(keep - have), sorted(have - keep))
-                    else:
-                        changes[p] = write_tags(conn, p, want)
+                    elif "facet" in targets:
+                        changes[p] = write_tags(conn, p, want, annotation_for(r))
+                    else:                                   # annotations still follow the solve
+                        changes[p] = write_tags(conn, p, None, annotation_for(r))
+                    if "raw_xmp" in targets:
+                        res = sync_raw_xmp(p, [t for t in want if t not in (TAG_SOLVED, TAG_FAILED)], cfg, dry_run)
+                        if xmp_out is not None and res is not None:
+                            xmp_out[p] = res
                 except Exception:
                     logger.exception("astro_id: failed writing tags for %s", p)
     except Exception:
@@ -425,6 +597,133 @@ def process_paths(paths: list[str], cfg: dict, db_path: str, min_confidence: int
         if conn is not None:
             conn.close()
     return changes
+
+
+# ------------------------------------------------------------- RAW XMP ---
+# Keywords go to the paired RAW's sidecar ``<image><ext>.xmp`` (Facet's convention, docs/INTEROP.md) as
+# ``dc:subject``. What this plugin wrote is remembered in a private namespace bag
+# (``XMP-astroid:Keywords``), so a re-run replaces exactly those and never touches other keywords.
+
+EXIFTOOL_MIN = (13, 28)
+ASTROID_NS = "https://github.com/astro-id/ns/1.0/"
+RAW_EXTS = (".arw", ".cr2", ".cr3", ".nef", ".dng", ".orf", ".rw2", ".raf", ".pef", ".srw", ".nrw", ".3fr", ".iiq")
+EMPTY_XMP = ('<?xpacket begin="\\ufeff" id="W5M0MpCehiHzreSzNTczkc9d"?>\n'
+             '<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+             '<rdf:Description rdf:about=""/></rdf:RDF></x:xmpmeta>\n<?xpacket end="w"?>\n')
+EXIFTOOL_CONFIG = f"""%Image::ExifTool::UserDefined::astroid = (
+    GROUPS => {{ 0 => 'XMP', 1 => 'XMP-astroid', 2 => 'Image' }},
+    NAMESPACE => {{ 'astroid' => '{ASTROID_NS}' }},
+    WRITABLE => 'string',
+    Keywords => {{ List => 'Bag' }},
+);
+%Image::ExifTool::UserDefined = (
+    'Image::ExifTool::XMP::Main' => {{
+        astroid => {{ SubDirectory => {{ TagTable => 'Image::ExifTool::UserDefined::astroid' }} }},
+    }},
+);
+1;
+"""
+
+
+def exiftool_path(cfg: dict) -> str:
+    if cfg.get("exiftool"):
+        return str(cfg["exiftool"])
+    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    return os.path.join(base, "Facet", "exiftool", "exiftool.exe")
+
+
+def exiftool_version(exe: str) -> tuple[int, ...] | None:
+    try:
+        out = subprocess.run([exe, "-ver"], capture_output=True, text=True, timeout=30,
+                             creationflags=0x08000000 if os.name == "nt" else 0).stdout.strip()
+        return tuple(int(x) for x in out.split("."))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def raw_for(photo_path: str) -> str | None:
+    """The RAW to carry the sidecar: the photo itself when it is a RAW, else its same-stem RAW twin."""
+    if photo_path.lower().endswith(RAW_EXTS):
+        return photo_path
+    folder, name = os.path.split(photo_path)
+    stem = os.path.splitext(name)[0].lower()
+    try:
+        for f in sorted(os.listdir(folder)):
+            if os.path.splitext(f)[0].lower() == stem and f.lower().endswith(RAW_EXTS):
+                return os.path.join(folder, f)
+    except OSError:
+        pass
+    return None
+
+
+def plan_keywords(existing: list[str], written: list[str], want: list[str]) -> tuple[list[str], list[str]]:
+    """(new dc:subject, new written-bag). Keywords not in ``written`` are never removed; a wanted keyword
+    that already exists and is not ours is left as the owner's (and not claimed)."""
+    mine_old = {w.lower() for w in written}
+    foreign = [k for k in existing if k.lower() not in mine_old]
+    foreign_l = {k.lower() for k in foreign}
+    claim = []
+    for t in want:
+        if t.lower() not in foreign_l and t.lower() not in {c.lower() for c in claim}:
+            claim.append(t)
+    return foreign + claim, claim
+
+
+def sync_raw_xmp(photo_path: str, tags: list[str], cfg: dict, dry_run: bool = False) -> dict | None:
+    """Merge ``tags`` into the paired RAW's XMP sidecar. Returns a report dict, or None when skipped."""
+    raw = raw_for(photo_path)
+    if raw is None:
+        logger.info("astro_id: no RAW twin for %s, XMP skipped", photo_path)
+        return None
+    exe = exiftool_path(cfg)
+    ver = exiftool_version(exe)
+    if ver is None or ver < EXIFTOOL_MIN:
+        logger.error("astro_id: exiftool >= %d.%d required at %s (found %s); RAW XMP not written",
+                     *EXIFTOOL_MIN, exe, ".".join(map(str, ver)) if ver else "none")
+        return None
+    sidecar = raw + ".xmp"
+    exists = os.path.exists(sidecar)
+    kw = {"creationflags": 0x08000000} if os.name == "nt" else {}
+    with tempfile.TemporaryDirectory() as td:
+        cfgf = os.path.join(td, "astroid.config")
+        with open(cfgf, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(EXIFTOOL_CONFIG)
+        existing: list[str] = []
+        written: list[str] = []
+        if exists:
+            r = subprocess.run([exe, "-config", cfgf, "-j", "-charset", "utf8", "-XMP-dc:Subject",
+                                "-XMP-astroid:Keywords", sidecar], capture_output=True, timeout=60, **kw)
+            try:
+                row = json.loads(r.stdout.decode("utf-8"))[0]
+            except (ValueError, IndexError):
+                logger.error("astro_id: cannot read %s: %s", sidecar, r.stderr.decode("utf-8", "replace")[-300:])
+                return None
+            as_list = lambda v: [] if v is None else [str(x) for x in (v if isinstance(v, list) else [v])]  # noqa: E731
+            existing, written = as_list(row.get("Subject")), as_list(row.get("Keywords"))
+        new_subject, claim = plan_keywords(existing, written, tags)
+        report = {"sidecar": sidecar, "existed": exists, "added": sorted(set(claim) - set(existing)),
+                  "removed": sorted(w for w in written if w.lower() not in {c.lower() for c in claim}),
+                  "kept": [k for k in existing if k.lower() not in {w.lower() for w in written}]}
+        if existing == new_subject and {w.lower() for w in written} == {c.lower() for c in claim}:
+            report["unchanged"] = True
+            return report
+        if dry_run:
+            return report
+        if not exists:
+            with open(sidecar, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(EMPTY_XMP.replace("\\ufeff", "\ufeff"))
+        argf = os.path.join(td, "args.txt")
+        # repeating "tag=value" builds the list from scratch (an empty value clears it)
+        lines = [f"-XMP-dc:Subject={k}" for k in new_subject] or ["-XMP-dc:Subject="]
+        lines += [f"-XMP-astroid:Keywords={k}" for k in claim] or ["-XMP-astroid:Keywords="]
+        with open(argf, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("\n".join(lines) + "\n")
+        r = subprocess.run([exe, "-config", cfgf, "-overwrite_original", "-charset", "utf8", "-@", argf, sidecar],
+                           capture_output=True, timeout=60, **kw)
+        if r.returncode != 0 or b"error" in r.stderr.lower() or b"sorry" in r.stderr.lower():
+            logger.error("astro_id: exiftool failed on %s: %s", sidecar, r.stderr.decode("utf-8", "replace")[-300:])
+            return None
+    return report
 
 
 # ----------------------------------------------------------------- worker ---
@@ -767,11 +1066,15 @@ def main(argv=None) -> int:
         print("No photos under that path in the Facet database.")
         return 0
     print(f"{len(paths)} photo(s) selected; DB {db_path}" + ("  [dry run]" if a.dry_run else ""))
-    changes = process_paths(paths, cfg, db_path, a.min_confidence, a.dry_run)
+    xmp: dict = {}
+    changes = process_paths(paths, cfg, db_path, a.min_confidence, a.dry_run, xmp)
     for p in paths:
         if p in changes:
             add, rem = changes[p]
             print(f"{p}\n   +{add}\n   -{rem}")
+            if p in xmp:
+                x = xmp[p]
+                print(f"   xmp {x['sidecar']}: +{x['added']} -{x['removed']} (keeps {len(x['kept'])} other keyword(s))")
         else:
             print(f"{p}\n   (no result)")
     return 0

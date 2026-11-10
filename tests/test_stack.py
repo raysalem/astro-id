@@ -122,6 +122,12 @@ def test_sequence_representative_and_copies(seq_dir, monkeypatch, capsys, tmp_pa
     j1 = next(o for o in r["SEQ0001.JPG"]["objects"] if o["tag"] == "jupiter")
     j2 = next(o for o in rep["objects"] if o["tag"] == "jupiter")
     assert math.hypot(j2["x"] - j1["x"] - 3.0, j2["y"] - j1["y"] + 2.0) < 1.0
+    # annotations of a stack-copy: Jupiter shifted with the registration, own legend
+    a1 = r["SEQ0001.JPG"]["annotations"]
+    aj1 = next(i for i in a1["items"] if i["id"] == "jupiter")
+    aj2 = next(i for i in rep["annotations"]["items"] if i["id"] == "jupiter")
+    assert math.hypot(aj2["x"] - aj1["x"] - 3.0, aj2["y"] - aj1["y"] + 2.0) < 1.0
+    assert "stack-copy" in a1["legend"]
     csv = (tmp_path / "o" / "astro-id-report.csv").read_text(encoding="utf-8")
     header = csv.splitlines()[0].split(",")
     for col in ("level", "magnitude", "parent", "member_of", "taggable", "stack_of"):

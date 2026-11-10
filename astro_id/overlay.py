@@ -27,13 +27,17 @@ def _font(size: int):
         return ImageFont.load_default()
 
 
-def draw_overlay(src: Path, out: Path, width_full: int, objects, legend_lines: list[str], width: int = 3000) -> Path:
+def draw_overlay(src: Path, out: Path, width_full: int, objects, legend_lines: list[str], width: int = 3000,
+                 scores: bool = False) -> Path:
     im = load_rgb_preview(src, width)
     s = im.size[0] / width_full
     d = ImageDraw.Draw(im, "RGBA")
     fs = max(14, im.size[0] // 120)
     font, small = _font(fs), _font(int(fs * 0.85))
     lw = max(2, im.size[0] // 1200)
+
+    def lab(o) -> str:  # plain names; the confidence only with --overlay-scores
+        return f"{o.name} {o.confidence}" if scores else o.name
 
     # constellation lines first (under everything)
     for o in objects:
@@ -47,7 +51,7 @@ def draw_overlay(src: Path, out: Path, width_full: int, objects, legend_lines: l
         if inside:
             cx = sum(p[0] for p in inside) / len(inside)
             cy = sum(p[1] for p in inside) / len(inside)
-            _label(d, (cx, cy), f"{o.name.upper()} {o.confidence}", font, col, im.size)
+            _label(d, (cx, cy), (o.name.upper() + (f" {o.confidence}" if scores else "")), font, col, im.size)
 
     # asterisms: their own stick figure, labelled at the centroid
     for o in objects:
@@ -56,7 +60,7 @@ def draw_overlay(src: Path, out: Path, width_full: int, objects, legend_lines: l
         for x1, y1, x2, y2 in o.figure:
             d.line([(x1 * s, y1 * s), (x2 * s, y2 * s)], fill=ASTERISM_LINE + (200,), width=lw)
         if o.x is not None:
-            _label(d, (o.x * s, o.y * s + fs), f"{o.name} {o.confidence}", font, COLORS[o.tier], im.size)
+            _label(d, (o.x * s, o.y * s + fs), lab(o), font, COLORS[o.tier], im.size)
 
     taken: list[tuple[float, float, float, float]] = []
     for o in sorted(objects, key=lambda o: -o.confidence):
@@ -75,7 +79,7 @@ def draw_overlay(src: Path, out: Path, width_full: int, objects, legend_lines: l
         x, y = o.x * s, o.y * s
         r = max(o.radius_px * s, fs * 0.6)
         d.ellipse([x - r, y - r, x + r, y + r], outline=col + (230,), width=lw)
-        text = f"{o.name} {o.confidence}"
+        text = lab(o)
         w = d.textlength(text, font=small)
         for dx, dy in [(r + 4, -fs / 2), (r + 4, fs / 2), (-r - 4 - w, -fs / 2), (-w / 2, r + 2), (-w / 2, -r - fs - 2)]:
             box = (x + dx, y + dy, x + dx + w, y + dy + fs)

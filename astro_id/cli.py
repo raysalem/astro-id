@@ -25,6 +25,11 @@ def build_parser() -> argparse.ArgumentParser:
                                   "time_source becomes 'facet')")
     s.add_argument("--timezone", help="IANA zone for a naive --time (default: astro-id.json timezone, else system)")
     s.add_argument("--overlay-dir", help="where overlays and the CSV report go (default: <folder>-annotated)")
+    s.add_argument("--overlay-scores", action="store_true",
+                   help="print the confidence after each name on the overlay JPG (default: names only)")
+    s.add_argument("--solve-source", choices=["jpg", "raw", "auto"],
+                   help="pixels the solver reads: jpg (default), raw (the same-stem RAW, cropped to the JPG frame), "
+                        "auto (raw when a RAW twin exists, else jpg); results stay in JPG pixel space")
     s.add_argument("--json", action="store_true", help="print the contract JSON to stdout")
     s.add_argument("--no-overlay", action="store_true")
     s.add_argument("--no-fallback", action="store_true", help="never use nova.astrometry.net")
@@ -106,6 +111,8 @@ def cmd_solve(args) -> int:
         from .tagpolicy import make_policy
 
         make_policy(None, **policy_flags(args))
+        if args.solve_source:
+            cfgmod.parse_solve_source(args.solve_source)
         stack_cfg = cfgmod.stack_config(target if target.is_dir() else target.parent, args.stack_mode, args.stack_gap)
     except ValueError as exc:
         log.error("%s", exc)
@@ -125,7 +132,8 @@ def cmd_solve(args) -> int:
 
     def run_one(f, ctx=None):
         fr, rows = process(f, args.offset, args.time_tolerance, args.site, overlay_dir, not args.no_overlay,
-                           not args.no_fallback, args.time, args.timezone, pf, args.min_confidence, ctx)
+                           not args.no_fallback, args.time, args.timezone, pf, args.min_confidence, ctx,
+                           args.overlay_scores, args.solve_source)
         by_file[f], rows_by_file[f] = fr, rows
 
     groups = [[f] for f in files]
@@ -195,7 +203,7 @@ def _run_sequence(group, run_one, by_file, rows_by_file, args, overlay_dir, pf, 
             continue
         by_file[f], rows_by_file[f] = process_copy(f, by_file[rep], ctx["sol"], ctx["ident"], m, args.offset,
                                                    args.time_tolerance, args.site, overlay_dir, not args.no_overlay,
-                                                   args.timezone, pf)
+                                                   args.timezone, pf, args.overlay_scores)
 
 
 if __name__ == "__main__":  # pragma: no cover

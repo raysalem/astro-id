@@ -48,6 +48,14 @@ All keys and defaults (`null` = not passed; the engine then uses the folder's `a
 | `stack_gap_s` | `null` [`120`] | max seconds between frames of one sequence |
 | `catch_up` | `true` | spawn the detached catch-up when a scan exits |
 | `log_path` | `null` [`%LOCALAPPDATA%/Facet/data/logs/astro-id.log`] | catch-up log; the lock file `astro-id-catchup.lock` sits next to it |
+| `solve_source` | `null` [`jpg`] | pixels the solver reads: `jpg`, `raw` (the same-stem RAW cropped to the JPG frame) or `auto` (RAW when a twin exists). Coordinates and annotations stay in JPG pixel space |
+| `tag_targets` | `["facet"]` | `facet` = manual tags on the Facet row; add `raw_xmp` to also write the tags as `dc:subject` keywords into the paired RAW's XMP sidecar (see below). A string like `"facet,raw_xmp"` also works |
+| `exiftool` | `null` [`%LOCALAPPDATA%/Facet/exiftool/exiftool.exe`] | exiftool for `raw_xmp`; version >= 13.28 required |
+| `overlay_scores` | `false` | passed as `--overlay-scores`: the engine overlay JPG prints `name score` |
+
+Precedence for every option that also exists in the engine: plugin key (passed as the flag) > the folder's `astro-id.json` > engine default. The full engine/`astro-id.json`/plugin table is in the repo `README.md` ("All options").
+
+**Validation.** The config is checked each time it is read: an unknown key logs a warning (and is ignored); a bad value (wrong type or range, unknown `solve_source`/`tag_style`/`stack_mode`/`tag_targets` value) logs an error and the plugin disables itself until fixed, instead of misbehaving.
 
 A photo is treated as astro when its category is `astro`, its tags include one of `astrophotography, night sky, stars, milky way, aurora, nebula`, or its path is under a `roots` entry. Restart the scan/viewer after changing the plugin.
 
@@ -92,10 +100,24 @@ Per photo the plugin reads `gps_latitude/gps_longitude` and `date_taken` + `date
 - The 50-tag cap is respected: status tag first, then level 1, 2, 3, 4, 5 (constellations, Sun/Moon/planets, catalog objects, asterisms, stars), highest confidence first within a level; extras are dropped with a log warning.
 - An engine-level failure (timeout, bad JSON, contract != 1) writes nothing.
 
+## Annotations (Facet viewer overlay)
+
+After the tags, the plugin stores the engine's `annotations` payload (spec: `ANNOTATIONS.md`) in Facet's `photo_annotations` side table (source `astro-id`), in the same transaction as the tag swap. It uses Facet's helper `db.annotations.upsert_annotation(conn, photo_path, source, payload)` (payload is the dict) and never creates the table. If the helper module or the table does not exist yet, it logs once and skips; tags are unaffected. A re-run replaces the row; `plate-solve failed` deletes it; a frame from an older engine without a payload leaves an existing row alone.
+
+## RAW XMP keywords (`tag_targets` including `raw_xmp`)
+
+Off by default because it writes next to your originals. When on, each run also merges the taggable names (the same list as the Facet tags, without `plate-solved`) into the XMP sidecar of the paired RAW (or the photo itself when it is a RAW), named like Facet does: `<image><ext>.xmp` (`DSC07625.ARW.xmp`), as `dc:subject` keywords.
+
+- exiftool is taken from `exiftool` (default `%LOCALAPPDATA%\Facet\exiftool\exiftool.exe`); a version below 13.28 or a missing exiftool is an error and nothing is written.
+- Merge, never remove: keywords already in the sidecar that this plugin did not write stay. A wanted keyword the sidecar already has (the user's own) is left as theirs and not claimed.
+- Tracking: the names the plugin wrote are recorded in a private XMP namespace bag (`astroid:Keywords`, namespace `https://github.com/astro-id/ns/1.0/`) in the same sidecar. A re-run replaces exactly that bag's keywords; an unsolved frame removes them. (A hierarchical `astro-id|name` prefix was rejected: it would show up as odd literal keywords in other apps.)
+- A missing sidecar is created as a minimal XMP packet; `-overwrite_original` is used so no `_original` copies appear.
+- Dry run first: `plugins\astro_id.py <folder> --dry-run` prints `xmp <sidecar>: +[added] -[removed] (keeps N other keyword(s))` per photo and writes nothing. Lightroom and Capture One do not discover `<image>.<ext>.xmp` for proprietary RAW (see Facet docs/INTEROP.md); digiKam and darktable do.
+
 ## Idempotency and `--min-confidence`
 
 Each run replaces that photo's `astro-id` rows in one transaction, so re-running gives the same tags. Raising the threshold (65 -> 80) removes the 65-79 tags on re-run; lowering it adds them back. Photos are not re-solved automatically when the config changes; run the backfill.
 
 ## Tests
 
-`C:\Users\raysa\AppData\Local\Facet\venv\Scripts\python.exe -m pytest tests/test_facet_plugin.py` from the repo root (skips when Facet is not importable; set `FACET_DIR` to another checkout).
+`C:\Users\raysa\AppData\Local\Facet\venv\Scripts\python.exe -m pytest tests/test_facet_plugin.py tests/test_plugin_features.py` from the repo root (skips when Facet is not importable; set `FACET_DIR` to another checkout).

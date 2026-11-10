@@ -68,12 +68,16 @@ uv run astro-id solve <file-or-folder> [--min-confidence 65] [--offset +2559d11h
                      [--overlay-dir DIR] [--json] [--no-overlay] [--no-fallback] [-v]
                      [--tag-levels 1,2,3,4] [--star-mag-limit M] [--max-catalog-mag 6.0]
                      [--tag-style plain|kind] [--stack-mode representative|all] [--stack-gap 120]
+                     [--solve-source jpg|raw|auto] [--overlay-scores]
 uv run astro-id site <folder>     # pick the observing site on Google Maps -> astro-id.json
 uv run astro-id setup             # download data, check ASTAP
 ```
 
 - A folder is scanned for JPG/JPEG/TIF/PNG and RAW. A RAW file is replaced by its same-stem JPG when
   there is one (RAW+JPG pairs count once); a lone RAW is decoded.
+- Overlay labels are plain names ("Uranus"); `--overlay-scores` adds the confidence ("Uranus 100"). The legend keeps
+  the tier colour key. The live, filterable overlay is drawn by the Facet viewer from the `annotations` payload
+  (see below); the JPG is the static copy.
 - Overlays (`<stem>_astro.jpg`, 3000 px wide) and `astro-id-report.csv` go to `--overlay-dir`, default
   the sibling folder `<folder>-annotated`. Originals are never written to.
 - `--json` prints one document `{"contract": 1, "results": [...]}` to stdout (see `CONTRACT.md`);
@@ -107,6 +111,60 @@ Moon is found in the frame its position pins the time (it moves ~0.5 deg per hou
 `best_fit_time` is reported and `time_flag` is set if it falls outside the tolerance. Without an
 `astro-id.json` or `--offset`, EXIF time is used as-is (`time_source: "exif"`) and the Sun, Moon and
 planets are capped at *candidate*.
+
+## Annotations payload (for the Facet viewer)
+
+Every solved frame result carries `annotations` (null when unsolved): the overlay as data, in the format fixed in
+`ANNOTATIONS.md`. All objects at all levels are in it (planets, Moon, Sun, Messier/NGC/IC, asterisms, constellations,
+named stars to magnitude 6.5) with their confidence and magnitude, so the viewer filters live by confidence, group
+and magnitude without re-solving. Constellation and asterism stick figures are `lines` items: each segment is
+sampled along the sky great circle (about every 1.5 degrees), projected through the SIP-corrected solution so it
+bends with the lens, clipped to the frame, in full-resolution pixels rounded to 0.1 px. `member_of` is the id of
+the group item a star belongs to. The payload stays under 500 KB (lowest-confidence items are dropped first if not).
+The legend reads like `2026-11-07 21:57 PST +-15 min . ASTAP grade A . 2452 stars`.
+
+## RAW as the solver input (`solve_source`)
+
+`jpg` (default) solves the JPG. `raw` solves the same-stem RAW (linear demosaic, camera white balance, no
+auto-brightness, half size, channel mean), `auto` uses the RAW when a twin exists. Results always stay in the
+JPG pixel space: the RAW is cropped to the JPG frame first. For the Sony A7R IV the decoded area (9568 x 6376)
+is cropped to the JPG (9504 x 6336) at the centre (32 px left, 20 px top); that offset was measured by solving
+both and agrees to 0.2 px. When a RAW does not map onto its JPG with certainty (different size and no matching
+camera crop) the JPG is solved instead and a warning is logged. A lone RAW is always decoded. Measured on
+DSC07625 (A7R IV, 14 mm): JPG 1889 matched stars, rms 0.34 px, grade A; RAW 481 stars, rms 0.34 px, grade A;
+same 77 objects (41 at >= 65), Jupiter within 0.2 px. RAW is slower (about 26 s vs 20 s) and not better here.
+
+## All options
+
+One table for the engine, `astro-id.json` and the Facet plugin config (`plugins.astro_id` in the scoring config).
+Precedence: **command-line flag > plugin config (passed to the engine as that flag) > nearest `astro-id.json` > default**.
+Facet's own site and capture date, when it has them, override the file's site and offset (`--site`, `--time`).
+
+| Option | Flag | `astro-id.json` | Plugin key | Default |
+|---|---|---|---|---|
+| Report cut | `--min-confidence` | - | `min_confidence` | 65 |
+| Camera clock offset | `--offset` | `clock_offset` | - (Facet date) | none |
+| True time of one frame | `--time`, `--timezone` | - | Facet date / `timezone` | EXIF |
+| Time tolerance | `--time-tolerance` | `time_tolerance_min` | `time_tolerance_min` | 15 min |
+| Timezone | `--timezone` | `timezone` | `timezone` | inferred from the site, else system |
+| Site | `--site lat,lon[,elev]` | `site` | Facet GPS | none |
+| Overlay folder | `--overlay-dir` | - | `overlay_dir` | `<folder>-annotated` |
+| Overlay scores | `--overlay-scores` | - | `overlay_scores` | off |
+| Skip overlay JPG | `--no-overlay` | - | - | off |
+| Astrometry.net fallback | `--no-fallback` | - | - | on (needs key) |
+| Solver pixels | `--solve-source jpg\|raw\|auto` | `solve_source` | `solve_source` | `jpg` |
+| Tag levels | `--tag-levels` | `tag_policy.levels` | `tag_levels` | 1,2,3,4 |
+| Star tag limit | `--star-mag-limit` | `tag_policy.star_mag_limit` | `star_mag_limit` | off |
+| Catalog tag limit | `--max-catalog-mag` | `tag_policy.max_catalog_mag` | `max_catalog_mag` | 6.0 |
+| Tag spelling | `--tag-style` | `tag_policy.tag_style` | `tag_style` | `plain` |
+| Stacking mode | `--stack-mode` | `stack_mode` | `stack_mode` | `representative` |
+| Stacking gap | `--stack-gap` | `stack_gap_s` | `stack_gap_s` | 120 s |
+| Stacking tolerance | - | `stack_tolerance` | - | 0.02 |
+| Tag targets | - | - | `tag_targets` | `["facet"]` |
+| Plugin only: `engine`, `uv`, `enabled`, `roots`, `timeout_s`, `settle_s`, `batch_min`, `db_path`, `catch_up`, `log_path`, `exiftool` | | | see `facet_plugin/README.md` | |
+
+The plugin validates its config on load: unknown keys log a warning, a bad value logs an error and the plugin
+disables itself until it is fixed.
 
 ## How it solves
 

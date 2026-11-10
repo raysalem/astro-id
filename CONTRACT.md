@@ -115,3 +115,10 @@ A sequence = consecutive frames (EXIF time gap <= `stack_gap_s`) with the same l
 - Every frame result gains `stack_of` (`null` unless `solver` is `"stack-copy"`). `solver` may be `"stack-copy"`; consumers must treat unknown `solver` values as opaque.
 - Frame `stars` / `rms_px` of a stack-copy are the registration's matched-star count and residual; `grade` and `fov_deg` are the representative's; `true_time` is the frame's own.
 - `astro-id-report.csv` gains columns `level, magnitude, parent, member_of, taggable, stack_of`. JSON, CSV and overlay keep listing every object (taggable or not).
+
+## v1 additions (non-breaking, 2026-11-10): annotations, overlay label switch, solve source
+
+- Every frame result gains `annotations`: the payload of `ANNOTATIONS.md` (version 1, source `astro-id`), or `null` when the frame is unsolved (or the build failed). All objects at all levels, stars to mag 6.5, stick figures as sampled, clipped, SIP-corrected `lines` segments in full-resolution pixels (0.1 px), `member_of` = id of the group item, under ~500 KB. A stack-copy frame carries its own payload (representative's solution mapped through the registration).
+- Every frame result gains `solve_source`: `"jpg"` or `"raw"` (the pixels the solver read; `null` when unsolved before that point). Coordinates are always in the JPG (Facet photo) pixel space.
+- New flags: `--overlay-scores` (overlay JPG labels carry the confidence; default off = plain names; the legend keeps the tier colour key) and `--solve-source jpg|raw|auto` (default `jpg`; also `astro-id.json` `solve_source`).
+- Consumers must ignore unknown fields.

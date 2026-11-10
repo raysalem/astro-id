@@ -14,6 +14,7 @@ log = logging.getLogger("astro_id")
 CONFIG_NAME = "astro-id.json"
 DEFAULT_TOLERANCE_MIN = 15.0
 STACK_MODES = ("representative", "all")
+SOLVE_SOURCES = ("jpg", "raw", "auto")
 DEFAULT_STACK_GAP_S = 120.0
 DEFAULT_STACK_TOL = 0.02  # max pointing change, as a fraction of the frame diagonal
 
@@ -36,6 +37,7 @@ class FrameConfig:
     config_path: Path | None
     time_override: datetime | None = None  # --time: true local time of this frame (Facet's date)
     policy: TagPolicy | None = None
+    solve_source: str = "jpg"  # jpg | raw | auto (see imageio.raw_twin)
 
 
 @dataclass
@@ -53,6 +55,13 @@ def stack_config(folder: Path, mode_flag: str | None = None, gap_flag: float | N
         raise ValueError(f"stack mode must be one of {STACK_MODES}, got {mode!r}")
     gap = gap_flag if gap_flag is not None else cfg.get("stack_gap_s", DEFAULT_STACK_GAP_S)
     return StackConfig(mode, float(gap), float(cfg.get("stack_tolerance", DEFAULT_STACK_TOL)))
+
+
+def parse_solve_source(v) -> str:
+    v = (str(v) if v else "jpg").strip().lower()
+    if v not in SOLVE_SOURCES:
+        raise ValueError(f"solve source must be one of {SOLVE_SOURCES}, got {v!r}")
+    return v
 
 
 def find_config(folder: Path) -> Path | None:
@@ -142,7 +151,8 @@ def parse_time_flag(text: str, tz_name: str | None) -> datetime:
 
 
 def resolve(folder: Path, offset_flag: str | None, tol_flag: str | None, site_flag: str | None,
-            time_flag: str | None = None, tz_flag: str | None = None, policy_flags: dict | None = None) -> FrameConfig:
+            time_flag: str | None = None, tz_flag: str | None = None, policy_flags: dict | None = None,
+            solve_source_flag: str | None = None) -> FrameConfig:
     """Flags override the nearest astro-id.json."""
     cpath = find_config(folder)
     cfg = load_config(cpath)
@@ -167,4 +177,5 @@ def resolve(folder: Path, offset_flag: str | None, tol_flag: str | None, site_fl
         config_path=cpath,
         time_override=t_over,
         policy=policy,
+        solve_source=parse_solve_source(solve_source_flag or cfg.get("solve_source")),
     )

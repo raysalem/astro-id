@@ -694,11 +694,15 @@ def limiting_mag(w: WCS, det: Detections, width: int, height: int, epoch: float,
 
 
 # ---------------------------------------------------------------- main entry
-def solve_image(path: Path, exif, use_fallback: bool = True, epoch: float = 2026.0) -> Solution:
+def solve_image(path: Path, exif, use_fallback: bool = True, epoch: float = 2026.0, source: Path | None = None,
+                raw_crop: tuple[int, int, int, int] | None = None) -> Solution:
+    """Solve ``path`` (whose EXIF/size ``exif`` describes). ``source`` (a RAW twin) supplies the pixels
+    instead, cropped by ``raw_crop`` = (left, top, width, height) to the frame of ``path``, so every
+    coordinate stays in ``path``'s pixel space."""
     from .imageio import load_gray
 
     attempts: list[str] = []
-    gray = load_gray(path, REDUCE)
+    gray = load_gray(source or path, REDUCE, crop=raw_crop)
     full_w, full_h = exif.width, exif.height
     R = full_w / gray.shape[1]
     cell = max(32, gray.shape[1] // 75)

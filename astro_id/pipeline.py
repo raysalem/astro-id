@@ -9,7 +9,8 @@ from pathlib import Path
 
 from . import config as cfgmod
 from .identify import Identification, identify
-from .imageio import read_exif
+from .imageio import choose_source, read_exif
+from .annotations import build_annotations, legend_text
 from .overlay import draw_overlay
 from .solve import solve_image
 from .timeutil import format_offset, iso, true_time
@@ -44,23 +45,27 @@ def empty_frame(path: Path) -> dict:
         "file": posix(path), "solved": False, "solver": None, "grade": None, "rms_px": None, "stars": 0,
         "center_ra_deg": None, "center_dec_deg": None, "fov_deg": None, "true_time": None,
         "time_tolerance_min": None, "time_source": "exif", "best_fit_time": None, "time_flag": None,
-        "overlay": None, "error": None, "stack_of": None, "objects": [],
+        "overlay": None, "error": None, "stack_of": None, "objects": [], "annotations": None, "solve_source": None,
     }
 
 
 def process(path: Path, offset_flag, tol_flag, site_flag, overlay_dir: Path | None, make_overlay: bool,
             use_fallback: bool, time_flag: str | None = None,
             tz_flag: str | None = None, policy_flags: dict | None = None, min_confidence: int = 65,
-            ctx: dict | None = None) -> tuple[dict, list[dict]]:
+            ctx: dict | None = None, overlay_scores: bool = False,
+            solve_source: str | None = None) -> tuple[dict, list[dict]]:
     """Solve and identify one frame. ``ctx`` (if given) receives the solution and identification,
     so a stacking sequence can reuse them."""
     fr = empty_frame(path)
     rows: list[dict] = []
     try:
-        fc, exif, t_true = _frame_time(path, fr, offset_flag, tol_flag, site_flag, time_flag, tz_flag, policy_flags)
+        fc, exif, t_true = _frame_time(path, fr, offset_flag, tol_flag, site_flag, time_flag, tz_flag, policy_flags,
+                                       solve_source)
         t_ep = t_true or datetime.now().astimezone()
         epoch = t_ep.year + (t_ep.timetuple().tm_yday - 0.5) / 365.25
-        sol = solve_image(path, exif, use_fallback=use_fallback, epoch=epoch)
+        src, crop = choose_source(path, exif, fc.solve_source)
+        fr["solve_source"] = "raw" if src != path else "jpg"
+        sol = solve_image(path, exif, use_fallback=use_fallback, epoch=epoch, source=src, raw_crop=crop)
         for a in sol.attempts:
             log.debug("  %s", a)
         fr["stars"] = int(sol.matched if sol.solved else (len(sol.det) if sol.det is not None else 0))
@@ -83,6 +88,8 @@ def process(path: Path, offset_flag, tol_flag, site_flag, overlay_dir: Path | No
         fr["objects"] = [o.as_dict() for o in ident.objects]
         fr["best_fit_time"] = iso(ident.best_fit_time.astimezone(t_true.tzinfo)) if ident.best_fit_time else None
         fr["time_flag"] = ident.time_flag
+        fr["annotations"] = _annotations(ident.objects, sol, sol.width, sol.height, legend_text(
+            t_true if fr["true_time"] else None, fr["time_tolerance_min"], sol.solver, sol.grade, fr["stars"]))
         if make_overlay:
             od = overlay_dir or default_overlay_dir(path.parent)
             out = od / f"{path.stem}_astro.jpg"
@@ -93,7 +100,7 @@ def process(path: Path, offset_flag, tol_flag, site_flag, overlay_dir: Path | No
             ]
             if fr["best_fit_time"]:
                 legend.append(f"best-fit time (Moon) {fr['best_fit_time']}" + (" OUTSIDE tolerance" if fr["time_flag"] else ""))
-            draw_overlay(path, out, sol.width, ident.objects, legend)
+            draw_overlay(path, out, sol.width, ident.objects, legend, scores=overlay_scores)
             fr["overlay"] = posix(out)
         for o in ident.objects:
             rows.append(_row(fr, o, sol))
@@ -110,8 +117,27 @@ def process(path: Path, offset_flag, tol_flag, site_flag, overlay_dir: Path | No
     return fr, rows
 
 
-def _frame_time(path: Path, fr: dict, offset_flag, tol_flag, site_flag, time_flag, tz_flag, policy_flags):
-    fc = cfgmod.resolve(path.parent, offset_flag, tol_flag, site_flag, time_flag, tz_flag, policy_flags)
+def _parse_iso(v):
+    try:
+        return datetime.fromisoformat(v) if v else None
+    except ValueError:
+        return None
+
+
+def _annotations(objs, sol, width, height, legend, xform=None):
+    """The annotations payload; a failure here never costs the frame its tags."""
+    try:
+        return build_annotations(objs, sol, width, height, legend, xform)
+    except Exception as exc:
+        log.warning("annotations failed (%s)", exc)
+        log.debug(traceback.format_exc())
+        return None
+
+
+def _frame_time(path: Path, fr: dict, offset_flag, tol_flag, site_flag, time_flag, tz_flag, policy_flags,
+                solve_source=None):
+    fc = cfgmod.resolve(path.parent, offset_flag, tol_flag, site_flag, time_flag, tz_flag, policy_flags,
+                        solve_source)
     exif = read_exif(path)
     fr["time_tolerance_min"] = int(fc.tolerance_min) if float(fc.tolerance_min).is_integer() else fc.tolerance_min
     fr["time_source"] = fc.time_source
@@ -128,7 +154,7 @@ def _frame_time(path: Path, fr: dict, offset_flag, tol_flag, site_flag, time_fla
 
 def process_copy(path: Path, rep_fr: dict, rep_sol, rep_ident: Identification, m, offset_flag, tol_flag, site_flag,
                  overlay_dir: Path | None, make_overlay: bool, tz_flag: str | None = None,
-                 policy_flags: dict | None = None) -> tuple[dict, list[dict]]:
+                 policy_flags: dict | None = None, overlay_scores: bool = False) -> tuple[dict, list[dict]]:
     """A stacking-sequence frame whose pointing matches the representative: reuse its objects."""
     from .stack import map_objects
 
@@ -141,16 +167,19 @@ def process_copy(path: Path, rep_fr: dict, rep_sol, rep_ident: Identification, m
         c = rep_sol.wcs.pixel_to_world(float(cx[0]), float(cy[0]))
         fr.update(solved=True, solver="stack-copy", grade=rep_fr["grade"], rms_px=round(m.rms_px, 2),
                   stars=int(m.pairs), center_ra_deg=round(float(c.ra.deg), 3), center_dec_deg=round(float(c.dec.deg), 3),
-                  fov_deg=rep_fr["fov_deg"], best_fit_time=None, time_flag=None, stack_of=rep_fr["file"],
+                  fov_deg=rep_fr["fov_deg"], solve_source=rep_fr.get("solve_source"), best_fit_time=None, time_flag=None, stack_of=rep_fr["file"],
                   objects=[o.as_dict() for o in objs])
         log.info("%s: stack-copy of %s (shift %.2f deg, %d pairs)", path.name, Path(rep_fr["file"]).name,
                  m.offset_deg, m.pairs)
+        fr["annotations"] = _annotations(objs, rep_sol, rep_sol.width, rep_sol.height, legend_text(
+            _parse_iso(fr["true_time"]), fr["time_tolerance_min"], "stack-copy", rep_fr["grade"], int(m.pairs)),
+            xform=m.apply)
         if make_overlay:
             od = overlay_dir or default_overlay_dir(path.parent)
             out = od / f"{path.stem}_astro.jpg"
             legend = [path.name, f"time {fr['true_time']} +/- {fr['time_tolerance_min']} min ({fr['time_source']})",
                       f"stack-copy of {Path(rep_fr['file']).name}: shift {m.offset_deg:.2f} deg, {m.pairs} stars matched"]
-            draw_overlay(path, out, rep_sol.width, objs, legend)
+            draw_overlay(path, out, rep_sol.width, objs, legend, scores=overlay_scores)
             fr["overlay"] = posix(out)
         for o in objs:
             rows.append(_row(fr, o, rep_sol))
