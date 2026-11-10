@@ -58,6 +58,7 @@ class ExifInfo:
     width: int
     height: int
     exposure_s: float | None
+    lens: str | None = None
 
 
 def _rational(v) -> float | None:
@@ -81,7 +82,9 @@ def read_exif(path: Path) -> ExifInfo:
             dt = datetime.strptime(str(dto).strip("\x00 "), "%Y:%m:%d %H:%M:%S")
         except ValueError:
             dt = None
-    return ExifInfo(dt, _rational(sub.get(37386)), _rational(sub.get(41989)), w, h, _rational(sub.get(33434)))
+    lens = sub.get(42036)
+    lens = str(lens).strip("\x00 ") or None if lens else None
+    return ExifInfo(dt, _rational(sub.get(37386)), _rational(sub.get(41989)), w, h, _rational(sub.get(33434)), lens)
 
 
 def _read_exif_raw(path: Path) -> ExifInfo:

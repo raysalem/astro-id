@@ -9,6 +9,7 @@ import numpy as np
 
 from . import confidence as C
 from . import data
+from . import tagpolicy as TP
 from .config import Site
 from .solve import Solution, safe_world2pix
 from .timeutil import window
@@ -35,6 +36,15 @@ class Obj:
     sep_deg: float | None = None  # planets/Moon: distance from prediction to nearest bright source
     mag: float | None = None
     figure: list[tuple[float, float, float, float]] = field(default_factory=list)  # constellation segments
+    level: int = TP.LEVEL_STAR
+    ra: float | None = None
+    dec: float | None = None
+    parent: str | None = None  # tag of the constellation it lies in (None for constellations)
+    member_of: str | None = None  # tag of the cluster/asterism that subsumes it
+    groups: list[str] = field(default_factory=list)  # every group it is geometrically part of
+    taggable: bool = True
+    style: str = "plain"
+    hips: tuple[int, ...] = ()  # star: its HIP id; asterism: member HIP ids
 
     @property
     def tier(self) -> str:
@@ -42,7 +52,7 @@ class Obj:
 
     @property
     def tag(self) -> str:
-        return make_tag(self.name)
+        return TP.styled_tag(self.name, self.level, self.kind, self.style)
 
     def as_dict(self) -> dict:
         return {
@@ -50,13 +60,14 @@ class Obj:
             "tier": self.tier,
             "x": None if self.x is None else round(float(self.x), 1),
             "y": None if self.y is None else round(float(self.y), 1),
+            "level": int(self.level),
+            "magnitude": None if self.mag is None or self.level == TP.LEVEL_CONSTELLATION
+            else round(float(self.mag), 2),
+            "parent": self.parent, "member_of": self.member_of, "taggable": bool(self.taggable),
         }
 
 
-def make_tag(name: str) -> str:
-    t = name.lower().replace(",", " ")
-    t = " ".join(t.split())
-    return t[:64].rstrip()
+make_tag = TP.make_tag
 
 
 @dataclass
@@ -150,7 +161,8 @@ def bright_sources(sol: Solution, n: int = 150):
 
 
 # ---------------------------------------------------------------- main
-def identify(sol: Solution, t_true: datetime, tol_min: float, site: Site | None, time_source: str) -> Identification:
+def identify(sol: Solution, t_true: datetime, tol_min: float, site: Site | None, time_source: str,
+             policy: TP.TagPolicy | None = None, min_confidence: int = 65) -> Identification:
     q = C.solve_quality(sol.grade)
     times = window(t_true, tol_min)
     epoch = t_true.year + (t_true.timetuple().tm_yday - 0.5) / 365.25
@@ -185,7 +197,8 @@ def identify(sol: Solution, t_true: datetime, tol_min: float, site: Site | None,
             dd = 1.0 if h in matched else C.detectability(vmag, lim)
             m = C.horizon_margin(None if amin is None else float(amin[k]))
             objs.append(Obj(name, "star", C.combine(q, p, dd, m), float(x[k]), float(y[k]),
-                            alt_min=None if amin is None else float(amin[k]), mag=vmag))
+                            alt_min=None if amin is None else float(amin[k]), mag=vmag, level=TP.LEVEL_STAR,
+                            ra=float(cra[ii[k]]), dec=float(cdec[ii[k]]), hips=(h,)))
 
     # ---- deep-sky objects
     dsos = data.deep_sky()
@@ -207,7 +220,8 @@ def identify(sol: Solution, t_true: datetime, tol_min: float, site: Site | None,
             m = C.frame_margin(fraction_inside(sol, x[k], y[k], r_px)) * C.horizon_margin(
                 None if amin is None else float(amin[k]))
             objs.append(Obj(o.name, o.kind, C.combine(q, p, dd, m), float(x[k]), float(y[k]), radius_px=r_px,
-                            alt_min=None if amin is None else float(amin[k]), mag=o.vmag))
+                            alt_min=None if amin is None else float(amin[k]), mag=o.vmag, level=TP.LEVEL_CATALOG,
+                            ra=o.ra, dec=o.dec))
 
     # ---- Sun, Moon, planets (time-dependent)
     bx, by, _ = bright_sources(sol)
@@ -252,7 +266,7 @@ def identify(sol: Solution, t_true: datetime, tol_min: float, site: Site | None,
         m = C.horizon_margin(None if alt is None else float(alt.min()))
         conf = C.combine(q, p, dd, m, bonus, cap)
         objs.append(Obj(name, kind, conf, float(x[mid]), float(y[mid]), alt_min=None if alt is None else float(alt.min()),
-                        sep_deg=sep_deg, mag=mag))
+                        sep_deg=sep_deg, mag=mag, level=TP.LEVEL_BODY, ra=float(ra[mid]), dec=float(dec[mid])))
         if key == "moon" and found:
             best_fit = moon_best_fit_time(sol, cx_[j], cy_[j], t_true, site)
 
@@ -277,7 +291,39 @@ def identify(sol: Solution, t_true: datetime, tol_min: float, site: Site | None,
         for a, b in segs:
             if a in pos and b in pos and np.isfinite(pos[a]).all() and np.isfinite(pos[b]).all():
                 figure.append((*pos[a], *pos[b]))
-        objs.append(Obj(data.CONSTELLATION_NAMES.get(abbr, abbr), "constellation", conf, None, None, figure=figure))
+        objs.append(Obj(data.CONSTELLATION_NAMES.get(abbr, abbr), "constellation", conf, None, None, figure=figure,
+                        level=TP.LEVEL_CONSTELLATION))
+
+    # ---- asterisms (named star groups): >= 80% of the member stars in frame and matched
+    for aname, ahips in TP.ASTERISMS.items():
+        members = [h for h in ahips if h in hip_index]
+        if len(members) < 2:
+            continue
+        ii = np.array([hip_index[h] for h in members])
+        x, y = project(sol, cra[ii], cdec[ii])
+        inf = in_frame(sol, x, y)
+        amin = None
+        if site is not None:
+            amin, amax = alt_window(cra[ii], cdec[ii])
+            inf &= amax >= 0
+        seen = [bool(inf[n]) and _star_seen(sol, h, matched, x[n], y[n], bx, by) for n, h in enumerate(members)]
+        frac = sum(seen) / len(ahips)
+        if frac < TP.ASTERISM_MIN_FRACTION:
+            continue
+        m = C.horizon_margin(None if amin is None else float(np.min(amin)))
+        conf = C.combine(q, 1.0, frac, m)
+        vis = [n for n in range(len(members)) if inf[n]]
+        order = list(range(len(members))) + ([0] if aname in TP.ASTERISM_CLOSED else [])
+        figure = [(float(x[a]), float(y[a]), float(x[b]), float(y[b])) for a, b in zip(order, order[1:])
+                  if inf[a] and inf[b]]
+        rr = np.radians(cra[ii])
+        objs.append(Obj(aname, "asterism", conf, float(np.mean(x[vis])), float(np.mean(y[vis])), figure=figure,
+                        level=TP.LEVEL_ASTERISM, mag=float(np.min(cat.vmag[ii])), hips=tuple(members),
+                        alt_min=None if amin is None else float(np.min(amin)),
+                        ra=float(np.degrees(np.arctan2(np.mean(np.sin(rr)), np.mean(np.cos(rr)))) % 360),
+                        dec=float(np.mean(cdec[ii]))))
+
+    _hierarchy(objs, cra, cdec, hip_index, policy or TP.TagPolicy(), min_confidence)
 
     # ---- time check
     time_flag = None
@@ -285,6 +331,34 @@ def identify(sol: Solution, t_true: datetime, tol_min: float, site: Site | None,
         time_flag = "best_fit_outside_tolerance"
     objs.sort(key=lambda o: (-o.confidence, o.name))
     return Identification(objs, best_fit, time_flag, checks)
+
+
+def _hierarchy(objs: list[Obj], cra, cdec, hip_index, policy: TP.TagPolicy, min_confidence: int) -> None:
+    """Tag style, parent constellation, group membership and the taggable flag (in place)."""
+    for o in objs:
+        o.style = policy.tag_style
+    need = [o for o in objs if o.level != TP.LEVEL_CONSTELLATION and o.ra is not None]
+    if need:
+        abbrs = TP.constellation_of(np.array([o.ra for o in need]), np.array([o.dec for o in need]))
+        for o, a in zip(need, abbrs):
+            o.parent = TP.constellation_tag(a, policy.tag_style) if a else None
+            if o.level == TP.LEVEL_ASTERISM and len(o.hips) > 1:
+                # an asterism spanning several constellations has no single parent
+                ii = [hip_index[h] for h in o.hips]
+                ab = set(TP.constellation_of(cra[ii], cdec[ii]))
+                o.parent = TP.constellation_tag(ab.pop(), policy.tag_style) if len(ab) == 1 else None
+    # membership: stars inside a cluster's radius (and fainter than it), asterism member stars
+    clusters = sorted((o for o in objs if o.level == TP.LEVEL_CATALOG and o.kind == "cluster"
+                       and o.radius_px > 0 and o.x is not None), key=lambda c: c.radius_px)
+    asterisms = sorted((o for o in objs if o.level == TP.LEVEL_ASTERISM), key=lambda a: -a.confidence)
+    for s in objs:
+        if s.level != TP.LEVEL_STAR or s.x is None:
+            continue
+        groups = [c.tag for c in clusters if math.hypot(s.x - c.x, s.y - c.y) <= c.radius_px
+                  and (s.mag is None or c.mag is None or s.mag > c.mag)]
+        groups += [a.tag for a in asterisms if s.hips and s.hips[0] in a.hips]
+        s.groups = groups
+    TP.apply_policy(objs, policy, min_confidence)
 
 
 def _star_seen(sol: Solution, hip: int, matched: set[int], x: float, y: float, bx, by) -> bool:

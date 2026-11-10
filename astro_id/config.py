@@ -7,11 +7,15 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from .tagpolicy import TagPolicy, make_policy
 from .timeutil import get_tz, parse_offset, parse_tolerance
 
 log = logging.getLogger("astro_id")
 CONFIG_NAME = "astro-id.json"
 DEFAULT_TOLERANCE_MIN = 15.0
+STACK_MODES = ("representative", "all")
+DEFAULT_STACK_GAP_S = 120.0
+DEFAULT_STACK_TOL = 0.02  # max pointing change, as a fraction of the frame diagonal
 
 
 @dataclass
@@ -31,6 +35,24 @@ class FrameConfig:
     time_source: str  # "config" | "exif" | "facet"
     config_path: Path | None
     time_override: datetime | None = None  # --time: true local time of this frame (Facet's date)
+    policy: TagPolicy | None = None
+
+
+@dataclass
+class StackConfig:
+    mode: str = "representative"
+    gap_s: float = DEFAULT_STACK_GAP_S
+    tol: float = DEFAULT_STACK_TOL
+
+
+def stack_config(folder: Path, mode_flag: str | None = None, gap_flag: float | None = None) -> StackConfig:
+    """Flags override astro-id.json ``stack_mode`` / ``stack_gap_s`` / ``stack_tolerance``."""
+    cfg = load_config(find_config(folder))
+    mode = (mode_flag or cfg.get("stack_mode") or "representative").lower()
+    if mode not in STACK_MODES:
+        raise ValueError(f"stack mode must be one of {STACK_MODES}, got {mode!r}")
+    gap = gap_flag if gap_flag is not None else cfg.get("stack_gap_s", DEFAULT_STACK_GAP_S)
+    return StackConfig(mode, float(gap), float(cfg.get("stack_tolerance", DEFAULT_STACK_TOL)))
 
 
 def find_config(folder: Path) -> Path | None:
@@ -120,10 +142,11 @@ def parse_time_flag(text: str, tz_name: str | None) -> datetime:
 
 
 def resolve(folder: Path, offset_flag: str | None, tol_flag: str | None, site_flag: str | None,
-            time_flag: str | None = None, tz_flag: str | None = None) -> FrameConfig:
+            time_flag: str | None = None, tz_flag: str | None = None, policy_flags: dict | None = None) -> FrameConfig:
     """Flags override the nearest astro-id.json."""
     cpath = find_config(folder)
     cfg = load_config(cpath)
+    policy = make_policy(cfg.get("tag_policy"), **(policy_flags or {}))
     offset_txt = offset_flag if offset_flag is not None else cfg.get("clock_offset")
     have_offset = offset_txt is not None and str(offset_txt).strip() != ""
     tol = parse_tolerance(tol_flag) if tol_flag is not None else float(cfg.get("time_tolerance_min", DEFAULT_TOLERANCE_MIN))
@@ -143,4 +166,5 @@ def resolve(folder: Path, offset_flag: str | None, tol_flag: str | None, site_fl
             "config" if (offset_flag is not None or "clock_offset" in cfg) else "exif"),
         config_path=cpath,
         time_override=t_over,
+        policy=policy,
     )

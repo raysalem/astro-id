@@ -40,12 +40,14 @@ def true_wcs() -> WCS:
     return w
 
 
-def render(path: Path, camera_time: str) -> None:
+def render(path: Path, camera_time: str, shift: tuple[float, float] = (0.0, 0.0), exposure=None) -> None:
+    """Synthetic frame; ``shift`` moves the sky by (dx, dy) pixels (a re-pointed or drifted frame)."""
     rng = np.random.default_rng(1)
     img = 20 + rng.normal(0, 2.0, (H, W))
     cat = data.hipparcos()
     ra, dec = cat.at_epoch(2026.85)
     w = true_wcs()
+    w.wcs.crpix = [w.wcs.crpix[0] + shift[0], w.wcs.crpix[1] + shift[1]]
     sel = cat.vmag < 8.0
     x, y = w.wcs_world2pix(ra[sel], dec[sel], 0)
     mags = cat.vmag[sel]
@@ -67,6 +69,8 @@ def render(path: Path, camera_time: str) -> None:
     ifd[36867] = camera_time
     ifd[37386] = FOCAL35
     ifd[41989] = int(round(FOCAL35))
+    if exposure is not None:
+        ifd[33434] = exposure
     im.save(path, "JPEG", quality=95, exif=exif)
 
 
@@ -136,7 +140,8 @@ def _check_contract(doc: dict):
     obj_keys = set(stub["results"][0]["objects"][0].keys())
     for fr in doc["results"]:
         assert set(fr.keys()) == frame_keys
-        assert fr["solver"] in ("astap", "astrometry.net", None)
+        assert fr["solver"] in ("astap", "astrometry.net", "stack-copy", None)
+        assert (fr["solver"] == "stack-copy") == (fr["stack_of"] is not None)
         assert fr["grade"] in ("A", "B", "C", None)
         assert fr["time_source"] in ("config", "exif", "facet")
         assert fr["time_flag"] in (None, "best_fit_outside_tolerance")
@@ -149,7 +154,12 @@ def _check_contract(doc: dict):
             exp = "high" if o["confidence"] >= 80 else "likely" if o["confidence"] >= 65 else "candidate"
             assert o["tier"] == exp
             assert o["tag"] == o["tag"].lower() and "," not in o["tag"] and len(o["tag"]) <= 64
-            assert o["kind"] in ("galaxy", "nebula", "cluster", "star", "planet", "moon", "constellation", "other")
+            assert o["kind"] in ("galaxy", "nebula", "cluster", "star", "planet", "moon", "constellation", "asterism",
+                                 "other")
+            assert o["level"] in (1, 2, 3, 4, 5) and isinstance(o["taggable"], bool)
+            assert (o["level"] == 1) == (o["kind"] == "constellation")
+            if o["level"] == 1:
+                assert o["magnitude"] is None and o["parent"] is None
             if o["kind"] == "constellation":
                 assert o["x"] is None and o["y"] is None
             else:
@@ -174,6 +184,14 @@ def test_cli_json_contract_with_config_time(frame_dir, stub_astap, capsys, tmp_p
     tx, ty = w.wcs_world2pix(pra, pdec, 0)
     assert math.hypot(jx - tx[0], jy - ty[0]) * SCALE < 0.1  # < 0.1 deg
     assert Path(fr["overlay"]).exists() and (out_dir / "astro-id-report.csv").exists()
+    # tag hierarchy on a real identification: asterism found, its stars subsumed, stars off by default
+    assert names["Leo"]["level"] == 1 and names["Jupiter"]["level"] == 2 and names["Regulus"]["level"] == 5
+    assert names["Jupiter"]["parent"] == "leo" and names["Regulus"]["parent"] == "leo"
+    sickle = names["Sickle of Leo"]
+    assert sickle["kind"] == "asterism" and sickle["level"] == 4 and sickle["taggable"] and sickle["confidence"] >= 80
+    assert names["Regulus"]["member_of"] == "sickle of leo" and not names["Regulus"]["taggable"]
+    assert not any(o["taggable"] for o in fr["objects"] if o["level"] == 5)
+    assert all(o["taggable"] for o in fr["objects"] if o["level"] in (1, 2))
 
 
 def test_exif_only_time_caps_planets(frame_dir, stub_astap, capsys, tmp_path, monkeypatch):

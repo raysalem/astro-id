@@ -28,6 +28,19 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--json", action="store_true", help="print the contract JSON to stdout")
     s.add_argument("--no-overlay", action="store_true")
     s.add_argument("--no-fallback", action="store_true", help="never use nova.astrometry.net")
+    g = s.add_argument_group("tag policy (default: astro-id.json tag_policy, else levels 1-4, stars off)")
+    g.add_argument("--tag-levels", help="levels that become tags, e.g. 1,2,3,4 (1 constellation, 2 Sun/Moon/planet, "
+                                        "3 Messier/NGC/IC, 4 asterism, 5 named star)")
+    g.add_argument("--star-mag-limit", type=float,
+                   help="tag named stars at least this bright (e.g. 1.5 = the ~20 brightest); turns level 5 on")
+    g.add_argument("--max-catalog-mag", type=float, help="faintest catalog object (level 3) to tag (default 6.0)")
+    g.add_argument("--tag-style", choices=["plain", "kind"],
+                   help="plain: 'orion'; kind: 'constellation/orion', 'planet/jupiter' (default plain)")
+    k = s.add_argument_group("stacking sequences (folder runs)")
+    k.add_argument("--stack-mode", choices=["representative", "all"],
+                   help="representative: solve the middle frame of a sequence and reuse it for frames that "
+                        "point the same way (default); all: solve every frame")
+    k.add_argument("--stack-gap", type=float, help="max seconds between frames of one sequence (default 120)")
     s.add_argument("-v", "--verbose", action="store_true")
     t = sub.add_parser("site", help="pick the observing site on Google Maps -> astro-id.json")
     t.add_argument("folder")
@@ -49,6 +62,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "setup":
         return cmd_setup()
     return cmd_solve(args)
+
+
+def policy_flags(args) -> dict:
+    return {"levels": args.tag_levels, "star_mag_limit": args.star_mag_limit,
+            "max_catalog_mag": args.max_catalog_mag, "tag_style": args.tag_style}
 
 
 def cmd_setup() -> int:
@@ -85,6 +103,10 @@ def cmd_solve(args) -> int:
             if target.is_dir():
                 raise ValueError("--time applies to a single file, not a folder")
             cfgmod.parse_time_flag(args.time, args.timezone)
+        from .tagpolicy import make_policy
+
+        make_policy(None, **policy_flags(args))
+        stack_cfg = cfgmod.stack_config(target if target.is_dir() else target.parent, args.stack_mode, args.stack_gap)
     except ValueError as exc:
         log.error("%s", exc)
         return 2
@@ -97,14 +119,45 @@ def cmd_solve(args) -> int:
         log.error("no images in %s", target)
         return 2
     overlay_dir = Path(args.overlay_dir) if args.overlay_dir else None
-    results, rows_by_dir = [], {}
-    for i, f in enumerate(files, 1):
-        log.info("[%d/%d] %s", i, len(files), f.name)
+    pf = policy_flags(args)
+    by_file: dict = {}
+    rows_by_file: dict = {}
+
+    def run_one(f, ctx=None):
         fr, rows = process(f, args.offset, args.time_tolerance, args.site, overlay_dir, not args.no_overlay,
-                           not args.no_fallback, args.time, args.timezone)
-        results.append(fr)
+                           not args.no_fallback, args.time, args.timezone, pf, args.min_confidence, ctx)
+        by_file[f], rows_by_file[f] = fr, rows
+
+    groups = [[f] for f in files]
+    exifs: dict = {}
+    if stack_cfg.mode == "representative" and len(files) > 1:
+        from .imageio import read_exif
+        from .stack import group_frames
+
+        for f in files:
+            try:
+                exifs[f] = read_exif(f)
+            except Exception as exc:  # unreadable EXIF: the frame stands alone
+                log.debug("%s: no EXIF for stacking (%s)", f.name, exc)
+                exifs[f] = None
+        groups = group_frames(files, exifs, stack_cfg.gap_s)
+        for g in groups:
+            if len(g) > 1:
+                log.info("stacking sequence: %s", ", ".join(f.name for f in g))
+    done = 0
+    for g in groups:
+        if len(g) == 1:
+            done += 1
+            log.info("[%d/%d] %s", done, len(files), g[0].name)
+            run_one(g[0])
+            continue
+        _run_sequence(g, run_one, by_file, rows_by_file, args, overlay_dir, pf, stack_cfg, exifs, done, len(files))
+        done += len(g)
+    results, rows_by_dir = [], {}
+    for f in files:
+        results.append(by_file[f])
         od = overlay_dir or default_overlay_dir(f.parent)
-        rows_by_dir.setdefault(od, []).extend(rows)
+        rows_by_dir.setdefault(od, []).extend(rows_by_file[f])
     for od, rows in rows_by_dir.items():
         try:
             p = write_csv(od / CSV_NAME, rows)
@@ -116,6 +169,33 @@ def cmd_solve(args) -> int:
     if args.json:
         sys.stdout.write(json.dumps({"contract": CONTRACT_VERSION, "results": results}, indent=1) + "\n")
     return 0
+
+
+def _run_sequence(group, run_one, by_file, rows_by_file, args, overlay_dir, pf, stack_cfg, exifs, done, total):
+    """Solve the middle frame; frames that register to it reuse its objects, the rest are solved alone."""
+    from .pipeline import process_copy
+    from .stack import representative, verify
+
+    rep = representative(group)
+    ctx: dict = {}
+    log.info("[%d/%d] %s (sequence representative)", done + 1, total, rep.name)
+    run_one(rep, ctx)
+    for n, f in enumerate([f for f in group if f != rep], start=2):
+        log.info("[%d/%d] %s (sequence of %s)", done + n, total, f.name, rep.name)
+        m = None
+        if by_file[rep]["solved"] and "sol" in ctx:
+            try:
+                m = verify(f, exifs[f], ctx["sol"], stack_cfg.tol)
+            except Exception as exc:
+                log.warning("%s: stack check failed (%s); solving it alone", f.name, exc)
+        if m is None:
+            if by_file[rep]["solved"]:
+                log.info("%s: pointing differs from %s; solving it alone", f.name, rep.name)
+            run_one(f)
+            continue
+        by_file[f], rows_by_file[f] = process_copy(f, by_file[rep], ctx["sol"], ctx["ident"], m, args.offset,
+                                                   args.time_tolerance, args.site, overlay_dir, not args.no_overlay,
+                                                   args.timezone, pf)
 
 
 if __name__ == "__main__":  # pragma: no cover

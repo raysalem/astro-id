@@ -187,7 +187,8 @@ def test_tag_cap(db, engine, monkeypatch):
     run(db, [P1])
     mine = astro_tags(db, P1)
     assert len(mine) == 3
-    assert "plate-solved" in mine and "cygnus" in mine and "deneb" in mine   # highest first
+    # cap order: status, then level (constellation 1, catalog 3) before stars (5)
+    assert "plate-solved" in mine and "cygnus" in mine and "m31 andromeda galaxy" in mine
     assert len(tags(db, P1)) == MAX_TAGS_PER_PHOTO
 
 
@@ -292,3 +293,209 @@ def test_photo_with_manual_time_never_in_folder_run(db, engine):
     assert P2 in targets and "C:/photos/night" in targets
     i = targets.index(P2)
     assert "--time" in engine.extras[i]
+
+
+# ---- tag hierarchy (contract v1 additive: level / taggable) ----
+
+def _obj(tag, level, conf=100, taggable=True, kind="star"):
+    return {"name": tag, "tag": tag, "kind": kind, "confidence": conf, "tier": "high", "x": 1.0, "y": 1.0,
+            "level": level, "magnitude": 1.0, "parent": None, "member_of": None, "taggable": taggable}
+
+
+def test_desired_tags_filters_taggable_and_orders_by_level():
+    r = {"solved": True, "objects": [
+        _obj("deneb", 5, 99), _obj("orion's belt", 4, 70, kind="asterism"), _obj("alnitak", 5, 100, taggable=False),
+        _obj("m45 pleiades", 3, 90, kind="cluster"), _obj("uranus", 2, 80, kind="planet"),
+        _obj("orion", 1, 66, kind="constellation"), _obj("taurus", 1, 95, kind="constellation"),
+        _obj("faint", 2, 50, kind="planet")]}
+    assert ap.desired_tags(r, 65) == ["plate-solved", "taurus", "orion", "uranus", "m45 pleiades",
+                                      "orion's belt", "deneb"]
+
+
+def test_old_engine_without_hierarchy_fields_still_works():
+    r = {"solved": True, "objects": [{"tag": "cygnus", "confidence": 90}, {"tag": "deneb", "confidence": 95}]}
+    assert ap.desired_tags(r, 65) == ["plate-solved", "deneb", "cygnus"]
+
+
+def test_cap_keeps_planets_uranus_regression(db, monkeypatch):
+    """60 taggable objects at confidence 100 (stars on): Uranus must survive the 50-tag cap."""
+    objs = [_obj(f"star {i:02d}", 5, 100) for i in range(52)]
+    objs += [_obj(f"const {i}", 1, 90, kind="constellation") for i in range(6)]
+    objs += [_obj("uranus", 2, 100, kind="planet"), _obj("jupiter", 2, 100, kind="planet")]
+    frame = {"file": P1, "solved": True, "objects": objs}
+    monkeypatch.setattr(ap, "_run_engine", lambda *a, **k: [frame])
+    run(db, [P1])
+    mine = astro_tags(db, P1)
+    assert len(mine) == MAX_TAGS_PER_PHOTO
+    assert "uranus" in mine and "jupiter" in mine and "plate-solved" in mine
+    assert all(f"const {i}" in mine for i in range(6))
+    assert sum(t.startswith("star ") for t in mine) == MAX_TAGS_PER_PHOTO - 9
+
+
+def test_kind_style_tags_with_slash_are_valid(db, monkeypatch):
+    frame = {"file": P1, "solved": True, "objects": [
+        _obj("constellation/orion", 1, kind="constellation"), _obj("planet/jupiter", 2, kind="planet"),
+        _obj("messier/m45 pleiades", 3, kind="cluster"), _obj("asterism/orion's belt", 4, kind="asterism")]}
+    monkeypatch.setattr(ap, "_run_engine", lambda *a, **k: [frame])
+    run(db, [P1])
+    assert astro_tags(db, P1) == sorted(["plate-solved", "constellation/orion", "planet/jupiter",
+                                         "messier/m45 pleiades", "asterism/orion's belt"])
+
+
+def test_policy_and_stack_flags_passed_to_engine(db, engine):
+    ap.configure({"engine": "X", "batch_min": 99, "tag_levels": [1, 2, 3, 4, 5], "star_mag_limit": 1.5,
+                  "max_catalog_mag": 5.0, "tag_style": "kind", "stack_mode": "all", "stack_gap_s": 60}, db)
+    run(db, [P1])
+    f = flags(engine)
+    assert f[f.index("--tag-levels") + 1] == "1,2,3,4,5"
+    assert f[f.index("--star-mag-limit") + 1] == "1.5"
+    assert f[f.index("--max-catalog-mag") + 1] == "5.0"
+    assert f[f.index("--tag-style") + 1] == "kind"
+    assert f[f.index("--stack-mode") + 1] == "all"
+    assert f[f.index("--stack-gap") + 1] == "60"
+
+
+def test_unset_policy_keys_pass_nothing(db, engine):
+    run(db, [P1])
+    assert not any(x.startswith(("--tag", "--star", "--max-catalog", "--stack")) for x in flags(engine))
+
+
+# ---- pending selection, lock, exit hook ----
+
+ROOT = "C:/photos/night"
+OUTSIDE = "D:/misc/astro_0001.JPG"
+RAW9 = "C:/photos/night/RAW_0009.ARW"
+
+
+def _setup_pending(db):
+    c = sqlite3.connect(db)
+    c.execute("UPDATE photos SET scanned_at='2026-11-09 18:00:00'")
+    c.execute("INSERT INTO photos(path, filename, category, scanned_at) VALUES (?,?,?,?)",
+              (OUTSIDE, "astro_0001.JPG", "astro", "2026-11-09 18:00:00"))
+    c.execute("INSERT INTO photos(path, filename, category, tags, scanned_at) VALUES (?,?,?,?,?)",
+              ("D:/misc/dog.JPG", "dog.JPG", "pets", "dog,grass", "2026-11-10 09:00:00"))
+    # P1: tagged after its scan -> done. P2: rescanned after its tags -> pending. P3 + RAW: no tags -> pending.
+    insert_manual_tag(c, P1, "plate-solved", "user", "astro-id", "2026-11-09 18:30:00")
+    insert_manual_tag(c, P2, "plate-solved", "user", "astro-id", "2026-11-09 18:30:00")
+    insert_manual_tag(c, P1, "family", "user", None, "2026-11-01 00:00:00")
+    c.execute("UPDATE photos SET scanned_at='2026-11-10 08:00:00' WHERE path=?", (P2,))
+    c.commit(); c.close()
+
+
+def test_pending_selection(db):
+    _setup_pending(db)
+    cfg = {"roots": [ROOT]}
+    assert ap.select_pending(db, cfg) == sorted([P2, P3, RAW9, OUTSIDE])        # all astro, no since
+    got = ap.select_pending(db, cfg, since="2026-11-09 19:00:00")
+    assert OUTSIDE not in got and P3 in got and P2 in got                        # roots ignore since
+    c = sqlite3.connect(db)
+    c.execute("UPDATE photos SET scanned_at='2026-11-10 09:00:00' WHERE path=?", (OUTSIDE,))
+    c.commit(); c.close()
+    assert OUTSIDE in ap.select_pending(db, cfg, since="2026-11-09 19:00:00")  # scanned in this run
+    assert "D:/misc/dog.JPG" not in ap.select_pending(db, cfg)                 # never astro
+
+
+def test_lock_exclusive_and_stale(tmp_path, monkeypatch):
+    lock = str(tmp_path / "logs" / "x.lock")
+    assert ap.acquire_lock(lock)
+    monkeypatch.setattr(ap, "_pid_alive", lambda pid: True)
+    Path(lock).write_text("999999 t", encoding="utf-8")
+    assert ap.lock_held(lock) and not ap.acquire_lock(lock)                     # live owner
+    monkeypatch.setattr(ap, "_pid_alive", lambda pid: False)                     # dead owner: stale
+    assert not ap.lock_held(lock) and ap.acquire_lock(lock)
+    ap.release_lock(lock)
+    assert not Path(lock).exists()
+
+
+def test_pid_alive_real_process():
+    assert ap._pid_alive(os.getpid())
+    assert not ap._pid_alive(0)
+
+
+def test_pending_cli_tags_and_releases_lock(db, engine, tmp_path):
+    _setup_pending(db)
+    log = tmp_path / "logs" / "astro-id.log"
+    ap.configure({"engine": "X", "batch_min": 99, "roots": [ROOT], "log_path": str(log)}, db)
+    assert ap.main(["--pending", "--db", db]) == 0
+    assert "plate-solve failed" in astro_tags(db, P3)          # stub frame 3 is unsolved
+    assert "jupiter" in astro_tags(db, P2)                     # rescanned photo re-tagged
+    assert astro_tags(db, P1) == ["plate-solved"]              # up to date: not re-run
+    assert sorted(t for t, _ in engine) == sorted([P2, P3, RAW9, OUTSIDE])
+    assert not (tmp_path / "logs" / "astro-id-catchup.lock").exists()
+    assert ("family", "user", None) in tags(db, P1)            # other sources untouched
+
+
+def test_pending_skips_when_lock_held(db, engine, tmp_path, monkeypatch):
+    _setup_pending(db)
+    log = tmp_path / "logs" / "astro-id.log"
+    ap.configure({"engine": "X", "roots": [ROOT], "log_path": str(log)}, db)
+    (tmp_path / "logs").mkdir()
+    (tmp_path / "logs" / "astro-id-catchup.lock").write_text("424242 t", encoding="utf-8")
+    monkeypatch.setattr(ap, "_pid_alive", lambda pid: True)
+    assert ap.run_pending(ap.get_config(), db) == {}
+    assert engine == []
+
+
+class _FakePopen:
+    calls = []
+
+    def __init__(self, cmd, **kw):
+        _FakePopen.calls.append((cmd, kw))
+        self.pid = 4321
+
+
+def test_exit_hook_spawns_detached_catch_up(db, tmp_path, monkeypatch):
+    _setup_pending(db)
+    log = tmp_path / "logs" / "astro-id.log"
+    ap.configure({"engine": "X", "roots": [ROOT], "log_path": str(log)}, db)
+    _FakePopen.calls = []
+    monkeypatch.setattr(ap.subprocess, "Popen", _FakePopen)
+    ap._on_exit()
+    assert len(_FakePopen.calls) == 1
+    cmd, kw = _FakePopen.calls[0]
+    assert cmd[0] == sys.executable and cmd[1].endswith("astro_id.py")
+    assert "--pending" in cmd and cmd[cmd.index("--since") + 1] == ap._PROCESS_START
+    assert kw["env"]["DB_PATH"] == os.path.abspath(db)
+    if os.name == "nt":
+        assert kw["creationflags"] & 0x08000000 and kw["creationflags"] & 0x00000008
+    assert kw["stdin"] == ap.subprocess.DEVNULL and log.exists()
+
+
+def test_exit_hook_no_pending_or_lock_or_disabled_spawns_nothing(db, tmp_path, monkeypatch):
+    log = tmp_path / "logs" / "astro-id.log"
+    _FakePopen.calls = []
+    monkeypatch.setattr(ap.subprocess, "Popen", _FakePopen)
+    c = sqlite3.connect(db)
+    for p in (P1, P2, P3, RAW9):
+        insert_manual_tag(c, p, "plate-solved", "user", "astro-id")
+    c.commit(); c.close()
+    ap.configure({"engine": "X", "roots": [ROOT], "log_path": str(log)}, db)
+    ap._on_exit()                                               # everything tagged
+    _setup_pending(db)
+    ap.configure({"engine": "X", "roots": [ROOT], "log_path": str(log), "catch_up": False}, db)
+    ap._on_exit()                                               # disabled
+    ap.configure({"engine": "X", "roots": [ROOT], "log_path": str(log)}, db)
+    (tmp_path / "logs").mkdir(exist_ok=True)
+    (tmp_path / "logs" / "astro-id-catchup.lock").write_text("424242 t", encoding="utf-8")
+    monkeypatch.setattr(ap, "_pid_alive", lambda pid: True)
+    ap._on_exit()                                               # a catch-up is running
+    assert _FakePopen.calls == []
+
+
+def _load_plugin_with_argv(monkeypatch, argv0):
+    registered = []
+    monkeypatch.setattr(sys, "argv", [argv0, "x"])
+    import atexit
+    monkeypatch.setattr(atexit, "register", lambda fn, *a, **k: registered.append(fn))
+    sp = importlib.util.spec_from_file_location("astro_id_argv_probe", PLUGIN)
+    mod = importlib.util.module_from_spec(sp)
+    sp.loader.exec_module(mod)
+    return mod, registered
+
+
+def test_exit_hook_registers_only_in_scan_process(monkeypatch):
+    mod, reg = _load_plugin_with_argv(monkeypatch, r"C:\Users\x\facet-wintest\facet.py")
+    assert reg == [mod._on_exit] and mod._exit_hook_registered
+    for argv0 in ("viewer.py", r"C:\venv\Scripts\uvicorn.exe", "-c", "pytest"):
+        mod, reg = _load_plugin_with_argv(monkeypatch, argv0)
+        assert reg == [] and not mod._exit_hook_registered

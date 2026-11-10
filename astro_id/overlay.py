@@ -9,6 +9,7 @@ from .imageio import load_rgb_preview
 
 COLORS = {"high": (60, 220, 90), "likely": (255, 180, 40), "candidate": (160, 160, 160)}
 LINE = (110, 170, 255)
+ASTERISM_LINE = (255, 120, 200)
 STAR_LABEL_MAG = 3.0  # label named stars only to this magnitude, to keep the frame readable
 DSO_KINDS = {"galaxy", "nebula", "cluster", "other"}
 LIKELY_MIN = 65
@@ -48,9 +49,23 @@ def draw_overlay(src: Path, out: Path, width_full: int, objects, legend_lines: l
             cy = sum(p[1] for p in inside) / len(inside)
             _label(d, (cx, cy), f"{o.name.upper()} {o.confidence}", font, col, im.size)
 
+    # asterisms: their own stick figure, labelled at the centroid
+    for o in objects:
+        if getattr(o, "kind", None) != "asterism":
+            continue
+        for x1, y1, x2, y2 in o.figure:
+            d.line([(x1 * s, y1 * s), (x2 * s, y2 * s)], fill=ASTERISM_LINE + (200,), width=lw)
+        if o.x is not None:
+            _label(d, (o.x * s, o.y * s + fs), f"{o.name} {o.confidence}", font, COLORS[o.tier], im.size)
+
     taken: list[tuple[float, float, float, float]] = []
     for o in sorted(objects, key=lambda o: -o.confidence):
-        if o.kind == "constellation" or o.x is None:
+        if o.kind in ("constellation", "asterism") or o.x is None:
+            continue
+        if getattr(o, "member_of", None) and not getattr(o, "taggable", True):
+            # member of a tagged cluster/asterism: small mark, no label (the group carries the name)
+            x, y, r = o.x * s, o.y * s, max(3.0, fs * 0.3)
+            d.ellipse([x - r, y - r, x + r, y + r], outline=COLORS[o.tier] + (160,), width=max(1, lw - 1))
             continue
         if o.kind == "star" and o.name != "Sun" and (o.mag or 0) > STAR_LABEL_MAG:
             continue

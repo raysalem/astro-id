@@ -86,6 +86,7 @@ class Solution:
     match_resid: np.ndarray = field(default_factory=lambda: np.zeros(0))
     match_hip: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=int))
     attempts: list[str] = field(default_factory=list)
+    det_smooth: float = 1.0  # detection smoothing scale (reduced px) the fit used
 
     @property
     def center(self) -> tuple[float, float] | None:
@@ -751,7 +752,7 @@ def solve_image(path: Path, exif, use_fallback: bool = True, epoch: float = 2026
     if best is not None:
         _, sm, solver, w, ci, dj, res, det = best
         attempts.append(f"chose detect scale s{sm}")
-        sol.det, sol.psf_px = det, fwhm_estimate(dets[sm]) * R
+        sol.det, sol.psf_px, sol.det_smooth = det, fwhm_estimate(dets[sm]) * R, sm
         best = (solver, w, ci, dj, res)
     if best is None or len(best[2]) < 6:
         sol.error = "solution did not verify against catalog"

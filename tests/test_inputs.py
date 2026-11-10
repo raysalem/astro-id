@@ -23,3 +23,16 @@ def test_pairs_not_double_counted():
 def test_single_raw_file_resolves_to_twin(tmp_path):
     _touch(tmp_path, "DSC0001.ARW", "DSC0001.JPG")
     assert collect(tmp_path / "DSC0001.ARW") == [tmp_path / "DSC0001.JPG"]
+
+
+def test_report_csv_merges_by_file(tmp_path):
+    from astro_id.pipeline import write_csv
+
+    p = tmp_path / "astro-id-report.csv"
+    write_csv(p, [{"file": "A.JPG", "object": "Orion"}, {"file": "A.JPG", "object": "Rigel"},
+                  {"file": "B.JPG", "object": "Leo"}])
+    write_csv(p, [{"file": "B.JPG", "object": "Jupiter"}])  # single-file run: only B is replaced
+    import csv
+
+    rows = [(r["file"], r["object"]) for r in csv.DictReader(open(p, newline="", encoding="utf-8"))]
+    assert rows == [("A.JPG", "Orion"), ("A.JPG", "Rigel"), ("B.JPG", "Jupiter")]

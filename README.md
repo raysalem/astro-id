@@ -1,7 +1,7 @@
 # astro-id
 
 Plate-solve night-sky photos and name what is in them: Messier and bright NGC/IC objects, IAU-named
-bright stars, the 88 constellations, the Sun, Moon and planets. Every object gets a **0-100 confidence**
+bright stars, asterisms, the 88 constellations, the Sun, Moon and planets. Every object gets a **0-100 confidence**
 and a tier, and each frame gets an annotated overlay JPG with constellation stick figures.
 
 Works for wide-field (14-35 mm) and narrow-field shots. Built to run on its own or behind the
@@ -66,6 +66,8 @@ None of these files are redistributed; the GPL and CC-BY-SA data stay outside th
 uv run astro-id solve <file-or-folder> [--min-confidence 65] [--offset +2559d11h08m]
                      [--time-tolerance 15m] [--site lat,lon[,elev_m]]
                      [--overlay-dir DIR] [--json] [--no-overlay] [--no-fallback] [-v]
+                     [--tag-levels 1,2,3,4] [--star-mag-limit M] [--max-catalog-mag 6.0]
+                     [--tag-style plain|kind] [--stack-mode representative|all] [--stack-gap 120]
 uv run astro-id site <folder>     # pick the observing site on Google Maps -> astro-id.json
 uv run astro-id setup             # download data, check ASTAP
 ```
@@ -141,6 +143,44 @@ planets are capped at *candidate*.
 All objects are listed in the JSON and CSV whatever their tier; consumers apply `--min-confidence`.
 The overlay colors labels green (high), amber (likely) and gray (candidate); faint NGC/IC candidates
 are left off the picture to keep it readable.
+
+## Tag hierarchy and tag policy
+
+A 20 mm frame holds dozens of named stars; tagging all of them buries the interesting objects. Each
+object therefore carries a `level`, its `magnitude`, the constellation it lies in (`parent`), the group
+that subsumes it (`member_of`) and a `taggable` flag computed from the tag policy:
+
+| Level | What | Tagged by default |
+|---|---|---|
+| 1 | constellation | yes |
+| 2 | Sun, Moon, planet | yes |
+| 3 | Messier / NGC / IC object | yes, if magnitude <= `max_catalog_mag` (6.0) |
+| 4 | asterism (Orion's Belt, Big Dipper, Summer Triangle, Winter Hexagon, Sickle of Leo, Teapot, W of Cassiopeia, ...) | yes |
+| 5 | named star | no; `--star-mag-limit 1.5` tags the ~20 brightest |
+
+- Members are never tagged next to their group: stars inside a tagged cluster's radius (the Pleiades
+  stars under `m45 pleiades`) and asterism stars (`orion's belt`, not Alnitak/Alnilam/Mintaka).
+- An asterism is found when at least 80 % of its member stars are in frame and detected; its
+  confidence is solve quality x that share x horizon margin.
+- `--tag-style kind` spells tags `constellation/orion`, `planet/jupiter`, `messier/m45 pleiades`,
+  `asterism/orion's belt`, `star/sirius`.
+- Per folder: `"tag_policy": {"levels": [1,2,3,4], "star_mag_limit": null, "max_catalog_mag": 6.0, "tag_style": "plain"}`
+  in `astro-id.json`; flags override it.
+- The JSON, CSV and overlay still list every object. On the overlay asterisms get pink stick figures and
+  subsumed member stars a small unlabeled mark.
+
+Asterisms are defined in `astro_id/tagpolicy.py` as lists of Hipparcos ids, written for this project.
+
+## Stacking sequences
+
+Astro shooting comes in bursts. In a folder run, frames taken back to back (gap <= 120 s, same lens,
+focal length, exposure and size) form a sequence. The middle frame is plate-solved; every other frame is
+registered to it by its star pattern (seconds, no ASTAP). If its pointing moved less than 2 % of the frame
+diagonal it reuses the representative's objects, moved into its own pixel frame, and is reported as
+`solver: "stack-copy"` with `stack_of`; otherwise it is solved on its own. Soft-focus or otherwise
+"bad" frames are not skipped: a frame that registers gets the tags, one that does not is solved alone.
+`--stack-mode all` (or `"stack_mode": "all"` in `astro-id.json`) solves every frame; `--stack-gap`
+changes the 120 s window.
 
 ## Development
 

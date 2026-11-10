@@ -4,9 +4,14 @@ Drop-in Facet plugin (copy or junction this file into ``<facet>/plugins/``).
 Stdlib only; Facet's own modules (``db.manual_tags``, ``config_resolve``) are
 imported lazily inside functions.
 
-Event hook: ``on_score_complete(data)``. Backfill CLI::
+Event hook: ``on_score_complete(data)`` (single-pass scans). Facet's multi-pass scan never emits
+it, so when this module loads inside a ``facet.py`` process it also registers an exit hook that
+spawns a detached catch-up run (``--pending``) for astro photos that have no astro-id tags yet.
+
+Backfill CLI::
 
     python plugins/astro_id.py <folder-or-file> [--min-confidence N] [--db PATH] [--dry-run]
+    python plugins/astro_id.py --pending [--since "YYYY-MM-DD HH:MM:SS"] [--db PATH]
 
 Tags are written to Facet's ``photo_manual_tags`` side table. The table's
 ``source`` column only allows 'user' or 'xmp', so rows owned by this plugin are
@@ -25,6 +30,8 @@ Config (``plugins.astro_id`` in the resolved scoring config)::
 from __future__ import annotations
 
 import argparse
+import atexit
+import datetime as _dt
 import json
 import logging
 import os
@@ -55,6 +62,18 @@ DEFAULTS = {
     "settle_s": 3.0,       # wait so a scan batch can accumulate before a job starts
     "batch_min": 4,        # this many pending frames in one folder -> one folder run
     "db_path": None,
+    # Tag policy, passed to the engine when set (None = astro-id.json tag_policy, else engine defaults:
+    # levels 1-4, stars off, max_catalog_mag 6.0, tag_style plain).
+    "tag_levels": None,        # e.g. [1, 2, 3, 4] or "1,2,3,4,5"
+    "star_mag_limit": None,    # e.g. 1.5 -> the ~20 brightest named stars become tags
+    "max_catalog_mag": None,   # faintest Messier/NGC/IC object to tag (engine default 6.0)
+    "tag_style": None,         # "plain" | "kind"
+    # Stacking sequences (folder runs): None = astro-id.json, else engine defaults (representative, 120 s).
+    "stack_mode": None,        # "representative" | "all"
+    "stack_gap_s": None,
+    # Catch-up after a scan: a facet.py process spawns a detached --pending run at exit.
+    "catch_up": True,
+    "log_path": None,          # default %LOCALAPPDATA%/Facet/data/logs/astro-id.log
     # "time_tolerance_min": 15 -- when set, passed as --time-tolerance (else astro-id.json / engine default)
     # "timezone": "America/Los_Angeles" -- when set, passed as --timezone with a naive Facet date
 }
@@ -197,16 +216,24 @@ def parse_engine_output(text: str) -> list[dict]:
 
 # ------------------------------------------------------------------- tags ---
 
+def _level(o: dict) -> int:
+    lv = o.get("level")
+    return int(lv) if isinstance(lv, (int, float)) else 9
+
+
 def desired_tags(result: dict, min_confidence: int) -> list[str]:
-    """Normalized tags for one frame, status tag first, then objects by confidence."""
+    """Normalized tags for one frame in cap order: status tag, then level 1..5
+    (constellation, Sun/Moon/planet, catalog object, asterism, star), confidence desc within a level.
+    Only objects the engine marked ``taggable`` (absent = taggable, pre-hierarchy engines) and at
+    least ``min_confidence``."""
     from db.manual_tags import ManualTagError, normalize_manual_tag
     if not result.get("solved"):
         return [TAG_FAILED]
     tags = [TAG_SOLVED]
     objs = sorted((o for o in result.get("objects") or []
                    if isinstance(o.get("confidence"), (int, float))
-                   and o["confidence"] >= min_confidence),
-                  key=lambda o: -o["confidence"])
+                   and o["confidence"] >= min_confidence and o.get("taggable", True) is not False),
+                  key=lambda o: (_level(o), -o["confidence"], str(o.get("tag"))))
     for o in objs:
         try:
             t = normalize_manual_tag(o.get("tag"))
@@ -225,6 +252,7 @@ def current_tags(conn, photo_path: str) -> list[str]:
 
 
 def plan_tags(conn, photo_path: str, tags: list[str]) -> list[str]:
+    # ``tags`` arrives in priority order (desired_tags), so the cap drops the lowest priority first.
     """The subset of ``tags`` that will actually be stored (cap, dedup, AI-tag skip)."""
     from db.manual_tags import MAX_TAGS_PER_PHOTO, is_ai_tag
     row = conn.execute("SELECT tags FROM photos WHERE path = ?", (photo_path,)).fetchone()
@@ -301,8 +329,21 @@ def facet_hints(conn, photo_path: str) -> dict:
     return hints
 
 
-def engine_flags(hints: dict, cfg: dict) -> list[str]:
+def policy_flags(cfg: dict) -> list[str]:
+    """Tag-policy and stacking flags from the plugin config (only the keys that are set)."""
     flags: list[str] = []
+    lv = cfg.get("tag_levels")
+    if lv is not None:
+        flags += ["--tag-levels", ",".join(str(int(x)) for x in lv) if isinstance(lv, (list, tuple)) else str(lv)]
+    for key, flag in (("star_mag_limit", "--star-mag-limit"), ("max_catalog_mag", "--max-catalog-mag"),
+                      ("tag_style", "--tag-style"), ("stack_mode", "--stack-mode"), ("stack_gap_s", "--stack-gap")):
+        if cfg.get(key) is not None:
+            flags += [flag, str(cfg[key])]
+    return flags
+
+
+def engine_flags(hints: dict, cfg: dict) -> list[str]:
+    flags: list[str] = policy_flags(cfg)
     if hints.get("site"):
         flags += ["--site", hints["site"]]
     if hints.get("time"):
@@ -463,6 +504,223 @@ def on_score_complete(data: dict) -> None:
         logger.exception("astro_id: on_score_complete failed")
 
 
+# ---------------------------------------------------------------- pending ---
+
+def _utc_now() -> str:
+    """UTC 'YYYY-MM-DD HH:MM:SS', the format of Facet's scanned_at and created_at (SQLite datetime('now'))."""
+    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def select_pending(db_path: str, cfg: dict, since: str | None = None) -> list[str]:
+    """Photos that need an astro-id run: no astro-id rows yet, or rescanned (scanned_at) after them.
+
+    Candidates: every photo under ``roots``; other astro photos (category/tags) only when scanned at or
+    after ``since`` (None = all), so a catch-up never sweeps the whole historical library."""
+    conn = _open_db(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT p.path, p.category, p.tags, p.scanned_at, "
+            "(SELECT MAX(t.created_at) FROM photo_manual_tags t WHERE t.photo_path = p.path AND t.created_by = ?) "
+            "FROM photos p", (OWNER,)).fetchall()
+    finally:
+        conn.close()
+    out = []
+    roots = cfg.get("roots") or []
+    for path, cat, tags, scanned, tagged in rows:
+        under = any(_under(path, r) for r in roots)
+        if not under:
+            if not is_astro({"path": path, "category": cat, "tags": tags}, {"roots": []}):
+                continue
+            if since and not (scanned and scanned >= since):
+                continue
+        if tagged is None or (scanned and scanned > tagged):
+            out.append(path)
+    return sorted(out)
+
+
+def default_log_path() -> str:
+    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    return os.path.join(base, "Facet", "data", "logs", "astro-id.log")
+
+
+def _log_path(cfg: dict) -> str:
+    return cfg.get("log_path") or default_log_path()
+
+
+def _lock_path(cfg: dict) -> str:
+    return os.path.join(os.path.dirname(_log_path(cfg)), "astro-id-catchup.lock")
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        h = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            ok = k32.GetExitCodeProcess(h, ctypes.byref(code))
+            return bool(ok) and code.value == 259  # STILL_ACTIVE
+        finally:
+            k32.CloseHandle(h)
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def lock_held(path: str) -> bool:
+    """True when a live catch-up process owns the lock file."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            pid = int((fh.read().split() or ["0"])[0])
+    except (OSError, ValueError):
+        return False
+    return pid != os.getpid() and _pid_alive(pid)
+
+
+def acquire_lock(path: str) -> bool:
+    """Create the lock file with this pid; a lock left by a dead process is taken over."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    for _ in range(2):
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            if lock_held(path):
+                return False
+            try:
+                os.remove(path)          # stale
+            except OSError:
+                return False
+            continue
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(f"{os.getpid()} {_utc_now()}\n")
+        return True
+    return False
+
+
+def release_lock(path: str) -> None:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            if int((fh.read().split() or ["0"])[0]) != os.getpid():
+                return
+        os.remove(path)
+    except (OSError, ValueError):
+        pass
+
+
+def run_pending(cfg: dict, db_path: str, since: str | None = None, min_confidence: int | None = None,
+                dry_run: bool = False, max_rounds: int = 3) -> dict:
+    """Process every pending photo; re-check up to ``max_rounds`` times (a scan may add more meanwhile).
+
+    Holds the catch-up lock; returns {} without work when another catch-up is running."""
+    lock = _lock_path(cfg)
+    if not acquire_lock(lock):
+        logger.info("astro_id: another catch-up is running (%s); exiting", lock)
+        return {}
+    changes: dict = {}
+    tried: set = set()
+    try:
+        for _ in range(max_rounds):
+            todo = [p for p in select_pending(db_path, cfg, since) if p not in tried]
+            if not todo:
+                break
+            logger.info("astro_id: catch-up: %d pending photo(s)", len(todo))
+            tried.update(todo)
+            changes.update(process_paths(todo, cfg, db_path, min_confidence, dry_run))
+            if dry_run:
+                break
+    finally:
+        release_lock(lock)
+    return changes
+
+
+# -------------------------------------------------------------- exit hook ---
+
+_PROCESS_START = _utc_now()
+_exit_hook_registered = False
+
+
+def _is_scan_process(argv: list[str] | None = None) -> bool:
+    """Only Facet's scanner (``facet.py``) gets the exit hook; the viewer and API never do."""
+    argv = sys.argv if argv is None else argv
+    if not argv:
+        return False
+    return os.path.basename(str(argv[0])).lower() in ("facet.py", "facet")
+
+
+def _argv_value(flag: str) -> str | None:
+    for i, a in enumerate(sys.argv):
+        if a == flag and i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
+        if a.startswith(flag + "="):
+            return a[len(flag) + 1:]
+    return None
+
+
+def spawn_catch_up(cfg: dict, db_path: str, since: str | None) -> subprocess.Popen | None:
+    """Start ``<facet python> plugins/astro_id.py --pending`` detached; output appended to the log."""
+    log_path = _log_path(cfg)
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    script = os.path.abspath(__file__)
+    facet_dir = os.path.dirname(os.path.dirname(script))
+    cmd = [sys.executable, script, "--pending", "--db", os.path.abspath(db_path)]
+    if since:
+        cmd += ["--since", since]
+    config = _argv_value("--config")
+    if config:
+        cmd += ["--config", os.path.abspath(config)]
+    env = dict(os.environ)
+    env["DB_PATH"] = os.path.abspath(db_path)
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    kwargs: dict = {}
+    if os.name == "nt":
+        # CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: no console, survives the scan's exit
+        kwargs["creationflags"] = 0x08000000 | 0x00000008 | 0x00000200
+    else:
+        kwargs["start_new_session"] = True
+    with open(log_path, "a", encoding="utf-8") as log:
+        log.write(f"\n[{_utc_now()} UTC] spawn catch-up from pid {os.getpid()}: {' '.join(cmd)}\n")
+        log.flush()
+        return subprocess.Popen(cmd, cwd=facet_dir, env=env, stdin=subprocess.DEVNULL, stdout=log,
+                                stderr=subprocess.STDOUT, close_fds=True, **kwargs)
+
+
+def _on_exit() -> None:
+    """Scan exit: spawn a detached catch-up when astro photos still lack astro-id tags. Never raises."""
+    try:
+        cfg = get_config()
+        if not cfg.get("enabled", True) or not cfg.get("catch_up", True) or not cfg.get("engine"):
+            return
+        db_path = get_db_path(cfg)
+        if not os.path.exists(db_path):
+            return
+        pending = select_pending(db_path, cfg, _PROCESS_START)
+        if not pending:
+            return
+        if lock_held(_lock_path(cfg)):
+            logger.info("astro_id: %d photo(s) pending; a catch-up is already running", len(pending))
+            return
+        proc = spawn_catch_up(cfg, db_path, _PROCESS_START)
+        logger.info("astro_id: %d photo(s) pending; catch-up started (pid %s), log %s",
+                    len(pending), getattr(proc, "pid", "?"), _log_path(cfg))
+    except Exception:
+        logger.exception("astro_id: exit hook failed")
+
+
+def _register_exit_hook() -> bool:
+    global _exit_hook_registered
+    if _exit_hook_registered or not _is_scan_process():
+        return False
+    atexit.register(_on_exit)
+    _exit_hook_registered = True
+    return True
+
+
 # --------------------------------------------------------------- backfill ---
 
 def _select_photos(db_path: str, target: str) -> list[str]:
@@ -477,7 +735,11 @@ def _select_photos(db_path: str, target: str) -> list[str]:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Backfill astro-id tags for photos already in Facet.")
-    ap.add_argument("target", help="folder or file under which photos are selected")
+    ap.add_argument("target", nargs="?", help="folder or file under which photos are selected")
+    ap.add_argument("--pending", action="store_true",
+                    help="process astro photos without astro-id tags (or rescanned since), under a lock")
+    ap.add_argument("--since", default=None,
+                    help="with --pending: outside roots, only photos scanned at/after this UTC time")
     ap.add_argument("--min-confidence", type=int, default=None)
     ap.add_argument("--db", default=None, help="Facet database (default $DB_PATH)")
     ap.add_argument("--config", default=None, help="scoring config (default $FACET_CONFIG)")
@@ -491,6 +753,15 @@ def main(argv=None) -> int:
     if not os.path.exists(db_path):
         print(f"Database not found: {db_path}", file=sys.stderr)
         return 2
+    if a.pending:
+        logger.info("astro_id: catch-up start (pid %d, since %s, db %s)", os.getpid(), a.since, db_path)
+        changes = run_pending(cfg, db_path, a.since, a.min_confidence, a.dry_run)
+        for p, (add, rem) in sorted(changes.items()):
+            print(f"{p}\n   +{add}\n   -{rem}")
+        logger.info("astro_id: catch-up done, %d photo(s) tagged", len(changes))
+        return 0
+    if not a.target:
+        ap.error("a target folder/file or --pending is required")
     paths = _select_photos(db_path, a.target)
     if not paths:
         print("No photos under that path in the Facet database.")
@@ -504,6 +775,9 @@ def main(argv=None) -> int:
         else:
             print(f"{p}\n   (no result)")
     return 0
+
+
+_register_exit_hook()
 
 
 if __name__ == "__main__":

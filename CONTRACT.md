@@ -74,3 +74,44 @@ A stub with realistic values lives at `tests/fixtures/contract_stub.json`.
 - `--site lat,lon` without elevation looks it up on USGS EPQS (cached per coordinate rounded to 3 decimals); on failure 0 m is used and a warning is logged.
 - Timezone: when `astro-id.json` has no `timezone` (absent or null) it is inferred from the site lat/lon (timezonefinder), else the system zone. `astro-id site` writes the inferred zone, never null.
 - Consumers must treat unknown `time_source` values as opaque strings.
+
+## v1 additions (non-breaking, 2026-11-10): tag hierarchy, tag policy, stacking sequences
+
+Every object gains five fields; consumers must ignore fields they do not know.
+
+```json
+{"name": "Orion's Belt", "tag": "orion's belt", "kind": "asterism", "confidence": 90, "tier": "high",
+ "x": 4100.0, "y": 2300.0,
+ "level": 4, "magnitude": 1.69, "parent": "orion", "member_of": null, "taggable": true}
+```
+
+- `level`: 1 constellation, 2 Sun/Moon/planet, 3 catalog object (Messier/NGC/IC), 4 asterism (named star group), 5 named star.
+- `kind` gains the value `"asterism"` (x/y = centroid of its member stars in frame). Consumers must treat unknown `kind` values as opaque.
+- `magnitude`: V magnitude (asterism: its brightest member); `null` for constellations.
+- `parent`: tag of the IAU constellation the object lies in (Roman 1987 boundaries); `null` for constellations and for asterisms spanning several constellations.
+- `member_of`: tag of the cluster or asterism that subsumes the object (stars inside a cluster's radius and fainter than it; asterism member stars), else `null`.
+- `taggable`: the engine's tag policy says this object should become a tag. A consumer tags `taggable && confidence >= min_confidence` and nothing else. Members of a group that is itself taggable and >= `--min-confidence` are not taggable.
+- `tag`, `parent` and `member_of` follow the tag style: `plain` (`orion`, `jupiter`, `m45 pleiades`) or `kind` (`constellation/orion`, `planet/jupiter`, `moon`, `messier/m45 pleiades`, `ngc/...`, `asterism/orion's belt`, `star/sirius`).
+
+Tag policy (flags override `astro-id.json` `"tag_policy": {...}` which overrides the defaults):
+
+| Flag | json key | Default | Meaning |
+|---|---|---|---|
+| `--tag-levels 1,2,3,4` | `levels` | `[1,2,3,4]` | levels that may become tags |
+| `--star-mag-limit M` | `star_mag_limit` | `null` (stars off) | turns level 5 on for named stars at least this bright (1.5 = the ~20 brightest) |
+| `--max-catalog-mag M` | `max_catalog_mag` | `6.0` | faintest level-3 object to tag |
+| `--tag-style plain\|kind` | `tag_style` | `plain` | tag spelling, see above |
+
+Stacking sequences (folder runs; flags override `astro-id.json` `stack_mode`, `stack_gap_s`, `stack_tolerance`):
+
+| Flag | json key | Default | Meaning |
+|---|---|---|---|
+| `--stack-mode representative\|all` | `stack_mode` | `representative` | `all` solves every frame |
+| `--stack-gap S` | `stack_gap_s` | `120` | max seconds between consecutive frames of one sequence |
+| (json only) | `stack_tolerance` | `0.02` | max pointing change, fraction of the frame diagonal |
+
+A sequence = consecutive frames (EXIF time gap <= `stack_gap_s`) with the same lens, focal length, exposure and size. The middle frame is solved; each other frame is registered to it by star pattern (no ASTAP). When it registers within the tolerance it reuses the representative's objects (positions mapped through the registration) and its frame result has `"solver": "stack-copy"` and `"stack_of": "<representative file>"`; otherwise it is solved on its own.
+
+- Every frame result gains `stack_of` (`null` unless `solver` is `"stack-copy"`). `solver` may be `"stack-copy"`; consumers must treat unknown `solver` values as opaque.
+- Frame `stars` / `rms_px` of a stack-copy are the registration's matched-star count and residual; `grade` and `fov_deg` are the representative's; `true_time` is the frame's own.
+- `astro-id-report.csv` gains columns `level, magnitude, parent, member_of, taggable, stack_of`. JSON, CSV and overlay keep listing every object (taggable or not).
