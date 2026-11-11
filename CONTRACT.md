@@ -277,3 +277,76 @@ astro-id facet adopt  --legacy-db PATH [--path-prefix P] [--dry-run]     # TEMPO
   `$ASTRO_ID_LEDGER`): per Facet URL and photo path the tags astro-id added, the annotation payload hash and how it
   was stored, the last status and the Facet version; plus the `--since last` watermark (newest Facet capture date
   seen). A re-run removes only ledger tags; a tag someone else put on the photo is never claimed or removed.
+
+## Facet add-on (2026-11-11, PLUGIN_BOUNDARY.md v0.2; the engine contract above is unchanged)
+
+astro-id is the first Facet add-on. The boundary spec is the contract; this section records astro-id's side of it.
+
+```
+astro-id facet install   --facet-data DIR [--uv PATH] [--project DIR]   # writes DIR/addons/astro-id/addon.json only
+astro-id facet uninstall --facet-data DIR                               # deletes it (and the empty folder)
+astro-id facet serve --addon [--ledger FILE] [--no-annotations] [--path-map FACET=LOCAL]   # started by Facet
+```
+
+**Manifest** (spec §4; `argv[0]` and `--project` are absolute, resolved at install time):
+
+```json
+{"id": "astro-id", "name": "Astro", "version": "<package version>", "icon": "star", "facet_api": 1,
+ "start": {"argv": ["<abs>/uv.exe", "run", "--project", "<abs>/astro-id", "astro-id", "facet", "serve", "--addon"],
+           "port": "auto", "health": "/health"},
+ "ui": {"path": "/ui/"},
+ "slots": ["sidebar", "import_hook"],
+ "permissions": ["photos.read", "tags.write", "annotations.write", "gps.write"]}
+```
+
+**Process (spec §5):**
+
+- Environment in: `FACET_URL`, `FACET_TOKEN`, `FACET_ADDON_ID`, `FACET_LAUNCH_SECRET` (>= 16 chars), optional
+  `FACET_PORT`. Missing URL / id / secret = exit 2. `--legacy-db` is refused in add-on mode.
+- Credential: `addon_credentials(id)` in `astro_id/facet/client.py`. `FACET_TOKEN` is used as the bearer as is.
+  TEMPORARY (fork prototype, spec §5): without it, a password from `$ASTRO_ID_ADDON_ENV` or
+  `%LOCALAPPDATA%\astro-id\addon-credentials.env`, then the process env; otherwise read-only. The sidebar shows which.
+- Binds `127.0.0.1:0` (or `FACET_PORT`) and writes exactly one stdout line, `FACET_ADDON_PORT=<n>\n`, flushed,
+  before it contacts Facet. All logging goes to stderr.
+- `GET /health?c=<1..512 chars>` (no launch header needed) -> `{"addon": FACET_ADDON_ID, "ack": hex
+  HMAC-SHA256(FACET_LAUNCH_SECRET, c)}`; no `c` -> 400.
+- Every other request needs `X-Facet-Launch == FACET_LAUNCH_SECRET` (constant-time) -> else 403. Host must be
+  loopback (403). The path is decoded once and refused (400) on `..` / `.` segments, `\`, NUL or an empty segment.
+- Routes: `GET /ui` -> 308 `Location: ui/` (relative); `GET /ui/` the page (bridge script inlined);
+  `GET|POST /ui/api/<name>` the page's API; `OPTIONS` -> 204; PUT/DELETE/PATCH -> 405; anything else 404.
+  `X-Forwarded-Prefix` matching `/addons/<id>` is recorded (shown in `api/state` as `mount`); all URLs are relative,
+  so nothing depends on it.
+- Response headers: `Cache-Control: no-store`, `nosniff`, `Referrer-Policy: no-referrer`, a CSP equal to the
+  proxy's (`sandbox allow-scripts; default-src 'none'; ...`). Never `Set-Cookie`; no cookie is read.
+- Lifetime: the add-on exits when uv (the process Facet spawned) or Facet ends (`astro_id/facet/lifeline.py`;
+  on Windows terminating uv.exe does not end its children). POSIX: `killpg` from Facet, plus a `getppid` check.
+
+**Page API (`/ui/api/...`, JSON; the standalone page uses the same names under `/<secret>/`):** `state`, `albums`,
+`job?after=N` (GET); `photos` (manual loader), `scope`, `gps`, `preview`, `save-config`, `solve`, `recull`,
+`review-tags` (POST); `thumb?path=&size=` (GET, image bytes).
+
+- `POST scope` maps the bridge scope to the step-1 photo set:
+  - `{"kind": "import", "run_id": "<[A-Za-z0-9_.:-]{1,128}>", "category": "astro"|""}` ->
+    `GET /api/photos?scan_run=<run_id>[&category=...]` (all frames);
+  - `{"kind": "view", "query": "<query string <= 2 KB>" | {key: value}}` -> `GET /api/photos` with that query minus
+    `page`, `per_page`, `sort`, `dir`, `nonce` and the `hide_*` / `collapse_stacks` toggles (astro-id wants every
+    frame, in capture order);
+  - `{"kind": "selection", "paths": [<= 500]}` -> `GET /api/photo` per path (unknown paths dropped).
+  - At most 2000 photos. Returns the step-1 listing plus `scope`.
+- `GET thumb` serves Facet's `GET /thumbnail?path=&size=` (size 16..640) for a photo in the current set only (404
+  otherwise), fetched with the add-on token.
+
+**Writes:** tags via `POST /api/photos/batch_manual_tags` / `DELETE /api/photo/manual_tags` + the ledger.
+`POST /api/photos/plugin_tags` is feature-detected first (an empty-body probe; 422 = present); while its body is
+not pinned in the spec, a present route only produces a sidebar note. Annotations via `PUT /api/photo/annotations`
+when the probe answers 422 (with an add-on token a 403 means "not granted" and counts as absent), else skipped with
+a sidebar note. GPS via `PUT /api/photo/gps`. Never the cull or reject flags.
+
+**Bridge (spec §8, `astro_id/facet/static/bridge.js`):** the nonce comes from `?nonce=` (8..256 chars of
+`[A-Za-z0-9_.~-]`), lives in memory only and goes out as `X-Addon-Nonce` on every fetch (`credentials: "omit"`,
+relative URLs only). On load the panel posts `{type: "ready", v: 1, nonce}` to `window.parent` (target `"*"`). It
+accepts only `{type: "context", v: 1, nonce}` from `window.parent` with that nonce and keeps `route`, `album_id`,
+`photo`, `selection` (<= 500) and `scope`. The first context loads step 1; a later context with a different scope
+only offers "Load the new photos", so a session in progress is never wiped. Panel -> host:
+`show_photos {paths}`, `open_photo {path}`, `refresh {paths}` (after GPS, solve writes and review tags), `close`;
+each carries `v: 1` and the nonce. No storage, cookies, popups, downloads, form submits or modal dialogs.

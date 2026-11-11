@@ -1,36 +1,91 @@
-"""``astro-id facet serve``: a small local web UI for an astro session against a Facet library.
+"""``astro-id facet serve``: the astro session UI against a Facet library, standalone or as a Facet add-on.
 
-Binds 127.0.0.1 only; every URL carries a random per-start secret (``http://127.0.0.1:<port>/<secret>/``), any other
-path is 404, a request whose Host is not loopback is refused (DNS rebinding) and writes need a JSON body with no
-foreign Origin. Plain stdlib ``http.server`` + one static HTML page, no build step.
+Two modes share one ``App`` (the five-step session) and one static page:
 
-Flow (one page, five steps): pick photos (Facet path prefix / album / tag) -> location (each photo's GPS source;
-set a missing one with a Google Maps paste through ``PUT /api/photo/gps``, or open the photo in Facet) -> confirm
-time (camera time, corrected time, offset, tolerance, timezone, RAW/JPG source; ``time_preview``) -> plate solve
-(background thread, live JSON-lines events, then the sync layer writes tags + annotations) -> culling (quality per
-frame, keep/review/reject with reasons, editable rule, re-cull without re-solving). Facet's own reject / cull flags
-are never written; the optional ``astro-review`` tag (off by default) is a ledger-owned tag like the others.
+- **standalone** (``facet serve``): binds 127.0.0.1 only; every URL carries a random per-start secret
+  (``http://127.0.0.1:<port>/<secret>/``), any other path is 404, a request whose Host is not loopback is refused
+  (DNS rebinding) and writes need a JSON body with no foreign Origin. Opens the page in a browser.
+- **add-on** (``facet serve --addon``, started by Facet's supervisor, PLUGIN_BOUNDARY.md v0.2 §5/§8): reads
+  ``FACET_URL``, ``FACET_TOKEN``, ``FACET_ADDON_ID``, ``FACET_LAUNCH_SECRET`` from the environment, binds
+  127.0.0.1 port 0 (or ``FACET_PORT``) and prints exactly ``FACET_ADDON_PORT=<n>`` on stdout (everything else goes
+  to stderr). ``GET /health?c=`` answers ``{"addon": id, "ack": hex HMAC-SHA256(secret, c)}``; every other request
+  needs ``X-Facet-Launch: <secret>`` (403 otherwise). The page is served at ``/ui/`` and its API at ``/ui/api/...``
+  with relative URLs only, because Facet's proxy mounts it at ``/addons/<id>/``. No cookies are set or read.
+
+Flow (one page, five steps): photos (Facet's scope in add-on mode, else path prefix / album / tag) -> location
+(GPS source per photo; set a missing one through ``PUT /api/photo/gps``) -> time (camera time, corrected time,
+offset, tolerance, timezone, RAW/JPG; ``time_preview``) -> plate solve (background thread, JSON-lines events, then
+the sync layer writes tags + annotations) -> culling (quality, keep/review/reject with reasons, editable rule,
+re-cull without re-solving). Facet's own reject / cull flags are never written.
 """
 from __future__ import annotations
 
+import hmac
 import json
 import logging
+import os
+import re
 import secrets
+import sys
 import threading
 import webbrowser
+from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, parse_qsl, unquote, urlparse
 
 from .. import config as cfgmod
 from ..cull import DEFAULT_RULE, merge_rule, validate_rule
-from .client import FacetClient, FacetError
+from .client import ALL_FRAMES, FacetClient, FacetError, addon_credentials
 from .ledger import Ledger
 from .sync import (TAG_REVIEW, SyncContext, apply_results, facet_hints, gps_source, parse_path_map, to_local)
 
 log = logging.getLogger("astro_id.facet")
 STATIC = Path(__file__).with_name("static")
 LOOPBACK = {"127.0.0.1", "localhost", "[::1]"}
+ADDON_ID = "astro-id"
+BRIDGE_MARKER = "<!--ASTRO_BRIDGE-->"
+MAX_SCOPE_PHOTOS = 2000
+MAX_SELECTION = 500
+MAX_QUERY = 2048
+# Gallery keys the sidecar overrides: it wants every frame of every set, in its own order and page size.
+SCOPE_DROP = {"page", "per_page", "sort", "dir", "nonce"} | set(ALL_FRAMES)
+RUN_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+PREFIX_RE = re.compile(r"^/addons/[a-z0-9][a-z0-9_-]{0,63}$")
+
+STANDALONE_CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+                  "img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'")
+# Mirrors the policy Facet's proxy sets (spec §8); the proxy drops ours and sets its own, this covers a direct load.
+ADDON_CSP = ("sandbox allow-scripts; default-src 'none'; script-src 'self' 'unsafe-inline'; "
+             "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; base-uri 'none'; "
+             "form-action 'none'")
+
+
+def page_html() -> bytes:
+    """The page with the bridge script inlined (no second script request, so it does not depend on whether
+    ``script-src 'self'`` resolves inside an opaque-origin sandbox)."""
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    bridge = (STATIC / "bridge.js").read_text(encoding="utf-8")
+    return html.replace(BRIDGE_MARKER, "<script>\n" + bridge + "\n</script>", 1).encode("utf-8")
+
+
+def health_ack(secret: str, challenge: str) -> str:
+    return hmac.new(secret.encode("utf-8"), challenge.encode("utf-8"), sha256).hexdigest()
+
+
+def safe_rel_path(raw_path: str) -> str | None:
+    """The request path decoded once, or None when it must be refused: ``..``/``.`` segments, a backslash, NUL,
+    an empty segment (``//``) anywhere but a trailing slash, or a path that does not start with ``/``."""
+    try:
+        p = unquote(raw_path, errors="strict")
+    except UnicodeDecodeError:
+        return None
+    if not p.startswith("/") or "\\" in p or "\x00" in p:
+        return None
+    segs = p[1:].split("/")
+    if any(s in ("..", ".") for s in segs) or any(s == "" for s in segs[:-1]):
+        return None
+    return p
 
 
 class Job:
@@ -57,8 +112,11 @@ class Job:
 
 
 class App:
-    def __init__(self, client: FacetClient, ledger: Ledger, ctx: SyncContext, path_map):
+    def __init__(self, client: FacetClient, ledger: Ledger, ctx: SyncContext, path_map, addon_id: str | None = None):
         self.client, self.ledger, self.ctx, self.path_map = client, ledger, ctx, path_map
+        self.addon_id = addon_id
+        self.mount: str | None = None       # X-Forwarded-Prefix from Facet's proxy (informational)
+        self.notes: list[str] = []          # start-up notes shown in the page (credential mode etc.)
         self.job = Job()
         self.photos: dict[str, dict] = {}   # last listing, by Facet path
 
@@ -89,6 +147,18 @@ class App:
                 "ledger": {"status": led["status"], "tags": len(led["tags"]), "annotation": led["annotation_via"]}
                 if led else None}
 
+    def listing(self, photos: list[dict], **extra) -> dict:
+        self.photos = {p["path"]: p for p in photos}
+        cfgs: dict = {}
+        rows = []
+        for p in photos:
+            folder = p["path"].replace("\\", "/").rsplit("/", 1)[0]
+            if folder not in cfgs:
+                cfgs[folder] = self.folder_config(p["path"])
+            rows.append(self.photo_row(p, cfgs[folder]))
+        return {"photos": rows, "folders": cfgs, "raw_companion_field": any("raw_companion" in p for p in photos),
+                **extra}
+
     def session_opts(self, body: dict, paths: list[str]):
         from ..session import SessionOptions
 
@@ -110,8 +180,9 @@ class App:
     # ----------------------------------------------------------- handlers ---
     def state(self, _q, _b):
         return {"facet": self.client.url, "version": self.ctx.version, "annotations": self.ctx.mode,
-                "warnings": self.ctx.warnings, "can_write": self.client.can_login, "ledger": str(self.ledger.path),
-                "default_rule": DEFAULT_RULE, "review_tag": TAG_REVIEW}
+                "warnings": self.ctx.warnings + self.notes, "can_write": self.client.can_login,
+                "ledger": str(self.ledger.path), "default_rule": DEFAULT_RULE, "review_tag": TAG_REVIEW,
+                "addon": self.addon_id, "mount": self.mount, "tags_via": self.ctx.tags_via}
 
     def albums(self, _q, _b):
         try:
@@ -123,16 +194,66 @@ class App:
     def list_photos(self, _q, b):
         photos = self.client.list_photos(path_prefix=b.get("path_prefix") or None, category=b.get("category") or None,
                                          tag=b.get("tag") or None, album_id=b.get("album_id") or None,
-                                         limit=int(b.get("limit") or 2000))
-        self.photos = {p["path"]: p for p in photos}
-        cfgs: dict = {}
-        rows = []
-        for p in photos:
-            folder = p["path"].replace("\\", "/").rsplit("/", 1)[0]
-            if folder not in cfgs:
-                cfgs[folder] = self.folder_config(p["path"])
-            rows.append(self.photo_row(p, cfgs[folder]))
-        return {"photos": rows, "folders": cfgs, "raw_companion_field": any("raw_companion" in p for p in photos)}
+                                         limit=int(b.get("limit") or MAX_SCOPE_PHOTOS))
+        return self.listing(photos, scope={"kind": "manual"})
+
+    def scope(self, _q, b):
+        """The step-1 photo set from the Facet scope the sidebar was opened with (bridge ``context.scope``):
+        ``import`` -> ``GET /api/photos?scan_run=<run_id>`` (+ the page's category filter); ``view`` -> the
+        gallery query; ``selection`` -> those paths (<= 500)."""
+        kind = b.get("kind")
+        if kind == "import":
+            run = str(b.get("run_id") if b.get("run_id") is not None else "")
+            if not RUN_ID_RE.match(run):
+                raise ValueError("import scope needs a run_id")
+            photos = self.client.list_photos(category=b.get("category") or None, extra={"scan_run": run},
+                                             limit=MAX_SCOPE_PHOTOS)
+            return self.listing(photos, scope={"kind": "import", "run_id": run, "category": b.get("category") or None})
+        if kind == "view":
+            q = b.get("query")
+            if q is None:
+                q = ""
+            if isinstance(q, dict):
+                items = list(q.items())
+            elif isinstance(q, str):
+                if len(q) > MAX_QUERY:
+                    raise ValueError("view query is longer than 2 KB")
+                items = parse_qsl(q.lstrip("?"), keep_blank_values=False)
+            else:
+                raise ValueError("view query must be a string or an object")
+            if len(json.dumps(items)) > MAX_QUERY * 2:
+                raise ValueError("view query is too long")
+            extra: dict = {}
+            for k, v in items:
+                if not isinstance(k, str) or k in SCOPE_DROP:
+                    continue
+                if isinstance(v, (list, tuple)):
+                    v = [str(x) for x in v if isinstance(x, (str, int, float)) and not isinstance(x, bool)]
+                elif isinstance(v, bool) or not isinstance(v, (str, int, float)) or v == "":
+                    continue
+                if k in extra:      # a repeated key in a query string
+                    prev = extra[k] if isinstance(extra[k], list) else [extra[k]]
+                    v = prev + (v if isinstance(v, list) else [v])
+                extra[k] = v
+            photos = self.client.list_photos(extra=extra, limit=MAX_SCOPE_PHOTOS)
+            return self.listing(photos, scope={"kind": "view", "keys": sorted(extra)})
+        if kind == "selection":
+            paths = b.get("paths")
+            if not isinstance(paths, list) or not all(isinstance(p, str) and p for p in paths):
+                raise ValueError("selection scope needs a list of paths")
+            if len(paths) > MAX_SELECTION:
+                raise ValueError(f"selection is limited to {MAX_SELECTION} photos")
+            photos = [ph for ph in (self.client.photo(p) for p in dict.fromkeys(paths)) if ph]
+            return self.listing(photos, scope={"kind": "selection", "requested": len(paths)})
+        raise ValueError("scope kind must be import, view or selection")
+
+    def thumb(self, q, _b):
+        """(bytes, content type) of a photo in the current set, fetched by this backend (``photos.read``)."""
+        path = (q.get("path") or [""])[0]
+        if path not in self.photos:
+            raise KeyError("not in the current photo set")
+        size = (q.get("size") or [""])[0]
+        return self.client.thumbnail(path, int(size) if size.isdigit() and 16 <= int(size) <= 640 else None)
 
     def set_gps(self, _q, b):
         from ..site import parse_latlon
@@ -228,41 +349,99 @@ class App:
         return {"reports": reports}
 
     ROUTES = {("GET", "api/state"): "state", ("GET", "api/albums"): "albums", ("GET", "api/job"): "job_state",
-              ("POST", "api/photos"): "list_photos", ("POST", "api/gps"): "set_gps",
+              ("POST", "api/photos"): "list_photos", ("POST", "api/scope"): "scope", ("POST", "api/gps"): "set_gps",
               ("POST", "api/preview"): "preview", ("POST", "api/save-config"): "save_config",
               ("POST", "api/solve"): "solve", ("POST", "api/recull"): "recull",
               ("POST", "api/review-tags"): "review_tags"}
+    BINARY = {("GET", "api/thumb"): "thumb"}
+
+
+class _Base(BaseHTTPRequestHandler):
+    """Shared transport: JSON helpers, POST body parsing, route dispatch. No cookies anywhere."""
+
+    server_version = "astro-id"
+    csp = STANDALONE_CSP
+    app_box: dict = {}
+
+    @property
+    def app(self) -> App | None:
+        return self.app_box.get("app")
+
+    def log_message(self, fmt, *args):   # quiet; secrets may be in the path
+        log.debug("serve: " + fmt, *args)
+
+    def _send(self, code: int, body: bytes, ctype: str, extra: dict | None = None) -> None:
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Content-Security-Policy", self.csp)
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    def _json(self, code: int, doc) -> None:
+        self._send(code, json.dumps(doc, default=str).encode("utf-8"), "application/json")
+
+    def _read_json(self):
+        if "application/json" not in (self.headers.get("Content-Type") or ""):
+            self._send(415, b"json only", "text/plain")
+            return None
+        n = int(self.headers.get("Content-Length") or 0)
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}") if n else {}
+        except ValueError:
+            self._json(400, {"error": "bad JSON"})
+            return None
+        return body if isinstance(body, dict) else {}
+
+    def _dispatch(self, method: str, rel: str, body: dict) -> None:
+        app = self.app
+        if app is None:
+            return self._json(503, {"error": "starting"})
+        q = parse_qs(urlparse(self.path).query)
+        binary = App.BINARY.get((method, rel))
+        name = App.ROUTES.get((method, rel))
+        if name is None and binary is None:
+            return self._send(404, b"not found", "text/plain")
+        try:
+            if binary:
+                data, ctype = getattr(app, binary)(q, body)
+                return self._send(200, data, ctype)
+            self._json(200, getattr(app, name)(q, body))
+        except KeyError as exc:
+            if binary:
+                return self._json(404, {"error": str(exc).strip("'\"")})
+            self._json(400, {"error": str(exc)})
+        except ValueError as exc:
+            self._json(400, {"error": str(exc)})
+        except FacetError as exc:
+            self._json(502, {"error": str(exc), "status": exc.status})
+        except Exception as exc:   # pragma: no cover - surfaced to the page
+            log.exception("serve: %s failed", rel)
+            self._json(500, {"error": f"{type(exc).__name__}: {exc}"})
+
+    def _loopback_host(self) -> bool:
+        host = (self.headers.get("Host") or "").rsplit(":", 1)[0].lower()
+        if host not in LOOPBACK:
+            self._send(403, b"forbidden", "text/plain")
+            return False
+        return True
 
 
 def make_handler(app: App, secret: str):
+    """Standalone mode: the per-start secret path prefix, loopback Host, no foreign Origin on writes."""
     prefix = f"/{secret}/"
 
-    class Handler(BaseHTTPRequestHandler):
-        server_version = "astro-id"
-
-        def log_message(self, fmt, *args):   # quiet; the secret is in every path
-            log.debug("serve: " + fmt, *args)
-
-        def _send(self, code: int, body: bytes, ctype: str) -> None:
-            self.send_response(code)
-            self.send_header("Content-Type", ctype)
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Referrer-Policy", "no-referrer")
-            self.send_header("Content-Security-Policy",
-                             "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
-                             "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'")
-            self.end_headers()
-            self.wfile.write(body)
-
-        def _json(self, code: int, doc) -> None:
-            self._send(code, json.dumps(doc, default=str).encode("utf-8"), "application/json")
+    class Handler(_Base):
+        app_box = {"app": app}
 
         def _guard(self) -> str | None:
-            host = (self.headers.get("Host") or "").rsplit(":", 1)[0].lower()
-            if host not in LOOPBACK:
-                self._send(403, b"forbidden", "text/plain")
+            if not self._loopback_host():
                 return None
             u = urlparse(self.path)
             if not u.path.startswith(prefix) and u.path != prefix.rstrip("/"):
@@ -275,7 +454,7 @@ def make_handler(app: App, secret: str):
             if rel is None:
                 return
             if rel in ("", "index.html"):
-                return self._send(200, (STATIC / "index.html").read_bytes(), "text/html; charset=utf-8")
+                return self._send(200, page_html(), "text/html; charset=utf-8")
             self._dispatch("GET", rel, {})
 
         def do_POST(self):
@@ -285,34 +464,86 @@ def make_handler(app: App, secret: str):
             origin = self.headers.get("Origin")
             if origin and urlparse(origin).hostname not in ("127.0.0.1", "localhost", "::1"):
                 return self._send(403, b"forbidden origin", "text/plain")
-            if "application/json" not in (self.headers.get("Content-Type") or ""):
-                return self._send(415, b"json only", "text/plain")
-            n = int(self.headers.get("Content-Length") or 0)
-            try:
-                body = json.loads(self.rfile.read(n) or b"{}") if n else {}
-            except ValueError:
-                return self._json(400, {"error": "bad JSON"})
-            self._dispatch("POST", rel, body if isinstance(body, dict) else {})
-
-        def _dispatch(self, method, rel, body):
-            name = App.ROUTES.get((method, rel))
-            if name is None:
-                return self._send(404, b"not found", "text/plain")
-            try:
-                self._json(200, getattr(app, name)(parse_qs(urlparse(self.path).query), body))
-            except (ValueError, KeyError) as exc:
-                self._json(400, {"error": str(exc)})
-            except FacetError as exc:
-                self._json(502, {"error": str(exc), "status": exc.status})
-            except Exception as exc:   # pragma: no cover - surfaced to the page
-                log.exception("serve: %s failed", rel)
-                self._json(500, {"error": f"{type(exc).__name__}: {exc}"})
+            body = self._read_json()
+            if body is not None:
+                self._dispatch("POST", rel, body)
 
     return Handler
 
 
+def make_addon_handler(app_box: dict, addon_id: str, launch_secret: str):
+    """Add-on mode (spec §5/§8): ``/health`` challenge/response; everything else needs ``X-Facet-Launch``; the UI
+    and its API live under ``/ui/``."""
+
+    class Handler(_Base):
+        csp = ADDON_CSP
+
+        def _route(self) -> str | None:
+            """The decoded path after the gates, or None when already answered."""
+            if not self._loopback_host():
+                return None
+            p = safe_rel_path(urlparse(self.path).path)
+            if p is None:
+                self._send(400, b"bad path", "text/plain")
+                return None
+            if p == "/health" and self.command in ("GET", "HEAD"):
+                c = (parse_qs(urlparse(self.path).query).get("c") or [""])[0]
+                if not 1 <= len(c) <= 512:
+                    self._json(400, {"error": "challenge c required"})
+                    return None
+                self._json(200, {"addon": addon_id, "ack": health_ack(launch_secret, c)})
+                return None
+            got = self.headers.get("X-Facet-Launch") or ""
+            if not hmac.compare_digest(got.encode("utf-8"), launch_secret.encode("utf-8")):
+                self._send(403, b"forbidden", "text/plain")
+                return None
+            pre = (self.headers.get("X-Forwarded-Prefix") or "").rstrip("/")
+            if pre and PREFIX_RE.match(pre) and self.app is not None:
+                self.app.mount = pre
+            return p
+
+        def do_GET(self):
+            p = self._route()
+            if p is None:
+                return
+            if p == "/ui":   # a relative Location: resolves under whatever prefix the proxy mounts us at
+                return self._send(308, b"", "text/plain", {"Location": "ui/"})
+            if p in ("/ui/", "/ui/index.html"):
+                return self._send(200, page_html(), "text/html; charset=utf-8")
+            if p.startswith("/ui/api/"):
+                return self._dispatch("GET", p[len("/ui/"):], {})
+            self._send(404, b"not found", "text/plain")
+
+        do_HEAD = do_GET
+
+        def do_POST(self):
+            p = self._route()
+            if p is None:
+                return
+            if not p.startswith("/ui/api/"):
+                return self._send(404, b"not found", "text/plain")
+            body = self._read_json()
+            if body is not None:
+                self._dispatch("POST", p[len("/ui/"):], body)
+
+        def do_OPTIONS(self):
+            if self._route() is None:
+                return
+            self._send(204, b"", "text/plain", {"Allow": "GET, HEAD, POST, OPTIONS"})
+
+        def _refuse(self):
+            if self._route() is None:
+                return
+            self._send(405, b"method not allowed", "text/plain")
+
+        do_PUT = do_DELETE = do_PATCH = _refuse
+
+    Handler.app_box = app_box
+    return Handler
+
+
 def build(args, client: FacetClient | None = None, ledger: Ledger | None = None, secret: str | None = None):
-    """(server, url, app); the caller runs ``server.serve_forever()``."""
+    """Standalone: (server, url, app); the caller runs ``server.serve_forever()``."""
     client = client or FacetClient.from_env(getattr(args, "facet_url", None))
     ledger = ledger or Ledger(getattr(args, "ledger", None))
     ctx = SyncContext(client=client, ledger=ledger, legacy_db=getattr(args, "legacy_db", None),
@@ -326,7 +557,83 @@ def build(args, client: FacetClient | None = None, ledger: Ledger | None = None,
     return server, url, app
 
 
+class AddonEnv:
+    """What Facet's supervisor passes in the clean environment (spec §5)."""
+
+    def __init__(self, env: dict | None = None):
+        e = os.environ if env is None else env
+        self.url = (e.get("FACET_URL") or "").strip()
+        self.addon_id = (e.get("FACET_ADDON_ID") or "").strip()
+        self.secret = e.get("FACET_LAUNCH_SECRET") or ""
+        port = (e.get("FACET_PORT") or "").strip()
+        missing = [k for k, v in (("FACET_URL", self.url), ("FACET_ADDON_ID", self.addon_id),
+                                  ("FACET_LAUNCH_SECRET", self.secret)) if not v]
+        if missing:
+            raise ValueError("add-on mode needs " + ", ".join(missing) + " from Facet (it starts the add-on)")
+        if len(self.secret) < 16:
+            raise ValueError("FACET_LAUNCH_SECRET is too short")
+        if port and not port.isdigit():
+            raise ValueError("FACET_PORT must be a port number")
+        self.port = int(port) if port else 0
+        self.credentials, self.credential_note = addon_credentials(self.addon_id, e)
+
+
+def build_addon(args, env: dict | None = None, client: FacetClient | None = None, ledger: Ledger | None = None):
+    """Add-on mode, step 1: bind the socket (nothing answers until ``finish_addon``). Returns (server, box, aenv)."""
+    if getattr(args, "legacy_db", None):
+        raise ValueError("--legacy-db is not available in add-on mode (annotations go through Facet's API or are "
+                         "skipped)")
+    aenv = AddonEnv(env)
+    if aenv.addon_id != ADDON_ID:
+        log.warning("Facet started this add-on as %r; its manifest id is %r", aenv.addon_id, ADDON_ID)
+    box: dict = {"client": client, "ledger": ledger}
+    server = ThreadingHTTPServer(("127.0.0.1", aenv.port), make_addon_handler(box, aenv.addon_id, aenv.secret))
+    server.daemon_threads = True
+    return server, box, aenv
+
+
+def finish_addon(args, box: dict, aenv: AddonEnv) -> App:
+    """Add-on mode, step 2 (after the port line): connect to Facet and build the session app."""
+    client = box.get("client") or FacetClient(aenv.url, **aenv.credentials)
+    ledger = box.get("ledger") or Ledger(getattr(args, "ledger", None))
+    ctx = SyncContext(client=client, ledger=ledger, addon=True,
+                      annotations=not getattr(args, "no_annotations", False)).prepare()
+    app = App(client, ledger, ctx, parse_path_map(getattr(args, "path_map", None)), addon_id=aenv.addon_id)
+    if aenv.credential_note:
+        app.notes.append(aenv.credential_note)
+        log.warning("%s", aenv.credential_note)
+    box["app"] = app
+    return app
+
+
+def serve_addon(args, env: dict | None = None, out=None, lifeline: bool = True) -> int:
+    out = out or sys.stdout
+    server, box, aenv = build_addon(args, env)
+    out.write(f"FACET_ADDON_PORT={server.server_address[1]}\n")
+    out.flush()
+    if lifeline:
+        from .lifeline import watch
+
+        log.info("lifeline: exits when any of %s ends", watch() or "nothing (not watched)")
+    app = None
+    try:
+        app = finish_addon(args, box, aenv)
+        log.info("astro-id add-on %s on 127.0.0.1:%d for Facet %s (version %s); annotations: %s",
+                 aenv.addon_id, server.server_address[1], app.client.url, app.ctx.version, app.ctx.mode or "skipped")
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+        if app is not None:
+            app.ctx.close()
+            app.ledger.close()
+    return 0
+
+
 def serve(args) -> int:
+    if getattr(args, "addon", False):
+        return serve_addon(args)
     server, url, app = build(args)
     print(f"astro-id session UI: {url}\nFacet: {app.client.url} (version {app.ctx.version}); "
           f"annotations: {app.ctx.mode or 'skipped'}; Ctrl+C to stop", flush=True)
@@ -348,4 +655,5 @@ def serve(args) -> int:
     return 0
 
 
-__all__ = ["build", "serve", "merge_rule"]
+__all__ = ["build", "build_addon", "finish_addon", "serve", "serve_addon", "health_ack", "safe_rel_path",
+           "merge_rule"]

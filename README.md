@@ -241,6 +241,55 @@ folder's astro-id.json), plate solve with live progress, then cull: per-frame qu
 reasons, an editable rule and re-cull without re-solving. Tagging review/reject frames `astro-review` is optional
 and off by default.
 
+## Facet add-on (sidebar inside Facet)
+
+With a Facet that supports add-ons (the add-on boundary spec, `PLUGIN_BOUNDARY.md` v0.2), the same session runs in a
+sidebar inside Facet. Facet starts and stops the astro-id process itself; you never run a command, set an env var
+or type a password after the one-time install.
+
+**Install (once):**
+
+```powershell
+cd C:\path\to\astro-id
+uv run astro-id facet install --facet-data "$env:LOCALAPPDATA\Facet\data"
+```
+
+This writes `<facet data>\addons\astro-id\addon.json` and nothing else. The manifest holds the absolute path of
+`uv` (from `$env:UV`, else `uv` on PATH; `--uv` overrides) and of this checkout (`--project` overrides), so Facet
+can start `uv run --project <checkout> astro-id facet serve --addon` without a PATH lookup. Re-run it after moving
+the checkout or uv. Then, in Facet's `scoring_config.json`, the operator switch `"addons": {"enabled": true}` must
+be on (Facet's setting, off by default; astro-id never edits Facet's config). Facet lists "Astro" on its Add-ons
+page after a restart or a config reload.
+
+**Uninstall:** `uv run astro-id facet uninstall --facet-data "$env:LOCALAPPDATA\Facet\data"` (deletes the
+manifest and its folder). The ledger and astro-id's tags stay; `astro-id facet undo` removes the tags.
+
+**Use:**
+
+- **After an import:** in Facet's import dialog choose "After import, open: Astro". When the scan finishes, Facet
+  offers "Open Astro for N photos"; the sidebar opens on exactly the photos that run saved (step 1 is filled in,
+  filtered to category `astro` by default; clear the category box and Reload for every photo of the run).
+- **By hand:** open Astro from the Add-ons page or the sidebar; it works on the current view, or on the selected
+  photos (up to 500). Step 1 also keeps the manual folder / album / tag loader.
+- **The five steps** collapse as you go (location, time ± tolerance and RAW/JPG, plate solve, culling) so they fit
+  the narrow sidebar; hover a row for detail. "In Facet" links and the "Show keep / review / reject" buttons ask
+  Facet to open or show those photos. After every write, Facet refreshes the photos that changed.
+- **What it writes:** tags (as manual tags + astro-id's ledger, until Facet's plugin tags arrive; when Facet
+  already has them the sidebar says so), the annotation overlay if Facet has `PUT /api/photo/annotations` (else a
+  note in the sidebar says annotations are skipped; there is no `--legacy-db` in add-on mode), and GPS through
+  `PUT /api/photo/gps`. Never Facet's cull or reject flags.
+
+**How it is wired (for the curious):** Facet passes `FACET_URL`, `FACET_TOKEN` (a per-launch add-on token),
+`FACET_ADDON_ID` and `FACET_LAUNCH_SECRET`. astro-id binds `127.0.0.1` on a free port, prints
+`FACET_ADDON_PORT=<n>` (the only line it ever writes to stdout), answers Facet's health challenge with
+`HMAC-SHA256(secret, c)` and refuses every other request without `X-Facet-Launch: <secret>`. The page lives at
+`/ui/` behind Facet's proxy (`/addons/astro-id/`), in a null-origin sandboxed iframe: no cookies or storage, the
+per-open nonce in memory only, thumbnails fetched by astro-id's backend (never straight from Facet). It exits by
+itself when Facet stops it or Facet exits. Details: `CONTRACT.md`, section "Facet add-on".
+
+`astro-id facet serve` without `--addon` (the standalone page above) still works and is the way to use astro-id
+with a Facet that has no add-on support.
+
 ## How it solves
 
 1. The JPG is read at half size and converted to grayscale. Stars are detected at several smoothing

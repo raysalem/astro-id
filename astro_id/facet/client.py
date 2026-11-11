@@ -10,8 +10,11 @@ Credentials come from the environment, never from Facet's config or database:
 - none of them: anonymous; reads work on an open install, every write is refused (Facet is read-only without
   an edition login).
 
+As a Facet add-on (``astro-id facet serve --addon``, started by Facet's supervisor) the credential is the per-launch
+add-on token Facet passes in ``FACET_TOKEN``; see :func:`addon_credentials`.
+
 Routes used (Facet 1.29 names): ``GET /api/config`` (version), ``GET /api/photos`` (paged listing),
-``GET /api/photo`` (one photo), ``GET /api/albums``, ``POST /api/photos/batch_manual_tags``,
+``GET /api/photo`` (one photo), ``GET /api/albums``, ``GET /thumbnail``, ``POST /api/photos/batch_manual_tags``,
 ``DELETE /api/photo/manual_tags``, ``PUT /api/photo/gps``, and, when the server has them,
 ``GET|PUT|DELETE /api/photo/annotations``.
 """
@@ -126,16 +129,27 @@ class FacetClient:
                 self.version = "unknown"
         return self.version
 
+    @property
+    def scoped(self) -> bool:
+        """A Facet add-on token (``fct_...``): Facet answers 403 on every route outside its permissions, so a 403
+        means "not usable" rather than "exists but needs a login"."""
+        return bool(self.static_token and self.static_token.startswith("fct_"))
+
     def features(self) -> dict:
         """Which optional routes this Facet has. Probed with requests that cannot write anything:
-        a PUT/GET with a missing parameter answers 422 when the route exists, 404/405 when it does not."""
+        a PUT/POST/GET with a missing parameter answers 422 when the route exists, 404/405 when it does not.
+        With an add-on token only 422 (or 200) counts: 403 = outside the add-on's permissions."""
         if self._features is not None:
             return self._features
+        ok_write = (422,) if self.scoped else (401, 403, 422)
+        ok_read = (200, 422) if self.scoped else (200, 401, 403, 422)
         f = {}
         r = self._probe("PUT", "/api/photo/annotations", json={})
-        f["annotations_put"] = r in (401, 403, 422)
+        f["annotations_put"] = r in ok_write
         r = self._probe("GET", "/api/photo/annotations")
-        f["annotations_read"] = r in (200, 401, 403, 422)
+        f["annotations_read"] = r in ok_read
+        r = self._probe("POST", "/api/photos/plugin_tags", json={})
+        f["plugin_tags"] = r in ok_write
         self._features = f
         return f
 
@@ -157,7 +171,8 @@ class FacetClient:
                      ("date_from", date_from)):
             if v not in (None, ""):
                 params[k] = str(v)
-        params.update({k: str(v) for k, v in (extra or {}).items()})
+        params.update({k: ([str(x) for x in v] if isinstance(v, (list, tuple)) else str(v))
+                       for k, v in (extra or {}).items()})
         params.update({"per_page": str(PAGE_SIZE), "sort": "date_taken", "dir": "ASC"})
         out: list[dict] = []
         page = 1
@@ -183,6 +198,27 @@ class FacetClient:
     def albums(self) -> list[dict]:
         doc = self.request("GET", "/api/albums").json()
         return doc.get("albums", doc) if isinstance(doc, dict) else doc
+
+    def thumbnail(self, path: str, size: int | None = None) -> tuple[bytes, str]:
+        """(bytes, content type) of Facet's thumbnail for one photo (``photos.read``)."""
+        params = {"path": path}
+        if size:
+            params["size"] = str(int(size))
+        if self.token is None and self.can_login:
+            self.login()
+        headers = {"Accept": "image/*"}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        try:
+            r = self.http.get(self.url + "/thumbnail", params=params, headers=headers, timeout=self.timeout)
+        except requests.RequestException as exc:
+            raise FacetError(f"cannot reach Facet at {self.url}: {exc}") from None
+        if r.status_code != 200:
+            raise FacetError(f"GET /thumbnail: HTTP {r.status_code}", r.status_code)
+        ctype = r.headers.get("Content-Type", "image/jpeg").split(";")[0].strip()
+        if not ctype.startswith("image/"):
+            raise FacetError(f"GET /thumbnail: not an image ({ctype})", 502)
+        return r.content, ctype
 
     def annotations(self, path: str) -> list[dict]:
         return self.request("GET", "/api/photo/annotations", params={"path": path}).json().get("annotations") or []
@@ -215,3 +251,50 @@ class FacetClient:
     def photo_page_url(self, path: str) -> str:
         """The photo's page in the Facet web app (its location dialog is there)."""
         return f"{self.url}/photo?path={quote(path, safe='')}"
+
+
+# ------------------------------------------------------- add-on credential ---
+
+ADDON_ENV_FILE = "addon-credentials.env"
+_TEMP_KEYS = ("FACET_EDITION_PASSWORD", "FACET_USERNAME", "FACET_PASSWORD")
+
+
+def addon_credentials(addon_id: str, env: dict | None = None) -> tuple[dict, str | None]:
+    """The credential an add-on launch uses, as ``FacetClient`` keyword arguments, plus a warning (or None).
+
+    The real path: ``FACET_TOKEN``, the per-launch add-on token Facet mints at start and revokes at stop.
+
+    TEMPORARY (spec §5 "fork prototype"; delete once the Facet fork mints add-on tokens): without ``FACET_TOKEN``,
+    a password from the add-on's own env file (``$ASTRO_ID_ADDON_ENV``, else ``addon-credentials.env`` in
+    astro-id's data folder; ``KEY=VALUE`` lines with ``FACET_EDITION_PASSWORD`` or ``FACET_USERNAME`` +
+    ``FACET_PASSWORD``), then the same keys from the process environment. Facet's clean env never carries them,
+    so in a supervised launch only the hand-placed file can supply one."""
+    e = os.environ if env is None else env
+    token = (e.get("FACET_TOKEN") or "").strip()
+    if token:
+        return {"token": token}, None
+    vals: dict[str, str] = {}
+    path = e.get("ASTRO_ID_ADDON_ENV")
+    if not path:
+        from .ledger import data_dir
+
+        path = str(data_dir() / ADDON_ENV_FILE)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    if k.strip() in _TEMP_KEYS:
+                        vals[k.strip()] = v.strip().strip('"').strip("'")
+    except OSError:
+        pass
+    for k in _TEMP_KEYS:
+        if not vals.get(k) and e.get(k):
+            vals[k] = e[k]
+    kw = {"edition_password": vals.get("FACET_EDITION_PASSWORD") or None,
+          "username": vals.get("FACET_USERNAME") or None, "password": vals.get("FACET_PASSWORD") or None}
+    if kw["edition_password"] or (kw["username"] and kw["password"]):
+        return kw, (f"TEMPORARY: Facet passed no FACET_TOKEN; {addon_id} logs in with a password from its own env "
+                    "file until the Facet fork mints add-on tokens")
+    return {}, f"Facet passed no FACET_TOKEN: {addon_id} is read-only (every write will be refused)"

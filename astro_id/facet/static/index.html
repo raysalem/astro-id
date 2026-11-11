@@ -12,145 +12,215 @@
             --keep:#5cc27a; --review:#f0a43a; --reject:#ff6b61; }
   }
   * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, sans-serif; }
-  header { padding:12px 16px; border-bottom:1px solid var(--line); display:flex; flex-wrap:wrap; gap:8px 16px;
-           align-items:baseline; }
-  header h1 { font-size:18px; margin:0; }
-  main { max-width:1200px; margin:0 auto; padding:8px 16px 48px; }
-  section { border:1px solid var(--line); border-radius:8px; margin:14px 0; background:var(--card); }
-  section > h2 { font-size:15px; margin:0; padding:10px 14px; border-bottom:1px solid var(--line); }
-  section > .body { padding:10px 14px; overflow-x:auto; }
-  label { margin-right:12px; white-space:nowrap; }
+  html, body { margin:0; background:var(--bg); color:var(--fg); font:13px/1.45 system-ui, sans-serif; }
+  header { padding:8px 10px; border-bottom:1px solid var(--line); }
+  header h1 { font-size:15px; margin:0 0 2px; }
+  main { max-width:1100px; margin:0 auto; padding:4px 8px 32px; }
+  details.step { border:1px solid var(--line); border-radius:6px; margin:8px 0; background:var(--card); }
+  details.step > summary { cursor:pointer; padding:7px 10px; font-weight:600; list-style:none; display:flex;
+                           gap:6px; align-items:baseline; }
+  details.step > summary::-webkit-details-marker { display:none; }
+  details.step > summary::before { content:"\25B8"; color:var(--muted); }
+  details.step[open] > summary::before { content:"\25BE"; }
+  details.step > summary .st { font-weight:400; color:var(--muted); margin-left:auto; text-align:right;
+                               overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:60%; }
+  .body { padding:6px 10px 10px; border-top:1px solid var(--line); }
+  label { display:inline-flex; gap:4px; align-items:center; margin:2px 8px 2px 0; }
   input[type=text], input[type=number], select { background:var(--bg); color:var(--fg); border:1px solid var(--line);
-           border-radius:4px; padding:4px 6px; font:inherit; }
-  input[type=number] { width:6em; }
-  button { background:var(--accent); color:#fff; border:0; border-radius:4px; padding:6px 12px; font:inherit;
+           border-radius:4px; padding:3px 5px; font:inherit; min-width:0; }
+  input[type=number] { width:5em; }
+  input.grow { flex:1 1 140px; width:100%; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:4px; padding:5px 10px; font:inherit;
            cursor:pointer; }
   button.secondary { background:transparent; color:var(--accent); border:1px solid var(--accent); }
+  button.link { background:none; border:0; color:var(--accent); padding:0; text-decoration:underline; }
   button:disabled { opacity:.5; cursor:default; }
-  table { border-collapse:collapse; width:100%; font-size:13px; }
-  th, td { text-align:left; padding:4px 6px; border-bottom:1px solid var(--line); vertical-align:top; }
-  th { color:var(--muted); font-weight:600; }
-  .muted { color:var(--muted); }
-  .warn { color:var(--review); }
-  .err { color:var(--reject); }
+  table { border-collapse:collapse; width:100%; }
+  th, td { text-align:left; padding:3px 4px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; font-size:12px; }
+  td.n { white-space:nowrap; }
+  .name { word-break:break-all; }
+  .muted { color:var(--muted); } .small { font-size:12px; }
+  .warn { color:var(--review); } .err { color:var(--reject); }
   .keep { color:var(--keep); font-weight:600; } .review { color:var(--review); font-weight:600; }
   .reject { color:var(--reject); font-weight:600; }
-  .row { display:flex; flex-wrap:wrap; gap:8px 4px; align-items:center; margin:6px 0; }
-  #log { max-height:220px; overflow:auto; font:12px/1.4 ui-monospace, monospace; background:var(--bg);
-         border:1px solid var(--line); padding:6px; white-space:pre-wrap; }
-  .pill { display:inline-block; border:1px solid var(--line); border-radius:10px; padding:0 6px; font-size:12px; }
+  .row { display:flex; flex-wrap:wrap; gap:6px 4px; align-items:center; margin:5px 0; }
+  .note { border-left:3px solid var(--review); padding:4px 8px; margin:6px 0; background:var(--bg); }
+  .note:empty { display:none; }
+  #log { max-height:180px; overflow:auto; font:11px/1.4 ui-monospace, monospace; background:var(--bg);
+         border:1px solid var(--line); padding:5px; white-space:pre-wrap; }
+  .pill { display:inline-block; border:1px solid var(--line); border-radius:9px; padding:0 5px; font-size:11px; }
+  img.th { width:44px; height:44px; object-fit:cover; border-radius:3px; background:var(--line); display:block; }
+  details.sub > summary { cursor:pointer; color:var(--accent); font-size:12px; }
+  @media (max-width: 560px) { .wide { display:none; } }
 </style>
 </head>
 <body>
 <header>
   <h1>Astro session</h1>
-  <span id="facet" class="muted">connecting...</span>
-  <span id="warnings" class="warn"></span>
+  <div id="facet" class="muted small">connecting...</div>
+  <div id="warnings" class="note small"></div>
 </header>
 <main>
 
-<section id="s1">
-  <h2>1. Photos</h2>
+<details class="step" id="s1" open>
+  <summary>1. Photos <span class="st" id="st1"></span></summary>
+  <div class="body">
+    <div id="scopeBox" hidden>
+      <div class="row"><span id="scopeinfo" class="muted"></span></div>
+      <div class="row" id="catRow" hidden><label>Category <input type="text" id="scopeCat" size="10" value="astro"></label>
+        <button id="reloadScope" class="secondary">Reload</button></div>
+      <div class="row" id="scopeChanged" hidden><span class="warn">Facet's view changed.</span>
+        <button id="useNewScope" class="secondary">Load the new photos</button></div>
+    </div>
+    <details class="sub" id="manualBox" open>
+      <summary>Load photos by folder, album or tag</summary>
+      <div class="row"><input type="text" id="prefix" class="grow" placeholder="Facet path prefix, e.g. //nas/Photos/2026/astro"></div>
+      <div class="row">
+        <label>Album <select id="album"><option value="">(any)</option></select></label>
+        <label>Tag <input type="text" id="tag" size="12"></label>
+        <label>Category <input type="text" id="category" size="8" value="astro"></label>
+        <button id="load">Load</button>
+      </div>
+    </details>
+    <div class="row"><span id="loadinfo" class="muted"></span>
+      <button id="showAll" class="secondary" hidden>Show in Facet</button></div>
+  </div>
+</details>
+
+<details class="step" id="s2">
+  <summary>2. Location <span class="st" id="st2"></span></summary>
+  <div class="body">
+    <p class="muted small">Facet's GPS on the photo wins, else the folder's astro-id.json site. For a photo with
+      none: paste "lat, lon" or a Google Maps URL, or open it in Facet (Set location).</p>
+    <table id="loc"><thead><tr><th><input type="checkbox" id="all" checked title="select all"></th><th></th>
+      <th>Photo</th><th>Location</th></tr></thead><tbody></tbody></table>
+  </div>
+</details>
+
+<details class="step" id="s3">
+  <summary>3. Time <span class="st" id="st3"></span></summary>
   <div class="body">
     <div class="row">
-      <label>Facet path prefix <input type="text" id="prefix" size="60" placeholder="e.g. //nas/Photos/2026/trip/astro"></label>
+      <label>Clock offset <input type="text" id="offset" size="13" placeholder="+2559d11h08m"></label>
+      <label>&plusmn; <input type="number" id="tol" min="0" step="1"> min</label>
     </div>
     <div class="row">
-      <label>Album <select id="album"><option value="">(any)</option></select></label>
-      <label>Tag <input type="text" id="tag" size="16"></label>
-      <label>Category <input type="text" id="category" size="10" value="astro"></label>
-      <button id="load">Load photos</button>
-      <span id="loadinfo" class="muted"></span>
-    </div>
-  </div>
-</section>
-
-<section id="s2">
-  <h2>2. Location</h2>
-  <div class="body">
-    <p class="muted">Facet's GPS on the photo wins; otherwise the folder's astro-id.json site applies. For a photo
-      with none: open it in Facet (Set location), or paste "lat, lon" or a Google Maps URL here.</p>
-    <table id="loc"><thead><tr><th><input type="checkbox" id="all" checked title="select all"></th><th>Photo</th>
-      <th>Captured (Facet)</th><th>GPS source</th><th>Position</th><th>RAW</th><th>Set location</th></tr></thead>
-      <tbody></tbody></table>
-  </div>
-</section>
-
-<section id="s3">
-  <h2>3. Date and time</h2>
-  <div class="body">
-    <div class="row">
-      <label>Clock offset <input type="text" id="offset" size="14" placeholder="+2559d11h08m"></label>
-      <label>Tolerance &plusmn; <input type="number" id="tol" min="0" step="1"> min</label>
-      <label>Timezone <input type="text" id="tz" size="20" placeholder="America/Los_Angeles"></label>
-      <label>Solve source <select id="source"><option value="">(folder / jpg)</option><option>jpg</option>
+      <label>Timezone <input type="text" id="tz" size="16" placeholder="America/Los_Angeles"></label>
+      <label>Source <select id="source"><option value="">(folder / jpg)</option><option>jpg</option>
         <option>raw</option><option>auto</option></select></label>
+    </div>
+    <div class="row">
       <button id="preview" class="secondary">Preview times</button>
       <button id="saveCfg" class="secondary" title="write offset, tolerance and timezone into each folder's astro-id.json">Save to folder astro-id.json</button>
-      <span id="previewinfo" class="muted"></span>
     </div>
-    <table id="times"><thead><tr><th>Photo</th><th>Camera time</th><th>Corrected time</th><th>Window</th>
-      <th>Time from</th><th>Site from</th><th>Solves</th><th>Notes</th></tr></thead><tbody></tbody></table>
+    <div class="row"><span id="previewinfo" class="muted"></span></div>
+    <table id="times"><thead><tr><th>Photo</th><th>Corrected time</th><th class="wide">Window</th>
+      <th>Notes</th></tr></thead><tbody></tbody></table>
   </div>
-</section>
+</details>
 
-<section id="s4">
-  <h2>4. Plate solve</h2>
+<details class="step" id="s4">
+  <summary>4. Plate solve <span class="st" id="st4"></span></summary>
   <div class="body">
     <div class="row">
       <label>Min confidence <input type="number" id="minconf" value="65" min="0" max="100"></label>
-      <label><input type="checkbox" id="write" checked> write tags + annotations to Facet</label>
-      <button id="solve">Plate solve</button>
-      <span id="solveinfo" class="muted"></span>
+      <label><input type="checkbox" id="write" checked> write to Facet</label>
     </div>
+    <div class="row"><button id="solve">Plate solve</button> <span id="solveinfo" class="muted"></span></div>
     <div id="log"></div>
   </div>
-</section>
+</details>
 
-<section id="s5">
-  <h2>5. Culling</h2>
+<details class="step" id="s5">
+  <summary>5. Culling <span class="st" id="st5"></span></summary>
   <div class="body">
-    <p class="muted">Shown only: Facet's reject and cull flags are never written. Defocused frames are at most
-      "review" (kept for stacking).</p>
-    <div class="row"><label><input type="checkbox" id="ruleEnabled" checked> rule enabled</label></div>
-    <table id="rule"><thead><tr><th>Order</th><th>Check</th><th>On</th><th>Thresholds</th></tr></thead><tbody></tbody></table>
-    <div class="row"><button id="recull" class="secondary">Re-cull (no re-solve)</button>
-      <span id="cullinfo" class="muted"></span></div>
-    <table id="cull"><thead><tr><th>Photo</th><th>Solve</th><th>Grade</th><th>Stars</th><th>Star size px</th>
-      <th>Elongation</th><th>Decision</th><th>Reasons</th></tr></thead><tbody></tbody></table>
-    <div class="row">
-      <label><input type="checkbox" id="reviewTag"> tag review/reject frames "<span id="rtname">astro-review</span>" in Facet</label>
-      <button id="applyReview" class="secondary" disabled>Apply tag</button>
-      <span id="reviewinfo" class="muted"></span>
+    <p class="muted small">Advisory only: Facet's reject and cull flags are never written. Defocused frames are at
+      most "review" (kept for stacking).</p>
+    <details class="sub"><summary>Rule</summary>
+      <div class="row"><label><input type="checkbox" id="ruleEnabled" checked> rule enabled</label></div>
+      <table id="rule"><thead><tr><th></th><th>Check</th><th>On</th><th>Thresholds</th></tr></thead><tbody></tbody></table>
+      <div class="row"><button id="recull" class="secondary">Re-cull (no re-solve)</button></div>
+    </details>
+    <div class="row"><span id="cullinfo" class="muted"></span></div>
+    <div class="row" id="showCull" hidden>
+      <button class="secondary" data-show="keep">Show keep</button>
+      <button class="secondary" data-show="review">Show review</button>
+      <button class="secondary" data-show="reject">Show reject</button>
     </div>
+    <table id="cull"><thead><tr><th>Photo</th><th>Decision</th><th class="wide">Grade</th><th>Reasons</th></tr></thead>
+      <tbody></tbody></table>
+    <div class="row">
+      <label><input type="checkbox" id="reviewTag"> tag review/reject "<span id="rtname">astro-review</span>"</label>
+      <button id="applyReview" class="secondary" disabled>Apply tag</button>
+    </div>
+    <div class="row"><span id="reviewinfo" class="muted"></span></div>
   </div>
-</section>
+</details>
 </main>
 
+<!--ASTRO_BRIDGE-->
 <script>
 "use strict";
+const B = window.AstroBridge;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const base = (p) => String(p).replace(/\\/g, "/").split("/").pop();
+
+// Nonce: from the document URL once, then memory only (no storage exists in an opaque origin).
+const NONCE = B.readNonce(location.search);
+const API = B.makeApi((u, o) => fetch(u, o), NONCE);
+const api = API.call;
+let bridge = null, scopeReq = null, pendingReq = null, loadedKey = "", initDone = false, lastCtx = null;
+
 let state = {}, photos = [], folders = {}, cull = null, quality = {}, solved = {};
 const THRESH = {focus: ["focus_ratio", "focus_px"], trailing: ["trailing_review", "trailing_reject"],
                 stars: ["stars_ratio_review", "stars_min"], solve: []};
 let rule = null;
 
-async function api(path, body) {
-  const opt = body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)};
-  const r = await fetch(path, opt);
-  const doc = await r.json().catch(() => ({error: "HTTP " + r.status}));
-  if (!r.ok) throw new Error(doc.error || ("HTTP " + r.status));
-  return doc;
+function openStep(n, only) {
+  for (let i = 1; i <= 5; i++) { const d = $("s" + i); if (i === n) d.open = true; else if (only && only.includes(i)) d.open = false; }
 }
 function selected() { return photos.filter((p) => p._on).map((p) => p.path); }
 function opts() {
   return {paths: selected(), offset: $("offset").value.trim(), tolerance_min: $("tol").value,
           tz: $("tz").value.trim(), source: $("source").value, min_confidence: Number($("minconf").value || 65)};
 }
+function inFacet(path, label) {   // add-on: ask the host; standalone: a plain link (the page is not sandboxed)
+  return bridge && bridge.active
+    ? `<button class="link" data-open="${esc(path)}">${esc(label)}</button>`
+    : `<a href="${esc(photos.find((p) => p.path === path)?.facet_link || "#")}" target="_blank" rel="noopener">${esc(label)}</a>`;
+}
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-open]");
+  if (t && bridge) { e.preventDefault(); bridge.openPhoto(t.dataset.open); }
+});
 
+/* ------------------------------------------------------------- thumbnails --- */
+const thumbs = new Map(); let thumbQ = [], thumbBusy = 0;
+function queueThumb(img, path) {
+  if (thumbs.has(path)) { img.src = thumbs.get(path); return; }
+  thumbQ.push([img, path]); pumpThumbs();
+}
+function pumpThumbs() {
+  while (thumbBusy < 4 && thumbQ.length) {
+    const [img, path] = thumbQ.shift(); thumbBusy++;
+    API.blob("api/thumb?size=96&path=" + encodeURIComponent(path))
+      .then((b) => { const u = URL.createObjectURL(b); thumbs.set(path, u); img.src = u; })
+      .catch(() => { img.alt = "-"; })
+      .finally(() => { thumbBusy--; pumpThumbs(); });
+  }
+}
+
+/* ------------------------------------------------------------------ init --- */
 async function init() {
+  if (NONCE) {
+    bridge = B.createBridge({win: window, parent: window.parent, nonce: NONCE,
+                             onContext: (ctx) => { lastCtx = ctx; if (initDone) onContext(ctx); }});
+    $("scopeBox").hidden = false; $("manualBox").open = false;
+    $("scopeinfo").textContent = "waiting for Facet...";
+    bridge.ready();   // first thing: the host sends nothing before a verified ready
+  }
   state = await api("api/state");
   $("facet").textContent = `Facet ${state.facet} (v${state.version}) · annotations: ${state.annotations || "skipped"}` +
     (state.can_write ? "" : " · READ-ONLY (no credential)");
@@ -162,96 +232,149 @@ async function init() {
     const a = await api("api/albums");
     for (const al of a.albums) { const o = document.createElement("option"); o.value = al.id; o.textContent = `${al.name} (${al.count ?? "?"})`; $("album").appendChild(o); }
   } catch (e) { /* albums are optional */ }
-  try { const saved = JSON.parse(localStorage.getItem("astro-id.selection") || "{}");
-        if (saved.prefix) $("prefix").value = saved.prefix; } catch (e) {}
+  initDone = true;
+  if (lastCtx) onContext(lastCtx);
+}
+
+function onContext(ctx) {
+  const req = B.scopeRequest(ctx, $("scopeCat").value.trim());
+  if (!req) { if (!loadedKey) $("scopeinfo").textContent = "Facet sent no photo scope: load photos below."; return; }
+  const key = B.scopeKey(req);
+  if (key === loadedKey) return;
+  if (!loadedKey) { loadScope(req); return; }
+  pendingReq = req; $("scopeChanged").hidden = false;   // never wipe a session in progress
+}
+$("useNewScope").onclick = () => { if (pendingReq) loadScope(pendingReq); };
+$("reloadScope").onclick = () => { if (scopeReq) loadScope(Object.assign({}, scopeReq, {category: $("scopeCat").value.trim()})); };
+
+function scopeLabel(req, n) {
+  if (req.kind === "import") return `Import run ${req.run_id}: ${n} photo(s)` + (req.category ? ` in category "${req.category}"` : "");
+  if (req.kind === "view") return `Facet's current view: ${n} photo(s)`;
+  return `Facet selection: ${n} photo(s)`;
+}
+async function loadScope(req) {
+  scopeReq = req; pendingReq = null; $("scopeChanged").hidden = true;
+  $("catRow").hidden = req.kind !== "import";
+  $("scopeinfo").textContent = "loading...";
+  try {
+    const d = await api("api/scope", req);
+    loadedKey = B.scopeKey(req);
+    $("scopeinfo").textContent = scopeLabel(req, d.photos.length);
+    loaded(d);
+  } catch (e) { $("scopeinfo").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 }
 
 $("load").onclick = async () => {
   $("loadinfo").textContent = "loading...";
-  try { localStorage.setItem("astro-id.selection", JSON.stringify({prefix: $("prefix").value})); } catch (e) {}
   try {
     const d = await api("api/photos", {path_prefix: $("prefix").value.trim(), album_id: $("album").value,
                                        tag: $("tag").value.trim(), category: $("category").value.trim()});
-    photos = d.photos.map((p) => ({...p, _on: true})); folders = d.folders;
-    $("loadinfo").textContent = `${photos.length} photo(s)` + (d.raw_companion_field ? "" : " · this Facet has no raw_companion field");
-    const f = Object.values(folders).find((c) => c && c.file);
-    if (f) {
-      if (f.clock_offset && !$("offset").value) $("offset").value = f.clock_offset;
-      if (f.time_tolerance_min != null && !$("tol").value) $("tol").value = f.time_tolerance_min;
-      if (f.timezone && !$("tz").value) $("tz").value = f.timezone;
-      if (f.cull) { rule = Object.assign(JSON.parse(JSON.stringify(state.default_rule)), f.cull);
-                    rule.thresholds = Object.assign({}, state.default_rule.thresholds, f.cull.thresholds || {}); drawRule(); }
-    }
-    if (!$("tol").value) $("tol").value = 15;
-    drawLoc();
+    loadedKey = "manual"; $("scopeChanged").hidden = true;
+    loaded(d);
   } catch (e) { $("loadinfo").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 };
 
+function loaded(d) {
+  photos = d.photos.map((p) => ({...p, _on: true})); folders = d.folders;
+  $("loadinfo").textContent = `${photos.length} photo(s)` + (d.raw_companion_field ? "" : " · no raw_companion field in this Facet");
+  $("st1").textContent = `${photos.length} photo(s)`;
+  $("showAll").hidden = !(bridge && bridge.active && photos.length);
+  const f = Object.values(folders).find((c) => c && c.file);
+  if (f) {
+    if (f.clock_offset && !$("offset").value) $("offset").value = f.clock_offset;
+    if (f.time_tolerance_min != null && !$("tol").value) $("tol").value = f.time_tolerance_min;
+    if (f.timezone && !$("tz").value) $("tz").value = f.timezone;
+    if (f.cull) { rule = Object.assign(JSON.parse(JSON.stringify(state.default_rule)), f.cull);
+                  rule.thresholds = Object.assign({}, state.default_rule.thresholds, f.cull.thresholds || {}); drawRule(); }
+  }
+  if (!$("tol").value) $("tol").value = 15;
+  drawLoc();
+  if (photos.length) openStep(2, [1]);
+}
+$("showAll").onclick = () => { if (bridge) bridge.showPhotos(photos.map((p) => p.path)); };
+
+/* --------------------------------------------------------------- step 2 --- */
 function drawLoc() {
   const tb = $("loc").tBodies[0]; tb.innerHTML = "";
+  let missing = 0;
   photos.forEach((p, i) => {
     const tr = document.createElement("tr");
-    const pos = p.gps[0] != null ? `${p.gps[0].toFixed(5)}, ${p.gps[1].toFixed(5)}` : "";
-    const cls = p.gps_source === "none" ? "warn" : "";
+    const pos = p.gps[0] != null ? `${Number(p.gps[0]).toFixed(4)}, ${Number(p.gps[1]).toFixed(4)}` : "";
+    if (p.gps_source === "none") missing++;
+    const raw = p.raw_companion ? `<span class="pill">RAW</span>` : "";
     tr.innerHTML = `<td><input type="checkbox" ${p._on ? "checked" : ""} data-i="${i}"></td>
-      <td><a href="${esc(p.facet_link)}" target="_blank" rel="noopener">${esc(p.filename)}</a></td>
-      <td>${esc(p.date_taken)}${p.date_manually_set ? ' <span class="pill">corrected</span>' : ""}</td>
-      <td class="${cls}">${esc(p.gps_source)}</td><td>${esc(pos)}</td>
-      <td>${p.raw_companion ? esc(p.raw_companion) : (p.raw_companion === "" ? "none" : '<span class="muted">?</span>')}</td>
-      <td><input type="text" size="26" placeholder="lat, lon or Maps URL" data-gps="${i}">
-          <button class="secondary" data-set="${i}">Set</button>
-          <a href="${esc(p.facet_link)}" target="_blank" rel="noopener">in Facet</a> <span data-msg="${i}"></span></td>`;
+      <td><img class="th" alt=""></td>
+      <td><div class="name">${inFacet(p.path, p.filename)} ${raw}</div>
+        <div class="muted small">${esc(p.date_taken)}${p.date_manually_set ? ' <span class="pill">corrected</span>' : ""}</div></td>
+      <td><div class="${p.gps_source === "none" ? "warn" : ""}">${esc(p.gps_source)}</div><div class="muted small">${esc(pos)}</div>
+        <details class="sub" ${p.gps_source === "none" ? "open" : ""}><summary>set</summary>
+          <div class="row"><input type="text" class="grow" placeholder="lat, lon or Maps URL" data-gps="${i}">
+          <button class="secondary" data-set="${i}">Set</button></div><span data-msg="${i}"></span></details></td>`;
     tb.appendChild(tr);
+    queueThumb(tr.querySelector("img.th"), p.path);
   });
+  $("st2").textContent = photos.length ? (missing ? `${missing} without location` : "all located") : "";
   tb.querySelectorAll("input[type=checkbox]").forEach((c) => c.onchange = () => { photos[c.dataset.i]._on = c.checked; });
   tb.querySelectorAll("button[data-set]").forEach((b) => b.onclick = async () => {
     const i = b.dataset.set, txt = tb.querySelector(`input[data-gps="${i}"]`).value, msg = tb.querySelector(`span[data-msg="${i}"]`);
     try { const r = await api("api/gps", {path: photos[i].path, text: txt});
-          photos[i].gps = r.gps; photos[i].gps_source = r.gps_source; drawLoc(); }
+          photos[i].gps = r.gps; photos[i].gps_source = r.gps_source; drawLoc();
+          if (bridge) bridge.refresh([photos[i].path]); }
     catch (e) { msg.innerHTML = `<span class="err">${esc(e.message)}</span>`; }
   });
 }
 $("all").onchange = () => { photos.forEach((p) => p._on = $("all").checked); drawLoc(); };
 
+/* --------------------------------------------------------------- step 3 --- */
 $("preview").onclick = async () => {
   $("previewinfo").textContent = "reading EXIF...";
   try {
     const d = await api("api/preview", opts());
     const tb = $("times").tBodies[0]; tb.innerHTML = "";
-    const name = (p) => p.replace(/\\/g, "/").split("/").pop();
     for (const r of d.preview) {
       const tr = document.createElement("tr");
-      tr.innerHTML = `<td>${esc(name(r.path))}</td><td>${esc(r.camera_time)}</td><td>${esc(r.true_time)}</td>
-        <td>${esc((r.window_start || "").slice(11, 16))} - ${esc((r.window_end || "").slice(11, 16))} (&plusmn;${esc(r.tolerance_min)} min)</td>
-        <td>${esc(r.time_source)}${r.offset ? " " + esc(r.offset) : ""}</td><td>${esc(r.site_source)}</td>
-        <td>${esc(r.solve_source)}</td><td class="${r.error ? "err" : "warn"}">${esc(r.error || (r.warnings || []).join("; "))}</td>`;
+      tr.title = `camera ${r.camera_time || "-"} · time from ${r.time_source || "-"}${r.offset ? " " + r.offset : ""} · site from ${r.site_source || "-"} · solves ${r.solve_source || "-"}`;
+      tr.innerHTML = `<td class="name">${esc(base(r.path))}</td><td class="n">${esc((r.true_time || "").replace("T", " ").slice(0, 19))}</td>
+        <td class="n wide">${esc((r.window_start || "").slice(11, 16))}-${esc((r.window_end || "").slice(11, 16))}</td>
+        <td class="${r.error ? "err" : "warn"} small">${esc(r.error || (r.warnings || []).join("; "))}</td>`;
       tb.appendChild(tr);
     }
-    $("previewinfo").textContent = `${d.preview.length} photo(s)`;
+    $("previewinfo").textContent = `${d.preview.length} photo(s) · hover a row for the sources`;
+    $("st3").textContent = `±${$("tol").value || "?"} min`;
   } catch (e) { $("previewinfo").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 };
+// No modal dialog: the sandbox blocks them (no allow-modals). A second click within 5 s confirms.
+let saveArmed = null;
 $("saveCfg").onclick = async () => {
-  if (!confirm("Write offset, tolerance and timezone into each selected photo folder's astro-id.json?")) return;
+  if (!saveArmed) {
+    $("saveCfg").textContent = "Click again to write astro-id.json";
+    saveArmed = setTimeout(() => { saveArmed = null; $("saveCfg").textContent = "Save to folder astro-id.json"; }, 5000);
+    return;
+  }
+  clearTimeout(saveArmed); saveArmed = null; $("saveCfg").textContent = "Save to folder astro-id.json";
   try { const d = await api("api/save-config", opts()); $("previewinfo").textContent = `saved: ${d.written.join(", ") || "nothing changed"}`; }
   catch (e) { $("previewinfo").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 };
 
+/* --------------------------------------------------------------- step 4 --- */
 let after = 0, timer = null;
 $("solve").onclick = async () => {
   const body = {...opts(), write: $("write").checked, cull: currentRule()};
   if (!body.paths.length) { $("solveinfo").textContent = "select photos first"; return; }
   $("log").textContent = ""; after = 0;
   try { await api("api/solve", body); $("solve").disabled = true; $("solveinfo").textContent = "solving...";
+        $("st4").textContent = "running"; openStep(4, [1, 2, 3]);
         timer = setInterval(poll, 1500); }
   catch (e) { $("solveinfo").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 };
 async function poll() {
-  const d = await api("api/job?after=" + after);
+  let d;
+  try { d = await api("api/job?after=" + after); } catch (e) { $("solveinfo").innerHTML = `<span class="err">${esc(e.message)}</span>`; return; }
   after = d.next;
   for (const ev of d.events) {
     let line = ev.event;
-    if (ev.event === "photo") line = `[${ev.index}] ${ev.status} ${ev.path.split(/[\\/]/).pop()} · ${ev.objects} objects · grade ${ev.grade ?? "-"}${ev.error ? " · " + ev.error : ""}`;
-    else if (ev.event === "written") line = `wrote ${ev.path.split(/[\\/]/).pop()}: +${ev.add.length} -${ev.remove.length} tags · annotation ${ev.annotation}`;
+    if (ev.event === "photo") line = `[${ev.index}] ${ev.status} ${base(ev.path)} · ${ev.objects} obj · grade ${ev.grade ?? "-"}${ev.error ? " · " + ev.error : ""}`;
+    else if (ev.event === "written") line = `wrote ${base(ev.path)}: +${ev.add.length} -${ev.remove.length} · annotation ${ev.annotation}`;
     else if (ev.event === "done") line = `done: ${ev.solved} solved, ${ev.stack_copies} stack copies, ${ev.failed} failed in ${ev.elapsed_s} s`;
     else if (ev.event === "start") line = `start: ${ev.total} photo(s)`;
     $("log").textContent += line + "\n";
@@ -259,12 +382,19 @@ async function poll() {
   $("log").scrollTop = 1e9;
   if (!d.running) {
     clearInterval(timer); $("solve").disabled = false;
-    if (d.error) $("solveinfo").innerHTML = `<span class="err">${esc(d.error)}</span>`;
-    else $("solveinfo").textContent = d.done ? `done in ${d.done.elapsed_s} s` + (d.done.time && d.done.time.suggest_tolerance_min ? ` · suggested tolerance ±${d.done.time.suggest_tolerance_min} min` : "") : "";
-    if (d.done) { quality = d.done.quality || {}; solved = d.done.solved_by_path || {}; cull = d.done.cull; drawCull(); $("applyReview").disabled = false; }
+    if (d.error) { $("solveinfo").innerHTML = `<span class="err">${esc(d.error)}</span>`; $("st4").textContent = "error"; }
+    else {
+      $("solveinfo").textContent = d.done ? `done in ${d.done.elapsed_s} s` + (d.done.time && d.done.time.suggest_tolerance_min ? ` · suggested tolerance ±${d.done.time.suggest_tolerance_min} min` : "") : "";
+      $("st4").textContent = d.done ? `${d.done.solved ?? "?"} solved` : "";
+    }
+    const written = (d.reports || []).filter((r) => !r.error && !r.dry_run).map((r) => r.path);
+    if (written.length && bridge) bridge.refresh(written);
+    if (d.done) { quality = d.done.quality || {}; solved = d.done.solved_by_path || {}; cull = d.done.cull; drawCull();
+                  $("applyReview").disabled = false; openStep(5, [4]); }
   }
 }
 
+/* --------------------------------------------------------------- step 5 --- */
 function currentRule() {
   return {enabled: $("ruleEnabled").checked, order: rule.order.slice(), thresholds: Object.assign({}, rule.thresholds)};
 }
@@ -275,7 +405,7 @@ function drawRule() {
   const tb = $("rule").tBodies[0]; tb.innerHTML = "";
   order.forEach((c, i) => {
     const on = rule.order.includes(c);
-    const th = THRESH[c].map((k) => `<label>${k} <input type="number" step="any" data-k="${k}" value="${rule.thresholds[k] ?? ""}" placeholder="off"></label>`).join("");
+    const th = THRESH[c].map((k) => `<label class="small">${k} <input type="number" step="any" data-k="${k}" value="${rule.thresholds[k] ?? ""}" placeholder="off"></label>`).join("");
     const tr = document.createElement("tr");
     tr.innerHTML = `<td><button class="secondary" data-up="${c}" ${i ? "" : "disabled"}>&uarr;</button></td><td>${c}</td>
       <td><input type="checkbox" data-on="${c}" ${on ? "checked" : ""}></td><td>${th || '<span class="muted">-</span>'}</td>`;
@@ -283,7 +413,7 @@ function drawRule() {
   });
   tb.querySelectorAll("button[data-up]").forEach((b) => b.onclick = () => {
     const full = order.slice(), i = full.indexOf(b.dataset.up); [full[i - 1], full[i]] = [full[i], full[i - 1]];
-    rule.order = full.filter((c) => rule.order.includes(c)); drawRuleKeep(full);
+    const on = new Set(rule.order); rule.order = full.filter((c) => on.has(c)); drawRule();
   });
   tb.querySelectorAll("input[data-on]").forEach((c) => c.onchange = () => {
     rule.order = order.filter((x) => x === c.dataset.on ? c.checked : rule.order.includes(x));
@@ -291,9 +421,6 @@ function drawRule() {
   tb.querySelectorAll("input[data-k]").forEach((inp) => inp.onchange = () => {
     rule.thresholds[inp.dataset.k] = inp.value === "" ? null : Number(inp.value);
   });
-}
-function drawRuleKeep(full) {   // keep the moved position for checks that are off as well
-  const on = new Set(rule.order); rule.order = full.filter((c) => on.has(c)); drawRule();
 }
 $("recull").onclick = async () => {
   try { cull = await api("api/recull", {rule: currentRule()}); drawCull(); }
@@ -305,20 +432,26 @@ function drawCull() {
   for (const [p, v] of Object.entries(cull.frames)) {
     const q = quality[p] || {}; counts[v.decision] = (counts[v.decision] || 0) + 1;
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${esc(p.split(/[\\/]/).pop())}</td><td>${solved[p] ? "solved" : "failed"}</td><td>${esc(q.grade ?? "-")}</td>
-      <td>${esc(q.detected ?? "-")}</td><td>${q.fwhm_px != null ? q.fwhm_px.toFixed(1) : "-"}</td>
-      <td>${q.elongation != null ? q.elongation.toFixed(2) : "-"}</td><td class="${esc(v.decision)}">${esc(v.decision)}</td>
-      <td>${esc((v.reasons || []).join("; "))}</td>`;
+    tr.title = `${solved[p] ? "solved" : "not solved"} · stars ${q.detected ?? "-"} · star size ${q.fwhm_px != null ? q.fwhm_px.toFixed(1) : "-"} px · elongation ${q.elongation != null ? q.elongation.toFixed(2) : "-"}`;
+    tr.innerHTML = `<td class="name">${inFacet(p, base(p))}</td><td class="${esc(v.decision)}">${esc(v.decision)}</td>
+      <td class="wide">${esc(q.grade ?? "-")}</td><td class="small">${esc((v.reasons || []).join("; "))}</td>`;
     tb.appendChild(tr);
   }
   const ref = cull.reference || {};
   $("cullinfo").textContent = `keep ${counts.keep} · review ${counts.review} · reject ${counts.reject} · reference: best focus ${ref.fwhm_px ?? "-"} px, median ${ref.detected ?? "-"} stars`;
+  $("st5").textContent = `${counts.keep}/${counts.review}/${counts.reject}`;
+  $("showCull").hidden = !(bridge && bridge.active);
 }
+document.querySelectorAll("button[data-show]").forEach((b) => b.onclick = () => {
+  if (!cull || !bridge) return;
+  bridge.showPhotos(Object.entries(cull.frames).filter(([, v]) => v.decision === b.dataset.show).map(([p]) => p));
+});
 $("applyReview").onclick = async () => {
   if (!cull) return;
   const flagged = $("reviewTag").checked ? Object.entries(cull.frames).filter(([, v]) => v.decision !== "keep").map(([p]) => p) : [];
   try { const d = await api("api/review-tags", {paths: flagged});
-        $("reviewinfo").textContent = `${flagged.length} frame(s) tagged, ${d.reports.length} photo(s) checked`; }
+        $("reviewinfo").textContent = `${flagged.length} frame(s) tagged, ${d.reports.length} photo(s) checked`;
+        if (bridge) bridge.refresh(d.reports.filter((r) => !r.error).map((r) => r.path)); }
   catch (e) { $("reviewinfo").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 };
 init().catch((e) => { $("facet").innerHTML = `<span class="err">${esc(e.message)}</span>`; });

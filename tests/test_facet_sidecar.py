@@ -186,7 +186,8 @@ def test_client_anonymous_writes_are_refused(fake):
 
 def test_feature_detection(fake):
     assert FacetClient(fake.url, edition_password="pw").features() == {"annotations_put": True,
-                                                                       "annotations_read": True}
+                                                                       "annotations_read": True,
+                                                                       "plugin_tags": False}
     fake.annotations_put = False
     assert FacetClient(fake.url, edition_password="pw").features()["annotations_put"] is False
 

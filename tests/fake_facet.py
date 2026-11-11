@@ -4,6 +4,11 @@ Behaviour copied from Facet 1.29 where the sidecar depends on it: the edition lo
 writes need it (401 without), ``batch_manual_tags`` add skips photos at the 50-tag cap or whose AI tags hold the
 tag (INSERT OR IGNORE), delete removes the tag whatever its source, ``GET /api/photos`` pages with ``has_more``.
 ``annotations_put`` switches the PUT route on (absent = 405 like a FastAPI path without that method).
+
+Add-on pieces (PLUGIN_BOUNDARY.md v0.2): ``GET /api/photos?scan_run=`` filters on a photo's ``scan_run`` field,
+``GET /thumbnail`` returns a tiny JPEG, ``addon_token`` (``fct_...``) is accepted as a bearer and answers 403 on
+any route in ``addon_denied`` (an add-on token outside its permissions), ``plugin_tags`` switches
+``POST /api/photos/plugin_tags`` on (422 on an empty body, like FastAPI validation).
 """
 from __future__ import annotations
 
@@ -17,7 +22,7 @@ CAP = 50
 
 class FakeFacet:
     def __init__(self, photos: list[dict], *, password="pw", annotations_put=True, annotations_read=True,
-                 version="1.29.0"):
+                 version="1.29.0", addon_token=None, addon_denied=(), plugin_tags=False):
         self.photos = {p["path"]: {"manual_tags": [], "tags": "", **p} for p in photos}
         self.password = password
         self.annotations_put = annotations_put
@@ -25,7 +30,10 @@ class FakeFacet:
         self.version = version
         self.annotations: dict = {}
         self.calls: list[tuple] = []
-        self.tokens = {"tok-1"}
+        self.tokens = {"tok-1"} | ({addon_token} if addon_token else set())
+        self.addon_token = addon_token
+        self.addon_denied = set(addon_denied)
+        self.plugin_tags = plugin_tags
         self.expire_next = False
         self.logins = 0
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
@@ -41,9 +49,9 @@ class FakeFacet:
         self.server.server_close()
 
     def writes(self):
-        """Calls that could change state (the feature probe, a PUT with an empty body, cannot)."""
+        """Calls that could change state (the feature probes, a PUT/POST with an empty body, cannot)."""
         return [c for c in self.calls if c[0] in ("POST", "PUT", "DELETE") and not c[1].startswith("/api/auth")
-                and not (c[0] == "PUT" and c[3] == {})]
+                and not (c[0] in ("PUT", "POST") and c[3] == {})]
 
     def _handler(self):
         fake = self
@@ -77,6 +85,21 @@ class FakeFacet:
                 body = self._body() if method in ("POST", "PUT", "DELETE") else {}
                 fake.calls.append((method, u.path, q, body))
                 p = u.path
+                tok = (self.headers.get("Authorization") or "").removeprefix("Bearer ")
+                if fake.addon_token and tok == fake.addon_token and (method, p) in fake.addon_denied:
+                    return self._out(403, {"detail": "add-on token: route outside its permissions"})
+                if p == "/thumbnail" and method == "GET":
+                    if q.get("path") not in fake.photos:
+                        return self._out(404, {"detail": "Thumbnail not found"})
+                    data = bytes([0xFF, 0xD8, 0xFF, 0xE0]) + b"fakejpeg" + q["path"].encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/jpeg")
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return None
+                if p == "/api/photos/plugin_tags" and method == "POST" and fake.plugin_tags:
+                    return self._out(422, {"detail": "photo_paths required"})
                 if p == "/api/auth/edition/login" and method == "POST":
                     fake.logins += 1
                     if body.get("password") != fake.password:
@@ -93,6 +116,10 @@ class FakeFacet:
                     if q.get("path_prefix"):
                         pre = q["path_prefix"].replace("\\", "/").rstrip("/") + "/"
                         rows = [r for r in rows if r["path"].replace("\\", "/").startswith(pre)]
+                    if q.get("scan_run"):
+                        rows = [r for r in rows if str(r.get("scan_run")) == q["scan_run"]]
+                    if q.get("tag"):
+                        rows = [r for r in rows if q["tag"] in r["manual_tags"]]
                     if q.get("category"):
                         rows = [r for r in rows if r.get("category") == q["category"]]
                     if q.get("date_from"):

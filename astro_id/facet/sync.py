@@ -220,16 +220,30 @@ class SyncContext:
     version: str | None = None
     mode: str | None = None              # 'api' | 'legacy-db' | None (annotations skipped)
     warnings: list = field(default_factory=list)
+    addon: bool = False                  # started by Facet as an add-on: no --legacy-db, sidebar wording
+    tags_via: str = "manual+ledger"      # 'manual+ledger' until Facet PR-3 plugin tags are wired here
     _legacy: object = None
 
     def prepare(self) -> "SyncContext":
         self.library = library_key(self.client.url)
         self.version = self.client.server_version()
+        feats = self.client.features()
+        if feats.get("plugin_tags"):
+            # Detected first, as the spec asks; its request body is not pinned in PLUGIN_BOUNDARY v0.2, so the
+            # writer stays on batch_manual_tags + ledger until it is (then: source='plugin', created_by = add-on id).
+            self.warnings.append("this Facet has plugin tags (PR-3); astro-id still writes manual tags + its "
+                                 "ledger until the plugin_tags body is pinned in the spec")
         if not self.annotations:
             self.mode = None
             return self
-        if self.client.features().get("annotations_put"):
+        if feats.get("annotations_put"):
             self.mode = "api"
+        elif self.legacy_db and self.addon:
+            raise ValueError("--legacy-db is not available in add-on mode")
+        elif self.addon:
+            self.mode = None
+            self.warnings.append("Annotations skipped: this Facet has no PUT /api/photo/annotations yet (Facet "
+                                 "PR-1). Tags and GPS are still written; the overlay labels appear once PR-1 is in.")
         elif self.legacy_db:
             from .legacy import LegacyAnnotationWriter
 

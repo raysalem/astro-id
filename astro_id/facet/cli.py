@@ -1,4 +1,4 @@
-"""``astro-id facet sync | serve | status | undo``: the Facet sidecar commands."""
+"""``astro-id facet sync | serve | status | undo | install | uninstall``: the Facet sidecar and add-on commands."""
 from __future__ import annotations
 
 import json
@@ -58,11 +58,25 @@ def add_parser(sub) -> None:
     s.add_argument("--dry-run", action="store_true", help="solve and print what would be written; write nothing")
     s.add_argument("--json", action="store_true", help="JSON lines on stdout (session events + written reports)")
 
-    v = fs.add_parser("serve", help="local web UI for an astro session (127.0.0.1, secret URL)")
+    v = fs.add_parser("serve", help="local web UI for an astro session (127.0.0.1, secret URL), or with --addon "
+                                    "the Facet add-on process Facet starts itself")
     _common(v)
     _legacy(v)
     v.add_argument("--port", type=int, default=0, help="port (default: a free one)")
     v.add_argument("--no-browser", action="store_true", help="do not open the page in a browser")
+    v.add_argument("--addon", action="store_true",
+                   help="Facet add-on mode (started by Facet's supervisor): reads FACET_URL, FACET_TOKEN, "
+                        "FACET_ADDON_ID, FACET_LAUNCH_SECRET; prints FACET_ADDON_PORT=<n>; UI under /ui/")
+
+    i = fs.add_parser("install", help="write <facet data>/addons/astro-id/addon.json (the Facet add-on manifest) "
+                                      "and nothing else")
+    i.add_argument("--facet-data", required=True, help="Facet's data folder (holds scoring_config.json)")
+    i.add_argument("--uv", help="uv executable for the manifest (default $UV, else uv on PATH)")
+    i.add_argument("--project", help="astro-id checkout for `uv run --project` (default: this one)")
+    i.add_argument("-v", "--verbose", action="store_true")
+    r = fs.add_parser("uninstall", help="delete <facet data>/addons/astro-id/addon.json")
+    r.add_argument("--facet-data", required=True, help="Facet's data folder")
+    r.add_argument("-v", "--verbose", action="store_true")
 
     a = fs.add_parser("adopt", help="TEMPORARY one-time migration: put the tags/annotations the removed in-process "
                                     "plugin wrote (created_by='astro-id') into the ledger; reads the DB read-only")
@@ -100,6 +114,10 @@ def run(args) -> int:
     from .ledger import Ledger, library_key
 
     try:
+        if args.facet_cmd in ("install", "uninstall"):
+            from .install import run as run_install
+
+            return run_install(args)
         if args.facet_cmd == "serve":
             from .serve import serve
 
