@@ -1,4 +1,4 @@
-"""Command line: `astro-id solve ...` and `astro-id site <folder>` (contract v1, see CONTRACT.md)."""
+"""Command line: `astro-id solve|site|setup|session|cull` (contract v1.1, see CONTRACT.md) and `astro-id facet ...`."""
 from __future__ import annotations
 
 import argparse
@@ -50,6 +50,9 @@ def build_parser() -> argparse.ArgumentParser:
     k.add_argument("--stack-gap", type=float, help="max seconds between frames of one sequence (default 120)")
     s.add_argument("-v", "--verbose", action="store_true")
     _add_session(sub)
+    from .facet.cli import add_parser as _add_facet
+
+    _add_facet(sub)
     t = sub.add_parser("site", help="pick the observing site on Google Maps -> astro-id.json")
     t.add_argument("folder")
     d = sub.add_parser("setup", help="download reference data and check for ASTAP")
@@ -73,6 +76,10 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_session(args)
     if args.cmd == "cull":
         return cmd_cull(args)
+    if args.cmd == "facet":
+        from .facet.cli import run as run_facet
+
+        return run_facet(args)
     return cmd_solve(args)
 
 

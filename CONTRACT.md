@@ -244,3 +244,36 @@ Events, solve:
 ### Tolerance and solving cost
 
 The tolerance never changes what ASTAP or the refit does (the plate solve is blind and time-free); identification samples the window at 5 points whatever its width, so cost is flat. A tighter window only sharpens time-dependent scoring: worst-case altitude over the window (horizon margin), planet/Moon position spread, and the `best_fit_outside_tolerance` flag. `--time-tolerance` / `--tolerance-min` is honoured end to end (frame `time_tolerance_min`, legend `±5 min`, CSV `tolerance_min`, session events).
+
+## Facet sidecar commands (2026-11-11, docs only; the contract above is unchanged)
+
+The consumer of this contract is now the sidecar in `astro_id/facet/` (it imports `astro_id.session` in process),
+not an in-process Facet plugin; the plugin and its `plugins.astro_id` config block were removed, so mentions of
+"the Facet plugin" above describe history. The sidecar talks to Facet only over HTTP (`facet_plugin/README.md`).
+
+```
+astro-id facet sync  [--facet-url URL] [--path-prefix P] [--category astro|''] [--tag T] [--album ID]
+                     [--since YYYY-MM-DD|last] [--force] [--limit N] [--spool FILE] [--dry-run] [--json]
+                     [--legacy-db PATH --facet-dir DIR] [--no-annotations] [--ledger FILE] [--path-map FACET=LOCAL]
+                     [--min-confidence 65] [--offset ...] [--tolerance-min M] [--tz ZONE] [--source jpg|raw|auto]
+                     [--site lat,lon[,elev]] [--overlay-dir DIR] [--no-overlay] [--no-fallback]
+                     [--stack-mode representative|all] [--engine-flag FLAG ...]
+astro-id facet serve [--facet-url URL] [--port N] [--no-browser] [--legacy-db PATH --facet-dir DIR] [--ledger FILE]
+astro-id facet status [--facet-url URL] [--ledger FILE]
+astro-id facet undo   [--facet-url URL] [--path-prefix P] [--dry-run] [--legacy-db PATH --facet-dir DIR]
+astro-id facet adopt  --legacy-db PATH [--path-prefix P] [--dry-run]     # TEMPORARY one-time migration
+```
+
+- Credential (environment only): `FACET_EDITION_PASSWORD`, or `FACET_USERNAME` + `FACET_PASSWORD` (multi-user),
+  or `FACET_TOKEN` (bearer, used as is); `FACET_URL` (default `http://127.0.0.1:5000`). Without one, nothing is
+  written.
+- Per photo the sidecar passes Facet's facts as session `hints`: its GPS as `site`; its capture date as `time` only
+  when `date_manually_set` (a corrected date). Tags written = `plate-solved` / `plate-solve failed` + every object
+  with `taggable` and `confidence >= --min-confidence`, by level, under Facet's 50-tag cap (other tags first).
+- `sync --json` prints the session events (above) plus `{"event": "sync_start", ...}`, one
+  `{"event": "written", "path", "status", "add", "remove", "kept", "skipped", "dropped", "annotation"}` per photo and
+  `{"event": "sync_done", ...}`. Exit 0 when the run completed, 2 for a usage, login or connection error.
+- Ledger (`%LOCALAPPDATA%\astro-id\facet-ledger.sqlite`, `$XDG_DATA_HOME/astro-id/` elsewhere, or
+  `$ASTRO_ID_LEDGER`): per Facet URL and photo path the tags astro-id added, the annotation payload hash and how it
+  was stored, the last status and the Facet version; plus the `--since last` watermark (newest Facet capture date
+  seen). A re-run removes only ledger tags; a tag someone else put on the photo is never claimed or removed.

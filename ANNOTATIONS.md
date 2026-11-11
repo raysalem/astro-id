@@ -1,49 +1,35 @@
-# Facet photo annotations: payload v1 (astro-id ↔ Facet viewer)
+# astro-id annotation conventions (Facet photo annotations, payload v1)
 
-A generic, plugin-written overlay layer. A plugin computes its result once (e.g. a plate solve) and stores it; the Facet viewer draws it live and filters it with the viewer's own controls (score, groups, metric sliders). Nothing is re-solved when the user moves a slider.
+**The payload format belongs to Facet.** Its spec and validator live in Facet's `db/annotations.py` (module
+docstring + `validate_payload`; for now on the `feat/photo-annotations` branch, later in Facet's `docs/VIEWER.md`
+and `plugins/examples/annotations.schema.json`). This file only lists what astro-id puts into that format. The
+sidecar sends it with `PUT /api/photo/annotations` when Facet has that route (see `facet_plugin/README.md`).
 
-## Storage (Facet side)
-Side table `photo_annotations` (sticky, never rewritten by a rescan):
-`photo_path TEXT REFERENCES photos(path) ON DELETE CASCADE`, `source TEXT` (e.g. `astro-id`), `payload TEXT` (JSON below), `created_at TEXT`; primary key `(photo_path, source)`. Kept with the photo by the path-update triggers like other side tables.
+## What astro-id writes
 
-## Payload
-```json
-{
-  "version": 1,
-  "source": "astro-id",
-  "title": "Sky annotations",
-  "image": {"width": 9504, "height": 6336},
-  "legend": "2026-11-07 21:57 PST ±15 min · ASTAP grade A · 2452 stars",
-  "groups": [
-    {"id": "constellation", "label": "Constellations", "default": true},
-    {"id": "planet", "label": "Planets & Moon", "default": true},
-    {"id": "catalog", "label": "Messier / NGC / IC", "default": true},
-    {"id": "asterism", "label": "Asterisms", "default": true},
-    {"id": "star", "label": "Stars", "default": false}
-  ],
-  "metrics": [
-    {"key": "mag", "label": "Max magnitude", "min": -5, "max": 8, "step": 0.5, "default": 6, "direction": "max"}
-  ],
-  "score": {"label": "Confidence", "min": 0, "max": 100, "default": 65},
-  "items": [
-    {"id": "uranus", "label": "Uranus", "group": "planet", "score": 100,
-     "shape": "point", "x": 5123.4, "y": 2210.8, "r": 18, "values": {"mag": 5.6}},
-    {"id": "m45", "label": "M45 Pleiades", "group": "catalog", "score": 99,
-     "shape": "circle", "x": 4000, "y": 1800, "r": 220, "values": {"mag": 1.6}},
-    {"id": "orion", "label": "Orion", "group": "constellation", "score": 100,
-     "shape": "lines", "segments": [[[x1, y1], [x2, y2]], [[x3, y3], [x4, y4]]],
-     "label_at": [6000, 3000]},
-    {"id": "alnilam", "label": "Alnilam", "group": "star", "score": 100,
-     "shape": "point", "x": 6100, "y": 3050, "r": 10, "values": {"mag": 1.7}, "member_of": "orions-belt"}
-  ]
-}
-```
-
-- Coordinates are full-resolution source pixels, origin top-left; the viewer scales by `displayed / image.width`.
-- `shape`: `point` (marker), `circle` (radius `r`), `lines` (list of 2-point segments, already distortion-corrected by the plugin, so the viewer never needs a WCS), `label_at` for where to put a lines item's label.
-- Filters the viewer applies live: item shown when its group toggle is on, `score >= score slider`, and for each metric with `direction: "max"`, `values[key] <= slider` (items without that value are not filtered by it). `member_of` items are hidden when the item they belong to is shown (optional toggle "show members").
-- Labels are the plain `label`. The score appears only in a hover/focus tooltip, or on labels when the user turns on "Show scores" (default off).
-- Unknown fields are ignored; `version` other than 1 is not drawn.
+- `source`: `"astro-id"`; `version`: `1`; `title`: `"Sky annotations"`.
+- `image`: the full-resolution JPG frame (`width`, `height`); every coordinate is in that pixel space, also when
+  the solver read the RAW (`solve_source: raw`).
+- `legend`: one line, e.g. `2026-11-07 21:57 PST ±15 min · ASTAP grade A · 2452 stars`.
+- `groups`, in this order: `constellation` (Constellations, on), `planet` (Planets & Moon, on), `catalog`
+  (Messier / NGC / IC, on), `asterism` (Asterisms, on), `star` (Stars, off).
+- `metrics`: one, `{"key": "mag", "label": "Max magnitude", "min": -5, "max": 8, "step": 0.5, "default": 6,
+  "direction": "max"}`; items carry `values.mag` (V magnitude) when known.
+- `score`: `{"label": "Confidence", "min": 0, "max": 100, "default": 65}`; item `score` = the engine confidence.
+- Items: every identified object at every level (stars to mag 6.5). Planets, Moon, Sun and stars are `point`;
+  catalog objects with a size are `circle` (`r` in px); constellations and asterisms are `lines` (segments sampled
+  along the sky great circle about every 1.5 degrees, projected through the SIP-corrected solution, clipped to the
+  frame, rounded to 0.1 px) with `label_at`. `id` is the slugged tag; `member_of` is the `id` of the cluster or
+  asterism item a star belongs to.
+- Labels are plain names; the score is never in the label.
+- Size: under about 500 KB (the lowest-confidence items are dropped first). Facet caps a row at 2 MB / 20 000 items.
 
 ## Top-level `quality` (astro-id, 2026-11-11)
-The astro-id plugin adds the engine's per-frame metrics as a top-level `quality` object next to `items` (fields in `CONTRACT.md` v1.1: `detected`, `matched`, `measured`, `fwhm_px`, `elongation`, `roundness`, `background`, `noise`, `grade`...). The viewer ignores it (unknown fields are kept and ignored; Facet's `validate_payload` keeps it); a culling page reads it. It is data about the frame, not an overlay item, so it never affects drawing or filtering. Unsolved frames have no annotation row, so their metrics are only in the engine/session output.
+
+The sidecar adds the engine's per-frame metrics as a top-level `quality` object next to `items` (fields in
+`CONTRACT.md` v1.1: `detected`, `matched`, `measured`, `fwhm_px`, `elongation`, `roundness`, `background`, `noise`,
+`grade`, ...). Facet keeps unknown fields and the viewer ignores it; it is data about the frame, never an overlay
+item. An unsolved frame gets no annotation row (a row astro-id wrote earlier is removed).
+
+`tests/fixtures/annotation_golden.json` is a full example (synthetic frame), validated against Facet's
+`validate_payload` by `tests/test_facet_golden.py`.

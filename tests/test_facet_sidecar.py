@@ -1,0 +1,511 @@
+"""Facet sidecar: ledger, tag planning, the HTTP client and the sync / serve layers against a fake Facet."""
+from __future__ import annotations
+
+import json
+import threading
+import urllib.error
+import urllib.request
+
+import pytest
+
+from astro_id.facet import sync as S
+from astro_id.facet.client import ALL_FRAMES, FacetClient, FacetError
+from astro_id.facet.ledger import Ledger, data_dir, default_ledger_path, library_key
+from fake_facet import FakeFacet
+
+ROOT = "//nas/Photos/night"
+P1, P2, P3 = f"{ROOT}/A1.JPG", f"{ROOT}/A2.JPG", f"{ROOT}/A3.JPG"
+
+
+def photos():
+    return [
+        {"path": P1, "filename": "A1.JPG", "category": "astro", "date_taken": "2019:11:05 09:31:59",
+         "gps_latitude": 32.5, "gps_longitude": -116.25, "gps_manually_set": 0, "raw_companion": "A1.ARW"},
+        {"path": P2, "filename": "A2.JPG", "category": "astro", "date_taken": "2019:11:05 09:40:00",
+         "manual_tags": ["my trip"], "tags": "night sky,stars", "date_manually_set": 1, "raw_companion": ""},
+        {"path": P3, "filename": "A3.JPG", "category": "landscape", "date_taken": "2019:11:06 01:00:00"},
+    ]
+
+
+def frame(solved=True, objs=(), ann=True, quality=None):
+    fr = {"solved": solved, "objects": list(objs), "quality": quality}
+    if solved and ann:
+        fr["annotations"] = {"version": 1, "source": "astro-id", "image": {"width": 10, "height": 10},
+                             "items": [{"id": "x", "label": "X", "group": "planet", "score": 90, "shape": "point",
+                                        "x": 1, "y": 2}]}
+    return fr
+
+
+def obj(tag, conf=90, level=1, taggable=True):
+    return {"tag": tag, "confidence": conf, "level": level, "taggable": taggable}
+
+
+@pytest.fixture()
+def ledger(tmp_path):
+    with Ledger(tmp_path / "ledger.sqlite") as led:
+        yield led
+
+
+@pytest.fixture()
+def fake():
+    with FakeFacet(photos()) as f:
+        yield f
+
+
+def ctx_for(fake, ledger, **kw):
+    c = FacetClient(fake.url, edition_password="pw")
+    return S.SyncContext(client=c, ledger=ledger, **kw).prepare()
+
+
+# ------------------------------------------------------------------ ledger ---
+
+def test_ledger_record_get_meta_and_library_separation(ledger):
+    a, b = library_key("http://127.0.0.1:5001/"), library_key("HTTP://127.0.0.1:5003")
+    assert a == "http://127.0.0.1:5001" and b == "http://127.0.0.1:5003"
+    ledger.record(a, P1, tags=["orion", "plate-solved", "orion"], payload_hash="h", annotation_via="api",
+                  status="solved", facet_version="1.29.0")
+    r = ledger.get(a, P1)
+    assert r["tags"] == ["orion", "plate-solved"] and r["payload_hash"] == "h" and r["annotation_via"] == "api"
+    assert ledger.get(b, P1) is None and ledger.known_paths(a) == {P1} and ledger.known_paths(b) == set()
+    ledger.set_meta(a, "since_watermark", "2019-11-05")
+    assert ledger.get_meta(a, "since_watermark") == "2019-11-05" and ledger.get_meta(b, "since_watermark") is None
+    ledger.forget(a, P1)
+    assert ledger.rows(a) == []
+
+
+def test_ledger_is_usable_from_other_threads(ledger):
+    errs = []
+
+    def work(i):
+        try:
+            ledger.record("lib", f"p{i}", tags=[str(i)], payload_hash=None, annotation_via=None, status="solved",
+                          facet_version=None)
+        except Exception as exc:  # pragma: no cover
+            errs.append(exc)
+    ts = [threading.Thread(target=work, args=(i,)) for i in range(8)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert not errs and len(ledger.known_paths("lib")) == 8
+
+
+def test_default_ledger_location(monkeypatch, tmp_path):
+    monkeypatch.setenv("ASTRO_ID_LEDGER", str(tmp_path / "x.sqlite"))
+    assert default_ledger_path() == tmp_path / "x.sqlite"
+    monkeypatch.delenv("ASTRO_ID_LEDGER")
+    assert default_ledger_path().name == "facet-ledger.sqlite" and default_ledger_path().parent == data_dir()
+    assert data_dir().name == "astro-id"
+
+
+# ---------------------------------------------------------------- planning ---
+
+def test_normalize_tag_matches_facet_rules():
+    assert S.normalize_tag("  M45   Pleiades ") == "m45 pleiades"
+    assert S.normalize_tag("a,b") is None and S.normalize_tag("") is None and S.normalize_tag("x" * 65) is None
+    assert S.normalize_tag("zero\u200bwidth") is None and S.normalize_tag(None) is None
+
+
+def test_desired_tags_order_status_extra_and_filters():
+    fr = frame(objs=[obj("orion's belt", 95, 4), obj("jupiter", 99, 2), obj("orion", 80, 1), obj("taurus", 70, 1),
+                     obj("faint", 50, 1), obj("member", 99, 5, taggable=False)])
+    assert S.desired_tags(fr, 65, ["astro-review"]) == ["plate-solved", "astro-review", "orion", "taurus",
+                                                        "jupiter", "orion's belt"]
+    assert S.desired_tags(frame(solved=False, objs=[obj("x")]), 65) == ["plate-solve failed"]
+
+
+def test_plan_keeps_foreign_skips_ai_and_removes_stale_own():
+    p = S.plan_photo(["plate-solved", "orion", "stars", "my trip"], manual={"my trip", "old", "plate-solved"},
+                     ai={"stars"}, mine={"old", "plate-solved", "gone-by-user"})
+    assert p["keep"] == ["plate-solved", "orion"] and p["add"] == ["orion"]
+    assert p["remove"] == ["old"]                 # 'gone-by-user' is not in Facet any more: nothing to remove
+    assert p["skipped"] == ["stars", "my trip"]   # AI tag; a user tag is never claimed
+
+
+def test_plan_cap_counts_foreign_first_and_drops_lowest_priority():
+    foreign = {f"u{i}" for i in range(48)}
+    p = S.plan_photo(["plate-solved", "uranus", "orion", "taurus"], manual=foreign, ai=set(), mine=set())
+    assert p["keep"] == ["plate-solved", "uranus"] and p["dropped"] == ["orion", "taurus"]
+
+
+def test_hints_gps_source_and_dates():
+    assert S.gps_source({"gps_latitude": 1.0, "gps_longitude": 2.0}) == "facet-exif"
+    assert S.gps_source({"gps_latitude": 1.0, "gps_longitude": 2.0, "gps_manually_set": 1}) == "facet-manual"
+    assert S.gps_source({"gps_latitude": 0, "gps_longitude": 0}) == "none" and S.gps_source({}) == "none"
+    h = S.facet_hints({"gps_latitude": 32.5, "gps_longitude": -116.25, "date_taken": "2026:11:07 20:34:00"})
+    assert h == {"site": "32.500000,-116.250000", "time": None}          # camera clock: not a true time
+    h = S.facet_hints({"date_taken": "2026:11:07 20:34:00", "date_manually_set": 1})
+    assert h == {"site": None, "time": "2026-11-07T20:34:00"}
+    assert S.parse_facet_date("2026-11-07T20:34:00") is not None and S.parse_facet_date("garbage") is None
+
+
+def test_path_map():
+    pairs = S.parse_path_map(["/photos=//nas/Photos"])
+    assert S.to_local("/photos/2026/a.jpg", pairs) == "//nas/Photos/2026/a.jpg"
+    assert S.to_local("/other/a.jpg", pairs) == "/other/a.jpg"
+    with pytest.raises(ValueError):
+        S.parse_path_map(["nonsense"])
+
+
+def test_annotation_payload_rules():
+    assert S.annotation_payload(frame(solved=False)) is None
+    assert S.annotation_payload(frame(ann=False)) is S._UNSET
+    p = S.annotation_payload(frame(quality={"grade": "A"}))
+    assert p["quality"] == {"grade": "A"} and p["version"] == 1
+    assert S.payload_hash(p) == S.payload_hash(json.loads(json.dumps(p)))
+
+
+# ------------------------------------------------------------------ client ---
+
+def test_client_login_paging_and_all_frames(fake):
+    c = FacetClient(fake.url, edition_password="pw")
+    got = c.list_photos(path_prefix=ROOT + "\\", category="astro")
+    assert [p["path"] for p in got] == [P1, P2]
+    q = [x for x in fake.calls if x[1] == "/api/photos"][0][2]
+    assert all(q[k] == v for k, v in ALL_FRAMES.items()) and q["per_page"] == "500"
+    assert c.server_version() == "1.29.0"
+    assert c.photo("//nope") is None
+
+
+def test_client_relogin_after_expired_token_and_bad_password(fake):
+    c = FacetClient(fake.url, edition_password="pw")
+    c.batch_add_tag("x", [P1])
+    fake.expire_next = True
+    c.batch_add_tag("y", [P1])                    # 401 -> login again -> retried
+    assert {"x", "y"} <= set(fake.photos[P1]["manual_tags"]) and fake.logins == 2
+    with pytest.raises(FacetError) as ei:
+        FacetClient(fake.url, edition_password="wrong").login()
+    assert ei.value.status == 401
+
+
+def test_client_anonymous_writes_are_refused(fake):
+    c = FacetClient(fake.url)
+    assert not c.can_login and c.login() is None
+    with pytest.raises(FacetError) as ei:
+        c.batch_add_tag("x", [P1])
+    assert ei.value.status == 401
+
+
+def test_feature_detection(fake):
+    assert FacetClient(fake.url, edition_password="pw").features() == {"annotations_put": True,
+                                                                       "annotations_read": True}
+    fake.annotations_put = False
+    assert FacetClient(fake.url, edition_password="pw").features()["annotations_put"] is False
+
+
+def test_client_from_env(monkeypatch):
+    monkeypatch.setenv("FACET_URL", "http://127.0.0.1:9/")
+    monkeypatch.setenv("FACET_EDITION_PASSWORD", "s3cret")
+    monkeypatch.delenv("FACET_TOKEN", raising=False)
+    c = FacetClient.from_env()
+    assert c.url == "http://127.0.0.1:9" and c.edition_password == "s3cret" and c.can_login
+
+
+# -------------------------------------------------------------------- sync ---
+
+def test_apply_writes_then_rerun_is_a_no_op(fake, ledger):
+    ctx = ctx_for(fake, ledger)
+    res = {P1: frame(objs=[obj("orion"), obj("jupiter", level=2)]), P2: frame(objs=[obj("orion"), obj("stars")])}
+    rep = S.apply_results(ctx, res)
+    assert fake.photos[P1]["manual_tags"] == ["jupiter", "orion", "plate-solved"]
+    assert fake.photos[P2]["manual_tags"] == ["my trip", "orion", "plate-solved"]   # 'stars' is an AI tag
+    assert {r["annotation"] for r in rep} == {"stored"} and len(fake.annotations) == 2
+    assert ledger.tags(ctx.library, P2) == ["orion", "plate-solved"]
+    n = len(fake.writes())
+    rep2 = S.apply_results(ctx, res)
+    assert len(fake.writes()) == n                                  # nothing written the second time
+    assert all(not r["add"] and not r["remove"] and r["annotation"] == "unchanged" for r in rep2)
+
+
+def test_rerun_removes_only_own_stale_tags_and_unsolved_drops_annotation(fake, ledger):
+    ctx = ctx_for(fake, ledger)
+    S.apply_results(ctx, {P1: frame(objs=[obj("orion"), obj("taurus")])})
+    fake.photos[P1]["manual_tags"].append("taurus-user")            # a user tag added meanwhile
+    S.apply_results(ctx, {P1: frame(solved=False)})
+    assert fake.photos[P1]["manual_tags"] == ["plate-solve failed", "taurus-user"]
+    assert fake.annotations == {} and ledger.get(ctx.library, P1)["payload_hash"] is None
+
+
+def test_user_owned_tag_is_never_claimed_or_removed(fake, ledger):
+    fake.photos[P1]["manual_tags"] = ["orion"]                      # the user typed it first
+    ctx = ctx_for(fake, ledger)
+    S.apply_results(ctx, {P1: frame(objs=[obj("orion")])})
+    assert ledger.tags(ctx.library, P1) == ["plate-solved"]
+    S.apply_results(ctx, {P1: frame(solved=False)})
+    assert "orion" in fake.photos[P1]["manual_tags"]
+
+
+def test_dry_run_writes_nothing(fake, ledger):
+    ctx = ctx_for(fake, ledger, dry_run=True)
+    rep = S.apply_results(ctx, {P1: frame(objs=[obj("orion")])})
+    assert rep[0]["add"] == ["plate-solved", "orion"] and rep[0]["annotation"] == "would store"
+    assert fake.writes() == [] and ledger.rows(ctx.library) == []
+
+
+def test_no_annotation_route_skips_with_warning(fake, ledger):
+    fake.annotations_put = False
+    ctx = ctx_for(fake, ledger)
+    assert ctx.mode is None and "annotations skipped" in ctx.warnings[0]
+    rep = S.apply_results(ctx, {P1: frame(objs=[obj("orion")])})
+    assert rep[0]["annotation"].startswith("skipped") and fake.photos[P1]["manual_tags"] == ["orion", "plate-solved"]
+
+
+LEGACY_MODULE = '''
+import json
+def upsert_annotation(conn, photo_path, source, payload):
+    if conn.execute("SELECT 1 FROM photos WHERE path = ?", (photo_path,)).fetchone() is None:
+        raise LookupError(photo_path)
+    conn.execute("INSERT OR REPLACE INTO photo_annotations VALUES (?, ?, ?)", (photo_path, source, json.dumps(payload)))
+def delete_annotation(conn, photo_path, source):
+    return conn.execute("DELETE FROM photo_annotations WHERE photo_path = ? AND source = ?",
+                        (photo_path, source)).rowcount > 0
+'''
+
+
+def test_legacy_db_fallback_only_when_route_missing(fake, ledger, tmp_path):
+    import sqlite3
+
+    fake.annotations_put = False
+    (tmp_path / "facet" / "db").mkdir(parents=True)
+    (tmp_path / "facet" / "db" / "annotations.py").write_text(LEGACY_MODULE, encoding="utf-8")
+    db = tmp_path / "lib.db"
+    with sqlite3.connect(db) as c:
+        c.execute("CREATE TABLE photos (path TEXT PRIMARY KEY)")
+        c.execute("CREATE TABLE photo_annotations (photo_path TEXT, source TEXT, payload TEXT, "
+                  "PRIMARY KEY (photo_path, source))")
+        c.execute("INSERT INTO photos VALUES (?)", (P1,))
+    ctx = ctx_for(fake, ledger, legacy_db=str(db), facet_dir=str(tmp_path / "facet"))
+    assert ctx.mode == "legacy-db" and "TEMPORARY" in ctx.warnings[0]
+    rep = S.apply_results(ctx, {P1: frame(objs=[obj("orion")])})
+    assert rep[0]["annotation"] == "stored"
+    S.apply_results(ctx, {P1: frame(solved=False)})
+    ctx.close()
+    with sqlite3.connect(db) as c:
+        assert c.execute("SELECT COUNT(*) FROM photo_annotations").fetchone()[0] == 0
+    fake.annotations_put = True                                     # the route exists: the db is never opened
+    assert ctx_for(fake, ledger, legacy_db=str(db), facet_dir="/nowhere").mode == "api"
+
+
+def test_legacy_db_needs_facet_dir(fake, ledger, tmp_path, monkeypatch):
+    fake.annotations_put = False
+    monkeypatch.delenv("FACET_DIR", raising=False)
+    db = tmp_path / "x.db"
+    db.write_bytes(b"")
+    with pytest.raises(ValueError, match="facet-dir"):
+        ctx_for(fake, ledger, legacy_db=str(db))
+
+
+def test_undo_removes_ledger_tags_and_annotations(fake, ledger):
+    ctx = ctx_for(fake, ledger)
+    S.apply_results(ctx, {P1: frame(objs=[obj("orion")]), P2: frame(objs=[obj("orion")])})
+    S.remove_all(ctx)
+    assert fake.photos[P1]["manual_tags"] == [] and fake.photos[P2]["manual_tags"] == ["my trip"]
+    assert fake.annotations == {} and ledger.rows(ctx.library) == []
+
+
+def test_select_candidates_pending_force_since_and_spool(fake, ledger, tmp_path):
+    ctx = ctx_for(fake, ledger)
+    sel = S.Selection(path_prefix=ROOT)
+    picked, info = S.select_candidates(ctx.client, ledger, ctx.library, sel)
+    assert [p["path"] for p in picked] == [P1, P2] and info["watermark"] == "2019-11-05"
+    S.apply_results(ctx, {P1: frame()})
+    picked, info = S.select_candidates(ctx.client, ledger, ctx.library, sel)
+    assert [p["path"] for p in picked] == [P2] and info["already_synced"] == 1
+    picked, _ = S.select_candidates(ctx.client, ledger, ctx.library, S.Selection(path_prefix=ROOT, force=True))
+    assert len(picked) == 2
+    spool = tmp_path / "spool.txt"
+    spool.write_text(f"{P3}\n{P3}\n", encoding="utf-8")
+    picked, _ = S.select_candidates(ctx.client, ledger, ctx.library, S.Selection(path_prefix=ROOT, spool=str(spool)))
+    assert [p["path"] for p in picked] == [P2, P3]
+    ledger.set_meta(ctx.library, S.WATERMARK, "2019-11-06")
+    S.select_candidates(ctx.client, ledger, ctx.library, S.Selection(since="last", category=""))
+    assert [x for x in fake.calls if x[1] == "/api/photos"][-1][2]["date_from"] == "2019-11-06"
+
+
+def test_solve_and_write_passes_facet_hints_and_path_map(fake, ledger):
+    from astro_id.session import SessionOptions
+
+    ctx = ctx_for(fake, ledger)
+    seen = {}
+
+    def fake_run(paths, opts, emit):
+        seen["paths"], seen["hints"] = paths, opts.hints
+        return {"event": "done", "solved": len(paths), "results": {p: frame(objs=[obj("orion")]) for p in paths}}
+    out = S.solve_and_write(ctx, [fake.photos[P1], fake.photos[P2]], SessionOptions(), path_map=[(ROOT, "Z:/night")],
+                            run_session_fn=fake_run)
+    assert seen["paths"] == ["Z:/night/A1.JPG", "Z:/night/A2.JPG"]
+    assert seen["hints"]["Z:/night/A1.JPG"] == {"site": "32.500000,-116.250000", "time": None}
+    assert seen["hints"]["Z:/night/A2.JPG"]["time"] == "2019-11-05T09:40:00"
+    assert set(out["results"]) == {P1, P2} and len(out["reports"]) == 2
+    assert "orion" in fake.photos[P1]["manual_tags"]
+
+
+def test_cli_sync_dry_run_end_to_end(fake, tmp_path, monkeypatch, capsys):
+    from astro_id import cli, session
+
+    monkeypatch.setenv("FACET_EDITION_PASSWORD", "pw")
+    monkeypatch.setattr(session, "run_session",
+                        lambda paths, opts, emit: {"event": "done", "results": {p: frame(objs=[obj("orion")])
+                                                                                for p in paths}})
+    rc = cli.main(["facet", "sync", "--facet-url", fake.url, "--ledger", str(tmp_path / "l.sqlite"),
+                   "--path-prefix", ROOT, "--dry-run", "--json"])
+    assert rc == 0 and fake.writes() == []
+    lines = [json.loads(x) for x in capsys.readouterr().out.splitlines()]
+    assert lines[0]["event"] == "sync_start" and lines[0]["to_solve"] == 2 and lines[-1]["tags_added"] == 4
+    rc = cli.main(["facet", "sync", "--facet-url", fake.url, "--ledger", str(tmp_path / "l.sqlite"),
+                   "--path-prefix", ROOT])
+    assert rc == 0 and fake.photos[P1]["manual_tags"] == ["orion", "plate-solved"]
+    rc = cli.main(["facet", "sync", "--facet-url", fake.url, "--ledger", str(tmp_path / "l.sqlite"),
+                   "--path-prefix", ROOT, "--json"])
+    assert rc == 0 and json.loads(capsys.readouterr().out.splitlines()[-1])["solved"] == 0   # nothing pending
+
+
+# ------------------------------------------------------------------- serve ---
+
+@pytest.fixture()
+def ui(fake, ledger):
+    from astro_id.facet import serve as SV
+
+    server, url, app = SV.build(type("A", (), {"port": 0})(), client=FacetClient(fake.url, edition_password="pw"),
+                                ledger=ledger, secret="s3cr3t")
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    yield url, app
+    server.shutdown()
+    server.server_close()
+
+
+def _req(url, body=None, headers=None):
+    data = None if body is None else json.dumps(body).encode()
+    h = {"Content-Type": "application/json"} if body is not None else {}
+    h.update(headers or {})
+    with urllib.request.urlopen(urllib.request.Request(url, data=data, headers=h)) as r:
+        ct = r.headers.get("Content-Type")
+        raw = r.read()
+    return json.loads(raw) if "json" in ct else raw.decode()
+
+
+def test_serve_needs_secret_and_loopback_host(ui):
+    url, _ = ui
+    base = url.split("/s3cr3t/")[0]
+    with pytest.raises(urllib.error.HTTPError) as ei:
+        _req(base + "/api/state")
+    assert ei.value.code == 404
+    with pytest.raises(urllib.error.HTTPError) as ei:
+        _req(url + "api/state", headers={"Host": "evil.example"})
+    assert ei.value.code == 403
+    with pytest.raises(urllib.error.HTTPError) as ei:
+        _req(url + "api/photos", {}, headers={"Origin": "http://evil.example"})
+    assert ei.value.code == 403
+    assert "Astro session" in _req(url)
+
+
+def test_serve_flow_load_gps_solve_recull_review_tag(ui, fake, monkeypatch):
+    from astro_id import session
+
+    url, app = ui
+    st = _req(url + "api/state")
+    assert st["annotations"] == "api" and st["can_write"] and st["version"] == "1.29.0"
+    d = _req(url + "api/photos", {"path_prefix": ROOT, "category": "astro"})
+    assert [p["gps_source"] for p in d["photos"]] == ["facet-exif", "none"] and d["raw_companion_field"]
+    assert d["photos"][0]["facet_link"].startswith(fake.url + "/photo?path=")
+    g = _req(url + "api/gps", {"path": P2, "text": "https://www.google.com/maps/@32.61,-116.32,15z"})
+    assert g["gps"] == [32.61, -116.32] and g["gps_source"] == "facet-manual"
+    with pytest.raises(urllib.error.HTTPError) as ei:
+        _req(url + "api/gps", {"path": P2, "text": "no coordinates"})
+    assert ei.value.code == 400
+
+    q = {"detected": 900, "fwhm_px": 5.0, "elongation": 1.1}
+    bad = {"detected": 10, "fwhm_px": 30.0, "elongation": 1.1}
+
+    def fake_run(paths, opts, emit):
+        assert opts.tolerance_min == 5 and opts.hints[P2]["site"] == "32.610000,-116.320000"
+        emit({"event": "start", "mode": "solve", "total": len(paths)})
+        assert opts.min_confidence == 85
+        res = {paths[0]: frame(objs=[obj("orion"), obj("weak", 80)], quality=q),
+               paths[1]: frame(objs=[obj("orion")], quality=bad)}
+        from astro_id.cull import cull_session
+        c = cull_session({p: r["quality"] for p, r in res.items()}, opts.cull, {p: True for p in res})
+        done = {"event": "done", "solved": 2, "elapsed_s": 0.1, "time": {},
+                "cull": {"reference": c["reference"], "rule": c["rule"],
+                         "frames": {p: {"decision": v["decision"], "reasons": v["reasons"]} for p, v in c["frames"].items()}}}
+        emit(done)
+        return {**done, "results": res}
+    monkeypatch.setattr(session, "run_session", fake_run)
+    r = _req(url + "api/solve", {"paths": [P1, P2], "tolerance_min": "5", "write": True, "min_confidence": 85})
+    assert r["started"] == 2
+    for _ in range(100):
+        j = _req(url + "api/job?after=0")
+        if not j["running"]:
+            break
+        threading.Event().wait(0.05)
+    assert j["error"] is None and j["done"]["cull"]["frames"][P2]["decision"] == "reject"
+    assert any(e["event"] == "written" for e in j["events"]) and "orion" in fake.photos[P2]["manual_tags"]
+    assert "weak" not in fake.photos[P1]["manual_tags"]       # regression: the page's min confidence (85) is the tag cut
+    rc = _req(url + "api/recull", {"rule": {"enabled": True, "order": ["focus"], "thresholds": {}}})
+    assert rc["frames"][P2]["decision"] == "review"          # defocus alone never rejects
+    with pytest.raises(urllib.error.HTTPError):
+        _req(url + "api/recull", {"rule": {"order": ["nonsense"]}})
+    _req(url + "api/review-tags", {"paths": [P2]})
+    assert "astro-review" in fake.photos[P2]["manual_tags"] and "astro-review" not in fake.photos[P1]["manual_tags"]
+    _req(url + "api/review-tags", {"paths": []})
+    assert "astro-review" not in fake.photos[P2]["manual_tags"] and "orion" in fake.photos[P2]["manual_tags"]
+    assert not any(c[1] in ("/api/photos/batch_reject", "/api/photos/batch_review") for c in fake.calls)
+
+
+def test_adopt_takes_over_old_plugin_rows_read_only(fake, ledger, tmp_path):
+    import sqlite3
+
+    from astro_id.facet.legacy import adopt_plugin_rows
+
+    db = tmp_path / "lib.db"
+    with sqlite3.connect(db) as c:
+        c.execute("CREATE TABLE photo_manual_tags (photo_path TEXT, tag TEXT, source TEXT, created_by TEXT)")
+        c.execute("CREATE TABLE photo_annotations (photo_path TEXT, source TEXT, payload TEXT)")
+        c.executemany("INSERT INTO photo_manual_tags VALUES (?, ?, 'user', ?)",
+                      [(P1, "orion", "astro-id"), (P1, "plate-solved", "astro-id"), (P1, "my trip", None),
+                       ("//elsewhere/x.jpg", "orion", "astro-id")])
+        c.execute("INSERT INTO photo_annotations VALUES (?, 'astro-id', ?)", (P1, json.dumps({"version": 1})))
+    before = db.read_bytes()
+    lib = library_key(fake.url)
+    out = adopt_plugin_rows(ledger, lib, str(db), path_prefix=ROOT)
+    assert out == {"photos": 1, "adopted": 1, "tags": 2, "annotations": 1, "dry_run": False}
+    assert ledger.tags(lib, P1) == ["orion", "plate-solved"] and ledger.get(lib, P1)["annotation_via"] == "legacy-db"
+    assert db.read_bytes() == before
+    fake.photos[P1]["manual_tags"] = ["my trip", "orion", "plate-solved"]
+    ctx = ctx_for(fake, ledger)
+    S.apply_results(ctx, {P1: frame(objs=[obj("taurus")])})      # adopted tags are now astro-id's to replace
+    assert fake.photos[P1]["manual_tags"] == ["my trip", "plate-solved", "taurus"]
+    assert adopt_plugin_rows(ledger, lib, str(db))["adopted"] == 1    # P1 is owned now; only the other path
+
+
+def test_legacy_writer_works_from_another_thread(tmp_path):
+    """Regression (E2E 2026-11-11): serve created the writer on the main thread and used it in the solve thread."""
+    import sqlite3
+
+    from astro_id.facet.legacy import LegacyAnnotationWriter
+
+    (tmp_path / "facet" / "db").mkdir(parents=True)
+    (tmp_path / "facet" / "db" / "annotations.py").write_text(LEGACY_MODULE, encoding="utf-8")
+    db = tmp_path / "lib.db"
+    with sqlite3.connect(db) as c:
+        c.execute("CREATE TABLE photos (path TEXT PRIMARY KEY)")
+        c.execute("CREATE TABLE photo_annotations (photo_path TEXT, source TEXT, payload TEXT, "
+                  "PRIMARY KEY (photo_path, source))")
+        c.execute("INSERT INTO photos VALUES (?)", (P1,))
+    w = LegacyAnnotationWriter(str(db), str(tmp_path / "facet"))
+    errs = []
+    t = threading.Thread(target=lambda: errs.append(None) if w.upsert(P1, "astro-id", {"version": 1}) is None else 0)
+    t.start()
+    t.join()
+    w.close()
+    assert errs == [None]
+
+
+def test_annotation_failure_still_records_the_tags_in_the_ledger(fake, ledger, monkeypatch):
+    ctx = ctx_for(fake, ledger)
+
+    def boom(*a, **kw):
+        raise RuntimeError("database exploded")
+    monkeypatch.setattr(ctx.client, "put_annotation", boom)
+    rep = S.apply_results(ctx, {P1: frame(objs=[obj("orion")])})
+    assert rep[0]["annotation"].startswith("error") and fake.photos[P1]["manual_tags"] == ["orion", "plate-solved"]
+    assert ledger.tags(ctx.library, P1) == ["orion", "plate-solved"]

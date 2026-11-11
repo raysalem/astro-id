@@ -4,8 +4,8 @@ Plate-solve night-sky photos and name what is in them: Messier and bright NGC/IC
 bright stars, asterisms, the 88 constellations, the Sun, Moon and planets. Every object gets a **0-100 confidence**
 and a tier, and each frame gets an annotated overlay JPG with constellation stick figures.
 
-Works for wide-field (14-35 mm) and narrow-field shots. Built to run on its own or behind the
-[Facet](https://github.com/ncoevoet/facet) photo-library plugin in `facet_plugin/`.
+Works for wide-field (14-35 mm) and narrow-field shots. Runs on its own, or as a sidecar next to the
+[Facet](https://github.com/ncoevoet/facet) photo library (`astro-id facet sync|serve`, over Facet's HTTP API).
 
 ## Install
 
@@ -167,37 +167,79 @@ same 77 objects (41 at >= 65), Jupiter within 0.2 px. RAW is slower (about 26 s 
 
 ## All options
 
-One table for the engine, `astro-id.json` and the Facet plugin config (`plugins.astro_id` in the scoring config).
-Precedence: **command-line flag > plugin config (passed to the engine as that flag) > nearest `astro-id.json` > default**.
-Facet's own site and capture date, when it has them, override the file's site and offset (`--site`, `--time`).
+One table for the engine and `astro-id.json`. Precedence: **command-line flag > nearest `astro-id.json` > default**.
+The Facet sidecar passes a photo's own GPS (`--site`) and a date corrected in Facet (`--time`), which override the
+file's site and offset.
 
-| Option | Flag | `astro-id.json` | Plugin key | Default |
-|---|---|---|---|---|
-| Report cut | `--min-confidence` | - | `min_confidence` | 65 |
-| Camera clock offset | `--offset` | `clock_offset` | - (Facet date) | none |
-| True time of one frame | `--time`, `--timezone` | - | Facet date / `timezone` | EXIF |
-| Time tolerance | `--time-tolerance` | `time_tolerance_min` | `time_tolerance_min` | 15 min |
-| Timezone | `--timezone` (also for EXIF + offset, v1.1) | `timezone` | `timezone` | inferred from the site, else system |
-| Site | `--site lat,lon[,elev]` | `site` | Facet GPS | none |
-| Overlay folder | `--overlay-dir` | - | `overlay_dir` | `<folder>-annotated` |
-| Overlay scores | `--overlay-scores` | - | `overlay_scores` | off |
-| Skip overlay JPG | `--no-overlay` | - | - | off |
-| Astrometry.net fallback | `--no-fallback` | - | - | on (needs key) |
-| Solver pixels | `--solve-source jpg\|raw\|auto` | `solve_source` | `solve_source` | `jpg` |
-| Tag levels | `--tag-levels` | `tag_policy.levels` | `tag_levels` | 1,2,3,4 |
-| Star tag limit | `--star-mag-limit` | `tag_policy.star_mag_limit` | `star_mag_limit` | off |
-| Catalog tag limit | `--max-catalog-mag` | `tag_policy.max_catalog_mag` | `max_catalog_mag` | 6.0 |
-| Tag spelling | `--tag-style` | `tag_policy.tag_style` | `tag_style` | `plain` |
-| Stacking mode | `--stack-mode` | `stack_mode` | `stack_mode` | `representative` |
-| Stacking gap | `--stack-gap` | `stack_gap_s` | `stack_gap_s` | 120 s |
-| Stacking tolerance | - | `stack_tolerance` | - | 0.02 |
-| Tag targets | - | - | `tag_targets` | `["facet"]` |
-| Cull rule | `--cull-rule` (session) | `cull` | `cull` | built-in (CONTRACT.md) |
-| Quality metrics | `--no-quality` | - | - | on |
-| Plugin only: `trigger`, `engine`, `uv`, `enabled`, `roots`, `timeout_s`, `settle_s`, `batch_min`, `db_path`, `catch_up`, `log_path`, `exiftool` | | | see `facet_plugin/README.md` | |
+| Option | Flag | `astro-id.json` | Default |
+|---|---|---|---|
+| Report cut | `--min-confidence` | - | 65 |
+| Camera clock offset | `--offset` | `clock_offset` | none |
+| True time of one frame | `--time`, `--timezone` | - | EXIF |
+| Time tolerance | `--time-tolerance` | `time_tolerance_min` | 15 min |
+| Timezone | `--timezone` (also for EXIF + offset, v1.1) | `timezone` | inferred from the site, else system |
+| Site | `--site lat,lon[,elev]` | `site` | none |
+| Overlay folder | `--overlay-dir` | - | `<folder>-annotated` |
+| Overlay scores | `--overlay-scores` | - | off |
+| Skip overlay JPG | `--no-overlay` | - | off |
+| Astrometry.net fallback | `--no-fallback` | - | on (needs key) |
+| Solver pixels | `--solve-source jpg\|raw\|auto` | `solve_source` | `jpg` |
+| Tag levels | `--tag-levels` | `tag_policy.levels` | 1,2,3,4 |
+| Star tag limit | `--star-mag-limit` | `tag_policy.star_mag_limit` | off |
+| Catalog tag limit | `--max-catalog-mag` | `tag_policy.max_catalog_mag` | 6.0 |
+| Tag spelling | `--tag-style` | `tag_policy.tag_style` | `plain` |
+| Stacking mode | `--stack-mode` | `stack_mode` | `representative` |
+| Stacking gap | `--stack-gap` | `stack_gap_s` | 120 s |
+| Stacking tolerance | - | `stack_tolerance` | 0.02 |
+| Cull rule | `--cull-rule` (session) | `cull` | built-in (CONTRACT.md) |
+| Quality metrics | `--no-quality` | - | on |
 
-The plugin validates its config on load: unknown keys log a warning, a bad value logs an error and the plugin
-disables itself until it is fixed.
+## Facet sidecar (`astro-id facet ...`)
+
+astro-id runs beside Facet as its own process and uses only Facet's HTTP API, with its own credential. Nothing is
+installed into Facet and Facet's database is not opened (one temporary exception for annotations, below).
+
+```powershell
+$env:FACET_URL = "http://127.0.0.1:5000"           # your Facet viewer
+$env:FACET_EDITION_PASSWORD = "<edition password>" # or FACET_USERNAME + FACET_PASSWORD (multi-user), or FACET_TOKEN
+uv run astro-id facet sync --path-prefix "D:\Photos\2026\trip\astro" --dry-run   # what would be written
+uv run astro-id facet sync --path-prefix "D:\Photos\2026\trip\astro"             # solve + write
+uv run astro-id facet sync --since last                                            # poll: new astro photos only
+uv run astro-id facet serve                                                        # the session web UI
+uv run astro-id facet status                                                       # what astro-id wrote where
+uv run astro-id facet undo --path-prefix "D:\Photos\2026\trip\astro"             # remove astro-id's tags
+```
+
+- **Which photos:** `GET /api/photos` with `--category` (default `astro`; `''` = any), `--path-prefix`, `--tag`,
+  `--album`, every frame of a burst included. Photos the ledger already holds are skipped unless `--force`.
+  `--since YYYY-MM-DD` narrows by Facet's capture date; `--since last` uses the newest capture date the previous
+  sync saw. Facet's API exposes no scan time, so polling = "photos the ledger has not seen yet".
+- **What is written:** tags through `POST /api/photos/batch_manual_tags` (`plate-solved` or `plate-solve failed`
+  plus the taggable objects, under Facet's 50-tag cap, other tags counted first), stale astro-id tags removed with
+  `DELETE /api/photo/manual_tags`, and the annotation payload (`ANNOTATIONS.md`). Facet's reject/cull flags are
+  never written. Until Facet has plugin-owned tags, these are stored as ordinary user tags.
+- **Ledger:** `%LOCALAPPDATA%\astro-id\facet-ledger.sqlite` (Windows) or `$XDG_DATA_HOME/astro-id/` records per
+  Facet URL and photo the tags astro-id added, the annotation hash and the Facet version. A re-run removes only
+  those tags; a tag someone else put on the photo is never claimed or removed. Re-running on unchanged results
+  writes nothing.
+- **Annotations:** `PUT /api/photo/annotations` when Facet has it (feature-detected). On a local Facet stack that
+  has the `photo_annotations` table but not the route yet, `--legacy-db <db> --facet-dir <facet checkout>` writes
+  them with Facet's own `db/annotations.py` (TEMPORARY). Otherwise they are skipped with a warning.
+- **Paths:** the sidecar opens the files at the paths Facet stores; `--path-map FACET_PREFIX=LOCAL_PREFIX` when it
+  sees them elsewhere (Facet in Docker).
+- **Optional notifier:** `facet_plugin/astro_notify.py.example` appends scored astro paths to a spool file for
+  `sync --spool`; not needed.
+- **Moving from the old in-process plugin:** `astro-id facet adopt --legacy-db <db>` (TEMPORARY, read-only) puts
+  the tags it wrote (`created_by='astro-id'`) and its annotation rows into the ledger once, so the sidecar can
+  replace or remove them.
+
+`astro-id facet serve` starts a page on `http://127.0.0.1:<port>/<secret>/` (loopback only, random secret per
+start): pick photos (Facet path prefix / album / tag), check each photo's location (Facet GPS, the folder's
+astro-id.json site, or none; set one by pasting `lat, lon` or a Google Maps URL, or open the photo in Facet), confirm
+the time (camera time, corrected time, offset, tolerance, timezone, JPG/RAW source; optionally save them to the
+folder's astro-id.json), plate solve with live progress, then cull: per-frame quality, keep/review/reject with
+reasons, an editable rule and re-cull without re-solving. Tagging review/reject frames `astro-review` is optional
+and off by default.
 
 ## How it solves
 

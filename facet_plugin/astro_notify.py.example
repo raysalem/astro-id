@@ -1,0 +1,52 @@
+"""OPTIONAL in-process Facet notifier for the astro-id sidecar: appends scored astro photo paths to a spool file.
+
+The sidecar (``astro-id facet sync``) works without this file: it polls Facet's API. Install this only if you want
+newly scanned photos picked up without waiting for a poll: copy it to ``<facet>/plugins/astro_notify.py``, set
+``"plugins": {"enabled": true}`` in Facet's scoring config, and run the sidecar with the same spool path::
+
+    astro-id facet sync --spool <path>
+
+It never touches Facet's database and never starts a process. Spool path: ``$ASTRO_ID_SPOOL``, else
+``astro-id/facet-spool.txt`` in the platform data folder (``%LOCALAPPDATA%`` on Windows, ``$XDG_DATA_HOME`` or
+``~/.local/share`` elsewhere). Note: Facet emits ``on_score_complete`` on single-pass scans only; photos from a
+multi-pass scan are found by the sidecar's poll.
+"""
+
+import os
+import sys
+import threading
+
+_lock = threading.Lock()
+ASTRO_TAGS = {"astrophotography", "night sky", "stars", "milky way", "aurora", "nebula"}
+
+
+def spool_path():
+    env = os.environ.get("ASTRO_ID_SPOOL")
+    if env:
+        return env
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
+    else:
+        base = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share")
+    return os.path.join(base, "astro-id", "facet-spool.txt")
+
+
+def _is_astro(data):
+    if str(data.get("category") or "").lower() == "astro":
+        return True
+    tags = {t.strip().lower() for t in str(data.get("tags") or "").split(",")}
+    return bool(tags & ASTRO_TAGS)
+
+
+def on_score_complete(data):
+    """Facet hook: never raises, never blocks for long (one line appended under a lock)."""
+    try:
+        path = data.get("path") if isinstance(data, dict) else None
+        if not path or not _is_astro(data):
+            return
+        target = spool_path()
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with _lock, open(target, "a", encoding="utf-8") as fh:
+            fh.write(path.replace("\n", " ") + "\n")
+    except Exception:
+        pass
