@@ -91,8 +91,27 @@
 <details class="step" id="s2">
   <summary>2. Location <span class="st" id="st2"></span></summary>
   <div class="body">
-    <p class="muted small">Facet's GPS on the photo wins, else the folder's astro-id.json site. For a photo with
-      none: paste "lat, lon" or a Google Maps URL, or open it in Facet (Set location).</p>
+    <p class="muted small">Facet's GPS on the photo wins, else the folder's astro-id.json site. A location is set
+      for a whole folder or album, never photo by photo.</p>
+    <div class="locbox">
+      <div class="row">
+        <label>For <select id="locScope"></select></label>
+        <label><input type="checkbox" id="locOverwrite"> also replace camera GPS</label>
+      </div>
+      <div class="row">
+        <button class="secondary" id="openEarth" title="Pin the spot, then paste the page URL or the coordinates">Google Earth</button>
+        <button class="secondary" id="openMaps" title="Right-click the spot, copy the coordinates (or the page URL)">Google Maps</button>
+        <button class="secondary" id="lastSite" hidden></button>
+      </div>
+      <div class="row"><input type="text" class="grow" id="locText"
+        placeholder="paste lat, lon[, elev] · DMS · a Google Earth or Maps URL"><button id="locCheck">Check</button></div>
+      <div id="locConfirm" hidden>
+        <p id="locSummary"></p>
+        <div class="row"><label>Site name <input type="text" id="locName" size="18"></label>
+          <button id="locApply">Confirm</button> <button class="secondary" id="locCancel">Cancel</button></div>
+      </div>
+      <div><span id="locMsg" class="small"></span></div>
+    </div>
     <table id="loc"><thead><tr><th><input type="checkbox" id="all" checked title="select all"></th><th></th>
       <th>Photo</th><th>Location</th></tr></thead><tbody></tbody></table>
   </div>
@@ -230,6 +249,7 @@ async function init() {
   drawRule();
   try {
     const a = await api("api/albums");
+    albums = a.albums || [];
     for (const al of a.albums) { const o = document.createElement("option"); o.value = al.id; o.textContent = `${al.name} (${al.count ?? "?"})`; $("album").appendChild(o); }
   } catch (e) { /* albums are optional */ }
   initDone = true;
@@ -306,23 +326,83 @@ function drawLoc() {
       <td><img class="th" alt=""></td>
       <td><div class="name">${inFacet(p.path, p.filename)} ${raw}</div>
         <div class="muted small">${esc(p.date_taken)}${p.date_manually_set ? ' <span class="pill">corrected</span>' : ""}</div></td>
-      <td><div class="${p.gps_source === "none" ? "warn" : ""}">${esc(p.gps_source)}</div><div class="muted small">${esc(pos)}</div>
-        <details class="sub" ${p.gps_source === "none" ? "open" : ""}><summary>set</summary>
-          <div class="row"><input type="text" class="grow" placeholder="lat, lon or Maps URL" data-gps="${i}">
-          <button class="secondary" data-set="${i}">Set</button></div><span data-msg="${i}"></span></details></td>`;
+      <td><div class="${p.gps_source === "none" ? "warn" : ""}">${esc(p.gps_source)}</div><div class="muted small">${esc(pos)}</div></td>`;
     tb.appendChild(tr);
     queueThumb(tr.querySelector("img.th"), p.path);
   });
   $("st2").textContent = photos.length ? (missing ? `${missing} without location` : "all located") : "";
   tb.querySelectorAll("input[type=checkbox]").forEach((c) => c.onchange = () => { photos[c.dataset.i]._on = c.checked; });
-  tb.querySelectorAll("button[data-set]").forEach((b) => b.onclick = async () => {
-    const i = b.dataset.set, txt = tb.querySelector(`input[data-gps="${i}"]`).value, msg = tb.querySelector(`span[data-msg="${i}"]`);
-    try { const r = await api("api/gps", {path: photos[i].path, text: txt});
-          photos[i].gps = r.gps; photos[i].gps_source = r.gps_source; drawLoc();
-          if (bridge) bridge.refresh([photos[i].path]); }
-    catch (e) { msg.innerHTML = `<span class="err">${esc(e.message)}</span>`; }
-  });
+  drawLocScope();
 }
+
+/* Location for a folder or an album (R-LOC): parse, show what will change, one confirm. */
+let albums = [], locPending = null;
+function folderOf(path) { return String(path).replace(/\\/g, "/").split("/").slice(0, -1).join("/"); }
+function drawLocScope() {
+  const sel = $("locScope"), keep = sel.value; sel.innerHTML = "";
+  const counts = {};
+  for (const p of photos) { const f = folderOf(p.path); counts[f] = (counts[f] || 0) + 1; }
+  for (const [f, n] of Object.entries(counts)) {
+    const o = document.createElement("option"); o.value = "folder:" + f;
+    o.textContent = `folder ${f.split("/").pop() || f} (${n} here)`; o.title = f; sel.appendChild(o);
+  }
+  for (const a of albums) {
+    const o = document.createElement("option"); o.value = "album:" + a.id;
+    o.textContent = `album ${a.name} (${a.count ?? "?"})`; sel.appendChild(o);
+  }
+  if ([...sel.options].some((o) => o.value === keep)) sel.value = keep;
+  const last = state.last_site;
+  $("lastSite").hidden = !last;
+  if (last) {
+    $("lastSite").textContent = `Last site: ${last.name || ""} ${Number(last.lat).toFixed(4)}, ${Number(last.lon).toFixed(4)}`;
+    if (!$("locText").value) $("locText").value = siteText(last);
+  }
+}
+function siteText(s) { return `${s.lat}, ${s.lon}` + (s.elev_m != null ? `, ${s.elev_m}` : ""); }
+function locScope() {
+  const v = $("locScope").value || "";
+  if (v.startsWith("folder:")) return {folder: v.slice(7)};
+  if (v.startsWith("album:")) return {album_id: Number(v.slice(6))};
+  return null;
+}
+function openMap(site) {
+  if (bridge && bridge.active) { bridge.openMap(site); return; }
+  const a = document.createElement("a");                 // standalone page (not sandboxed): a plain link
+  a.href = B.MAP_SITES[site]; a.target = "_blank"; a.rel = "noopener noreferrer"; a.click();
+}
+$("openEarth").onclick = () => openMap("earth");
+$("openMaps").onclick = () => openMap("maps");
+$("lastSite").onclick = () => { if (state.last_site) $("locText").value = siteText(state.last_site); };
+$("locCancel").onclick = () => { locPending = null; $("locConfirm").hidden = true; };
+$("locCheck").onclick = async () => {
+  const scope = locScope();
+  $("locConfirm").hidden = true; locPending = null;
+  if (!scope) { $("locMsg").innerHTML = `<span class="err">load photos first</span>`; return; }
+  $("locMsg").textContent = "checking...";
+  const body = {scope, text: $("locText").value, overwrite: $("locOverwrite").checked};
+  try {
+    const r = await api("api/location", body);
+    locPending = body;
+    const elev = r.elev == null ? "elevation unknown" : `${Math.round(r.elev)} m`;
+    $("locSummary").textContent = `${r.lat.toFixed(6)}, ${r.lon.toFixed(6)} · ${elev} · ${r.scope.kind} "${r.scope.name}" · ` +
+      `${r.changed} of ${r.photos} photo(s) will get this location` + (r.skipped ? ` (${r.skipped} keep theirs)` : "");
+    if (!$("locName").value) $("locName").value = (state.last_site && state.last_site.name) || r.scope.name;
+    $("locConfirm").hidden = false; $("locMsg").textContent = "";
+  } catch (e) { $("locMsg").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+};
+$("locApply").onclick = async () => {
+  if (!locPending) return;
+  $("locMsg").textContent = "writing...";
+  try {
+    const r = await api("api/location", Object.assign({}, locPending, {confirm: true, name: $("locName").value.trim()}));
+    locPending = null; $("locConfirm").hidden = true;
+    state.last_site = {name: $("locName").value.trim() || r.scope.name, lat: r.lat, lon: r.lon, elev_m: r.elev};
+    $("locMsg").textContent = `${r.changed} photo(s) located, ${r.skipped} kept their own` +
+      (r.saved && r.saved.length ? ` · site saved to ${r.saved.length} astro-id.json` : "");
+    if (scopeReq) { await loadScope(scopeReq); } else drawLoc();
+    if (bridge && r.scope.kind === "folder") bridge.refresh(photos.filter((p) => folderOf(p.path) === r.scope.folder).map((p) => p.path));
+  } catch (e) { $("locMsg").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+};
 $("all").onchange = () => { photos.forEach((p) => p._on = $("all").checked); drawLoc(); };
 
 /* --------------------------------------------------------------- step 3 --- */

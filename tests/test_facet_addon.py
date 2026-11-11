@@ -1,6 +1,7 @@
-"""astro-id as a Facet add-on (PLUGIN_BOUNDARY.md v0.2): manifest install/uninstall, the supervised process
-(port line, HMAC health, launch-secret gate, path refusal, no cookies), the scope -> photo-set mapping, thumbnails
-through the backend, the add-on credential, and the bridge script (Node, when available)."""
+"""astro-id as a Facet add-on (PLUGIN_BOUNDARY.md v0.3): manifest install/uninstall, the supervised process
+(port line, HMAC health, launch-secret gate, path refusal, no cookies), the scope -> photo-set mapping over MCP
+(R-MCP, against the stub in fake_facet_mcp.py), thumbnails through the backend, the add-on credential, the folder /
+album location (R-LOC), and the bridge script (Node, when available)."""
 from __future__ import annotations
 
 import hmac
@@ -20,7 +21,8 @@ import pytest
 
 from astro_id.facet import install as I
 from astro_id.facet import serve as SV
-from astro_id.facet.client import FacetClient, addon_credentials
+from astro_id.facet.client import FacetClient, FacetError, addon_credentials, connect
+from astro_id.facet.mcp_client import McpFacetClient
 from astro_id.facet.ledger import Ledger
 from fake_facet import FakeFacet
 
@@ -35,7 +37,7 @@ STATIC = REPO / "astro_id" / "facet" / "static"
 def photos():
     return [
         {"path": P1, "filename": "A1.JPG", "category": "astro", "date_taken": "2019:11:05 09:31:59",
-         "gps_latitude": 32.5, "gps_longitude": -116.25, "scan_run": 7},
+         "gps_latitude": 32.5, "gps_longitude": -116.25, "scan_run": 7, "albums": [1]},
         {"path": P2, "filename": "A2.JPG", "category": "astro", "date_taken": "2019:11:05 09:40:00", "scan_run": 7,
          "manual_tags": ["night"]},
         {"path": P3, "filename": "A3.JPG", "category": "landscape", "date_taken": "2019:11:06 01:00:00",
@@ -47,6 +49,10 @@ def photos():
 def fake():
     with FakeFacet(photos(), addon_token=TOKEN) as f:
         yield f
+
+
+def mcp_calls(fake, tool):
+    return [args for name, args in fake.mcp_calls if name == tool]
 
 
 def addon_env(fake, **kw):
@@ -213,15 +219,18 @@ def test_forwarded_prefix_is_recorded_not_trusted_blindly(addon):
     req("GET", "/ui/api/state", headers={"X-Forwarded-Prefix": "https://evil.example/x"})
     assert app.mount == "/addons/astro-id"
     st, _, doc = req("GET", "/ui/api/state")
-    assert doc["addon"] == "astro-id" and doc["mount"] == "/addons/astro-id" and doc["tags_via"] == "manual+ledger"
+    assert doc["addon"] == "astro-id" and doc["mount"] == "/addons/astro-id" and doc["transport"] == "mcp"
+    assert doc["tags_via"].startswith("mcp add_tags")
 
 
 def test_state_uses_the_token_and_annotations_note(fake, addon):
     req, app, _ = addon
     st, _, doc = req("GET", "/ui/api/state")
-    assert st == 200 and doc["can_write"] and doc["annotations"] == "api"
-    assert any(c[1] == "/api/config" for c in fake.calls)
-    assert app.client.static_token == TOKEN and app.client.scoped
+    # R-MCP: an fct_ token talks to Facet over /mcp; annotations are not on MCP until Facet PR-1.
+    assert st == 200 and doc["can_write"] and doc["annotations"] is None and doc["version"] == "1.29.0"
+    assert any("Annotations skipped" in w for w in doc["warnings"])
+    assert isinstance(app.client, McpFacetClient) and app.client.static_token == TOKEN and app.client.scoped
+    assert mcp_calls(fake, "status") and not any(c[1].startswith("/api/") for c in fake.calls)
 
 
 def test_addon_without_annotation_route_skips_with_a_visible_note(tmp_path):
@@ -306,8 +315,8 @@ def test_scope_import_maps_to_scan_run(fake, addon):
     req, _, _ = addon
     st, _, d = req("POST", "/ui/api/scope", {"kind": "import", "run_id": "7", "category": "astro"})
     assert st == 200 and [p["path"] for p in d["photos"]] == [P1, P2] and d["scope"]["kind"] == "import"
-    call = [c for c in fake.calls if c[1] == "/api/photos"][-1]
-    assert call[2]["scan_run"] == "7" and call[2]["category"] == "astro" and call[2]["hide_bursts"] == "0"
+    f = mcp_calls(fake, "search_photos")[-1]["filters"]
+    assert f["scan_run"] == 7 and f["category"] == "astro" and f["hide_bursts"] is False
     st, _, d = req("POST", "/ui/api/scope", {"kind": "import", "run_id": 7, "category": ""})
     assert len(d["photos"]) == 3
     assert req("POST", "/ui/api/scope", {"kind": "import", "run_id": "7; drop"})[0] == 400
@@ -319,12 +328,15 @@ def test_scope_view_passes_the_gallery_query_minus_paging(fake, addon):
     st, _, d = req("POST", "/ui/api/scope",
                    {"kind": "view", "query": "?category=astro&page=3&per_page=10&sort=score&hide_bursts=1&tag=night"})
     assert st == 200 and [p["path"] for p in d["photos"]] == [P2]
-    q = [c for c in fake.calls if c[1] == "/api/photos"][-1][2]
-    assert q["page"] == "1" and q["per_page"] == "500" and q["sort"] == "date_taken" and q["hide_bursts"] == "0"
-    assert q["category"] == "astro" and q["tag"] == "night"
+    a = mcp_calls(fake, "search_photos")[-1]
+    assert a["page"] == 1 and a["per_page"] == 100 and a["show"] is False and a["filters"]["hide_bursts"] is False
+    assert a["filters"]["category"] == "astro" and a["filters"]["tag"] == "night"
     st, _, d = req("POST", "/ui/api/scope", {"kind": "view", "query": {"category": "landscape", "nonce": "x"}})
     assert [p["path"] for p in d["photos"]] == [P3]
-    assert "nonce" not in [c for c in fake.calls if c[1] == "/api/photos"][-1][2]
+    assert "nonce" not in mcp_calls(fake, "search_photos")[-1]["filters"]
+    # a gallery key Facet's search_photos does not take is dropped, not fatal
+    st, _, d = req("POST", "/ui/api/scope", {"kind": "view", "query": "?category=landscape&semanticQuery=stars"})
+    assert st == 200 and [p["path"] for p in d["photos"]] == [P3]
     assert req("POST", "/ui/api/scope", {"kind": "view", "query": "a=" + "x" * 2100})[0] == 400
     assert req("POST", "/ui/api/scope", {"kind": "view", "query": 5})[0] == 400
 
@@ -350,13 +362,105 @@ def test_thumbnails_only_for_the_current_set_through_the_backend(fake, addon):
     assert req("GET", "/ui/api/thumb?path=" + P1, launch=False)[0] == 403
 
 
-def test_gps_write_goes_through_put_gps(fake, addon):
+def test_location_is_set_for_a_folder_after_one_confirm(fake, addon, tmp_path):
+    req, app, _ = addon
+    app.elevation = lambda lat, lon: 1234.0
+    req("POST", "/ui/api/scope", {"kind": "import", "run_id": "7", "category": ""})
+    earth = "https://earth.google.com/web/@32.6064,-116.3239,1103.5a,780d,35y,0h,0t,0r"
+    st, _, d = req("POST", "/ui/api/location", {"scope": {"folder": ROOT}, "text": earth})
+    # the check: parsed lat/lon/elevation, the scope and its counts; nothing written yet (a dry run)
+    assert st == 200 and (d["lat"], d["lon"], d["elev"]) == (32.6064, -116.3239, 1103.5), d
+    assert d["scope"] == {"kind": "folder", "folder": ROOT, "name": "night"} and d["confirmed"] is False
+    assert (d["changed"], d["skipped"], d["photos"]) == (2, 1, 3)               # P1 keeps its camera GPS
+    assert mcp_calls(fake, "set_gps")[-1]["dry_run"] is True and fake.photos[P2].get("gps_latitude") is None
+    st, _, d = req("POST", "/ui/api/location", {"scope": {"folder": ROOT}, "text": earth, "confirm": True,
+                                                "name": "TDS"})
+    assert st == 200 and d["confirmed"] and d["changed"] == 2
+    assert fake.photos[P2]["gps_latitude"] == 32.6064 and fake.photos[P2]["gps_manually_set"] == 1
+    assert fake.photos[P1]["gps_latitude"] == 32.5                                # camera GPS kept
+    a = mcp_calls(fake, "set_gps")[-1]
+    assert a["path_prefix"] == ROOT and a["album_id"] is None and a["overwrite"] is False
+    st, _, s = req("GET", "/ui/api/state")
+    assert s["last_site"] == {"name": "TDS", "lat": 32.6064, "lon": -116.3239, "elev_m": 1103.5}
+    # overwrite replaces camera GPS too; a typed decimal without elevation looks it up
+    st, _, d = req("POST", "/ui/api/location", {"scope": {"folder": ROOT}, "text": "32.7, -116.4", "overwrite": True})
+    assert d["elev"] == 1234.0 and d["changed"] == 3
+    assert not any(c[1] == "/api/photo/gps" for c in fake.calls)                  # never the per-photo route
+
+
+def test_location_scope_is_a_folder_or_an_album_never_photos(fake, addon):
     req, _, _ = addon
-    req("POST", "/ui/api/scope", {"kind": "selection", "paths": [P2]})
-    st, _, d = req("POST", "/ui/api/gps", {"path": P2, "text": "32.61, -116.32"})
-    assert st == 200 and d["gps"] == [32.61, -116.32] and d["gps_source"] == "facet-manual"
-    put = [c for c in fake.calls if c[1] == "/api/photo/gps"][-1]
-    assert put[0] == "PUT"
+    req("POST", "/ui/api/scope", {"kind": "selection", "paths": [P1, P2]})
+    text = "32.6, -116.3"
+    for body in ({"scope": {}, "text": text}, {"scope": {"folder": ROOT, "album_id": 1}, "text": text},
+                 {"scope": {"folder": "//elsewhere"}, "text": text}, {"scope": {"album_id": 99}, "text": text},
+                 {"scope": {"folder": ROOT}, "path": P1, "text": text},
+                 {"scope": {"folder": ROOT}, "paths": [P1], "text": text},
+                 {"scope": {"folder": ROOT}, "text": "no coordinates"}):
+        assert req("POST", "/ui/api/location", body)[0] == 400, body
+    assert not mcp_calls(fake, "set_gps")
+    st, _, d = req("POST", "/ui/api/location", {"scope": {"album_id": 1}, "text": text + ", 900", "confirm": True})
+    assert st == 200 and d["scope"] == {"kind": "album", "album_id": 1, "name": "Night"} and d["elev"] == 900.0
+    assert mcp_calls(fake, "set_gps")[-1]["album_id"] == 1 and d["changed"] == 0   # P1 (the album) has camera GPS
+
+
+def test_location_saves_the_folder_site_for_solving(tmp_path):
+    folder = tmp_path / "night"
+    folder.mkdir()
+    (folder / "astro-id.json").write_text(json.dumps({"clock_offset": "+1h"}), encoding="utf-8")
+    root = str(folder).replace("\\", "/")
+    rows = [{"path": f"{root}/B1.JPG", "filename": "B1.JPG", "scan_run": 3}]
+    with FakeFacet(rows, addon_token=TOKEN) as fake:
+        args = type("A", (), {"ledger": str(tmp_path / "l.sqlite"), "legacy_db": None, "no_annotations": False,
+                              "path_map": None})()
+        server, box, aenv = SV.build_addon(args, addon_env(fake))
+        try:
+            app = SV.finish_addon(args, box, aenv)
+            app.elevation = lambda lat, lon: None
+            app.scope({}, {"kind": "import", "run_id": "3"})
+            r = app.location({}, {"scope": {"folder": root}, "text": "32.6, -116.3", "confirm": True, "name": "TDS"})
+            assert r["saved"] == [f"{root}/astro-id.json"] and r["elev"] is None
+            saved = json.loads((folder / "astro-id.json").read_text(encoding="utf-8"))
+            assert saved["clock_offset"] == "+1h" and saved["site"]["name"] == "TDS"
+            assert (saved["site"]["lat"], saved["site"]["lon"]) == (32.6, -116.3)
+            app.ledger.close()
+        finally:
+            server.server_close()
+
+
+def test_mcp_client_against_the_stub(fake):
+    c = connect(fake.url, token=TOKEN)
+    assert isinstance(c, McpFacetClient)
+    assert c.tools() == {"status", "search_photos", "get_photo", "filter_options", "list_albums", "add_tags",
+                         "remove_tags", "set_gps"}
+    assert c.server_version() == "1.29.0"
+    assert [p["path"] for p in c.list_photos(extra={"scan_run": "7"})] == [P1, P2, P3]
+    assert c.photo(P2)["manual_tags"] == ["night"] and c.photo(f"{ROOT}/gone.jpg") is None
+    assert c.albums() == [{"id": 1, "name": "Night", "photo_count": 1}]
+    assert c.batch_add_tag("orion", [P1, P2]) == 2 and fake.photos[P1]["tag_created_by"]["orion"] == "astro-id"
+    assert c.delete_tag(P1, "orion") is True and c.delete_tag(P1, "orion") is False
+    with pytest.raises(ValueError):
+        c.set_location(1.0, 2.0)
+    with pytest.raises(ValueError):
+        c.set_location(1.0, 2.0, path_prefix=ROOT, album_id=1)
+    with pytest.raises(FacetError) as e:
+        c.call("delete_photos", {"paths": [P1]})
+    assert e.value.status == 403 and e.value.code == "forbidden_level"
+    # the bearer is what opens /mcp
+    with pytest.raises(FacetError):
+        connect(fake.url, token="fct_wrong").tools()
+    assert not connect(fake.url, token=TOKEN).features()["annotations_put"]
+
+
+def test_mcp_allowlist_narrows_what_the_addon_sees(tmp_path):
+    with FakeFacet(photos(), addon_token=TOKEN, mcp_tools={"status", "search_photos", "get_photo"}) as fake:
+        c = connect(fake.url, token=TOKEN)
+        assert c.tools() == {"status", "search_photos", "get_photo"}
+        f = c.features()
+        assert f["tags"] is False and f["gps"] is False
+        with pytest.raises(FacetError) as e:
+            c.set_location(1.0, 2.0, path_prefix=ROOT)
+        assert e.value.code == "forbidden_level"
 
 
 def test_addon_solve_writes_tags_with_the_token_and_never_cull_flags(fake, addon, monkeypatch):
@@ -385,9 +489,10 @@ def test_addon_solve_writes_tags_with_the_token_and_never_cull_flags(fake, addon
         time.sleep(0.02)
     assert j["error"] is None and {r["path"] for r in j["reports"]} == {P1, P2}
     assert fake.photos[P1]["manual_tags"] == ["orion", "plate-solved"]
-    assert (P1, "astro-id") in fake.annotations
-    tag_calls = [c for c in fake.calls if c[1] == "/api/photos/batch_manual_tags"]
-    assert tag_calls and not any("reject" in c[1] or "cull" in c[1] for c in fake.calls)
+    assert not fake.annotations                                   # not on MCP until Facet PR-1: skipped
+    assert fake.photos[P1]["tag_created_by"]["orion"] == "astro-id"
+    assert mcp_calls(fake, "add_tags") and not any(c[1].startswith("/api/") for c in fake.calls)
+    assert not any(name in ("set_rating", "delete_photos") for name, _ in fake.mcp_calls)
 
 
 # --------------------------------------------------------------- the page ---

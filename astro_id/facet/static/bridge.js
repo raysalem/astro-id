@@ -19,6 +19,8 @@
   const MAX_SELECTION = 500;
   const MAX_QUERY = 2048;
   const NONCE_RE = /^[A-Za-z0-9_\-.~]{8,256}$/;
+  /* open_map: the host opens one of these fixed sites in a new tab (the sandbox forbids popups); a key, never a URL. */
+  const MAP_SITES = {earth: "https://earth.google.com/web/", maps: "https://www.google.com/maps/"};
 
   function readNonce(search) {
     let n = null;
@@ -114,6 +116,9 @@
       showPhotos: function (paths) { return post({type: "show_photos", paths: strList(paths, MAX_SELECTION)}); },
       openPhoto: function (path) { return typeof path === "string" && path ? post({type: "open_photo", path: path}) : false; },
       refresh: function (paths) { return post({type: "refresh", paths: strList(paths, 5000)}); },
+      openMap: function (site) {
+        return Object.prototype.hasOwnProperty.call(MAP_SITES, site) ? post({type: "open_map", site: site}) : false;
+      },
       close: function () { return post({type: "close"}); },
     };
   }
@@ -145,6 +150,6 @@
     return {call: call, blob: blob};
   }
 
-  return {V: V, readNonce: readNonce, constEq: constEq, sanitizeContext: sanitizeContext,
+  return {V: V, MAP_SITES: MAP_SITES, readNonce: readNonce, constEq: constEq, sanitizeContext: sanitizeContext,
           scopeRequest: scopeRequest, scopeKey: scopeKey, createBridge: createBridge, makeApi: makeApi};
 });

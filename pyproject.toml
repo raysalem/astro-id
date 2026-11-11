@@ -8,6 +8,7 @@ authors = [{ name = "Ray Salem" }]
 requires-python = ">=3.12"
 dependencies = [
     "astropy>=7",
+    "mcp==2.3.0",
     "numpy>=2",
     "pillow>=11",
     "rawpy>=0.28.0",

@@ -100,3 +100,48 @@ def test_no_config_means_exif_time(tmp_path, monkeypatch):
     fc = resolve(tmp_path, None, None, None)
     assert fc.time_source == "exif" and fc.offset.total_seconds() == 0 and fc.site is None
     assert fc.tolerance_min == 15
+
+
+# ---- R-LOC: the add-on's location input (PLUGIN_BOUNDARY.md v0.3 §6a) ----
+
+from astro_id.site import parse_location  # noqa: E402
+
+DMS_N = "32°36'23\"N 116°19'26\"W"
+
+
+@pytest.mark.parametrize("text,want", [
+    ("https://earth.google.com/web/@32.60642,-116.32391,1103.8521a,780.2d,35y,0h,0t,0r/data=CgRCAggB",
+     (32.60642, -116.32391, 1103.8521)),
+    ("https://earth.google.com/web/search/Tierra+del+Sol/@32.6064,-116.3239,1100a,500d,35y,0h,0t,0r",
+     (32.6064, -116.3239, 1100.0)),
+    ("https://earth.google.com/web/@-33.9,18.4,-12.5a,100d,35y,0h,0t,0r", (-33.9, 18.4, -12.5)),
+    ("https://www.google.com/maps/@32.61,-116.32,15z", (32.61, -116.32, None)),
+    ("https://www.google.com/maps/@32.61,-116.32,800m/data=!3m1!1e3", (32.61, -116.32, None)),
+    ("https://www.google.com/maps/place/X/@32.6,-116.3,17z/data=!4m6!3m5!1s0!8m2!3d32.6064!4d-116.3239",
+     (32.6064, -116.3239, None)),
+    ("32.6064, -116.3239", (32.6064, -116.3239, None)),
+    ("32.6064, -116.3239, 1100", (32.6064, -116.3239, 1100.0)),
+    ("(32.6064 -116.3239 1100.5m)", (32.6064, -116.3239, 1100.5)),
+    ("-33.8568, 151.2153", (-33.8568, 151.2153, None)),
+])
+def test_parse_location_urls_and_decimal(text, want):
+    lat, lon, elev = parse_location(text)
+    assert (round(lat, 6), round(lon, 6), elev) == want
+
+
+@pytest.mark.parametrize("text,elev", [(DMS_N, None), (DMS_N + " 1100 m", 1100.0), (DMS_N + ", 1100m", 1100.0),
+                                       ("32 36 23N 116 19 26W", None)])
+def test_parse_location_dms(text, elev):
+    if text.startswith("32 36"):
+        with pytest.raises(ValueError):       # DMS needs degree marks; bare numbers are three decimals
+            parse_location(text)
+        return
+    lat, lon, e = parse_location(text)
+    assert abs(lat - 32.606389) < 1e-5 and abs(lon + 116.323889) < 1e-5 and e == elev
+
+
+@pytest.mark.parametrize("bad", ["", "hello", "https://earth.google.com/web/", "https://www.google.com/maps/place/X",
+                                 "95, 10", "10, 190", "1, 2, 3, 4", "32°36'23\"N"])
+def test_parse_location_rejects(bad):
+    with pytest.raises(ValueError):
+        parse_location(bad)

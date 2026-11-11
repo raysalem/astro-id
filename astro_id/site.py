@@ -72,6 +72,51 @@ def parse_latlon(text: str) -> tuple[float, float]:
     raise ValueError(f"cannot read coordinates from {text!r}")
 
 
+_ELEV = r"[-+]?\d{1,5}(?:\.\d+)?"
+_EARTH_AT = re.compile(r"@(" + _NUM + r"),\s*(" + _NUM + r"),\s*(" + _ELEV + r")a(?![0-9A-Za-z])")
+EARTH_URL = "https://earth.google.com/web/"
+MAPS_URL = "https://www.google.com/maps/"
+
+
+def parse_location(text: str) -> tuple[float, float, float | None]:
+    """Pasted text -> (lat, lon, elevation in metres or None), for the add-on's location step (R-LOC).
+
+    Accepts a Google Earth URL (``.../@lat,lon,ALTa,...``: the ``a`` value is the ground altitude of the point),
+    a Google Maps URL (``@lat,lon,...``, ``!3d..!4d..``; no elevation), decimal ``lat, lon[, elev]`` (an ``m`` after
+    the elevation is fine), or degrees-minutes-seconds like ``32°36'23"N 116°19'26"W`` with an optional elevation.
+    """
+    t = text.strip().strip("()[]")
+    if not t:
+        raise ValueError("empty input")
+    if "earth.google." in t or _EARTH_AT.search(unquote(t)):
+        m = _EARTH_AT.search(unquote(t))
+        if m:
+            lat, lon = _check(float(m.group(1)), float(m.group(2)))
+            return lat, lon, float(m.group(3))
+        r = parse_maps_url(t)
+        if r:
+            return r[0], r[1], None
+        raise ValueError("no coordinates in that Google Earth URL (copy it after the view settles on the spot)")
+    if "google." in t or "goo.gl" in t or t.startswith("http") or "@" in t:
+        r = parse_maps_url(t)
+        if r:
+            return r[0], r[1], None
+        raise ValueError("no coordinates in that URL (use the full URL with @lat,lon, or right-click the pin)")
+    dms = _DMS.findall(t)
+    if len(dms) == 2:
+        lat, lon = parse_latlon(t)
+        rest = _DMS.sub(" ", t)
+        m = re.search(r"(?<![\d.])(" + _ELEV + r")\s*m?(?![0-9A-Za-z])", rest)
+        return lat, lon, (float(m.group(1)) if m else None)
+    if dms:
+        raise ValueError(f"cannot read coordinates from {text!r}")
+    nums = re.findall(r"[-+]?\d+(?:\.\d+)?", t)
+    if len(nums) in (2, 3):
+        lat, lon = _check(float(nums[0]), float(nums[1]))
+        return lat, lon, (float(nums[2]) if len(nums) == 3 else None)
+    raise ValueError(f"cannot read coordinates from {text!r}")
+
+
 def maps_url(site: Site) -> str:
     return f"https://www.google.com/maps/@{site.lat:.5f},{site.lon:.5f},15z/data=!3m1!1e3"
 

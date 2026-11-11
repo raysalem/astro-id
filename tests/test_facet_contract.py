@@ -158,10 +158,14 @@ def test_tags_round_trip_through_batch_and_delete(client, ledger):
     assert client.photo(N1)["manual_tags"] == ["my own"] and client.photo(N2)["manual_tags"] == []
 
 
-def test_gps_write(client):
-    r = client.put_gps(N3, 32.6, -116.3)
-    assert r == {"gps_latitude": 32.6, "gps_longitude": -116.3}
+def test_gps_write_for_a_folder(client):
+    folder = N3.rsplit("/", 1)[0]
+    dry = client.set_location(32.6, -116.3, path_prefix=folder, dry_run=True)
+    assert dry["dry_run"] and dry["changed"] + dry["skipped"] >= 1
+    r = client.set_location(32.6, -116.3, path_prefix=folder, overwrite=True)
+    assert r["changed"] >= 1
     assert S.gps_source(client.photo(N3)) == "facet-manual"
+    assert (client.photo(N3)["gps_latitude"], client.photo(N3)["gps_longitude"]) == (32.6, -116.3)
 
 
 def test_annotations_api_or_legacy(client, ledger, facet, tmp_path):

@@ -11,11 +11,13 @@ Credentials come from the environment, never from Facet's config or database:
   an edition login).
 
 As a Facet add-on (``astro-id facet serve --addon``, started by Facet's supervisor) the credential is the per-launch
-add-on token Facet passes in ``FACET_TOKEN``; see :func:`addon_credentials`.
+add-on token Facet passes in ``FACET_TOKEN``; see :func:`addon_credentials`. An ``fct_`` token talks to Facet over MCP
+(:mod:`astro_id.facet.mcp_client`, PLUGIN_BOUNDARY.md v0.3 §6a): :func:`connect` picks the client. This module's
+:class:`FacetClient` is the password (``/api``) path of the standalone sidecar.
 
 Routes used (Facet 1.29 names): ``GET /api/config`` (version), ``GET /api/photos`` (paged listing),
 ``GET /api/photo`` (one photo), ``GET /api/albums``, ``GET /thumbnail``, ``POST /api/photos/batch_manual_tags``,
-``DELETE /api/photo/manual_tags``, ``PUT /api/photo/gps``, and, when the server has them,
+``DELETE /api/photo/manual_tags``, ``POST /api/photos/batch_gps`` (a folder or album), and, when the server has them,
 ``GET|PUT|DELETE /api/photo/annotations``.
 """
 from __future__ import annotations
@@ -37,9 +39,11 @@ ALL_FRAMES = {"hide_blinks": "0", "hide_bursts": "0", "hide_duplicates": "0", "h
 
 
 class FacetError(RuntimeError):
-    def __init__(self, message: str, status: int | None = None):
+    def __init__(self, message: str, status: int | None = None, *, code: str | None = None, issues=None):
         super().__init__(message)
         self.status = status
+        self.code = code          # the MCP envelope's error code, when the call went over MCP
+        self.issues = issues
 
 
 class FacetClient:
@@ -236,9 +240,24 @@ class FacetClient:
         r = self.request("DELETE", "/api/photo/manual_tags", json={"path": path, "tag": tag})
         return bool(r.json().get("removed"))
 
-    def put_gps(self, path: str, lat: float | None, lon: float | None) -> dict:
-        return self.request("PUT", "/api/photo/gps",
-                            json={"path": path, "gps_latitude": lat, "gps_longitude": lon}).json()
+    def set_location(self, lat: float, lon: float, *, path_prefix: str | None = None, album_id: int | None = None,
+                     overwrite: bool = False, dry_run: bool = False) -> dict:
+        """One location for a whole folder or album (R-LOC), never one photo: preview, then apply with its token."""
+        if (path_prefix is None) == (album_id is None):
+            raise ValueError("a location is set for a folder or an album, exactly one")
+        filters = {k: v for k, v in ALL_FRAMES.items()}
+        filters.update({"path_prefix": path_prefix} if path_prefix is not None else {"album_id": str(int(album_id))})
+        body = {"filters": filters, "gps_latitude": lat, "gps_longitude": lon, "only_missing": not overwrite}
+        preview = self.request("POST", "/api/photos/batch_gps", json={**body, "preview": True}).json()
+        out = {"scope": {"path_prefix": path_prefix} if path_prefix is not None else {"album_id": int(album_id)},
+               "latitude": lat, "longitude": lon, "overwrite": bool(overwrite), "dry_run": bool(dry_run),
+               "changed": preview.get("changed", 0), "skipped": preview.get("skipped", 0)}
+        if dry_run or not out["changed"]:
+            return out
+        done = self.request("POST", "/api/photos/batch_gps",
+                            json={**body, "preview_token": preview.get("preview_token")}).json()
+        out.update(changed=done.get("changed", 0), skipped=done.get("skipped", 0))
+        return out
 
     def put_annotation(self, path: str, source: str, payload: dict) -> dict:
         return self.request("PUT", "/api/photo/annotations",
@@ -251,6 +270,23 @@ class FacetClient:
     def photo_page_url(self, path: str) -> str:
         """The photo's page in the Facet web app (its location dialog is there)."""
         return f"{self.url}/photo?path={quote(path, safe='')}"
+
+
+def connect(url: str | None = None, **kw):
+    """The client for these credentials: an ``fct_`` token -> Facet's MCP endpoint (R-MCP); otherwise ``/api``."""
+    token = kw.get("token")
+    if token and token.startswith("fct_"):
+        from .mcp_client import McpFacetClient
+
+        return McpFacetClient((url or os.environ.get("FACET_URL") or DEFAULT_URL), token=token,
+                              **{k: v for k, v in kw.items() if k in ("timeout", "session")})
+    return FacetClient(url, **kw)
+
+
+def client_from_env(url: str | None = None, **kw):
+    e = os.environ
+    return connect(url, token=e.get("FACET_TOKEN") or None, edition_password=e.get("FACET_EDITION_PASSWORD") or None,
+                   username=e.get("FACET_USERNAME") or None, password=e.get("FACET_PASSWORD") or None, **kw)
 
 
 # ------------------------------------------------------- add-on credential ---

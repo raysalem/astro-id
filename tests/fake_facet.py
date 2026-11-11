@@ -9,6 +9,9 @@ Add-on pieces (PLUGIN_BOUNDARY.md v0.2): ``GET /api/photos?scan_run=`` filters o
 ``GET /thumbnail`` returns a tiny JPEG, ``addon_token`` (``fct_...``) is accepted as a bearer and answers 403 on
 any route in ``addon_denied`` (an add-on token outside its permissions), ``plugin_tags`` switches
 ``POST /api/photos/plugin_tags`` on (422 on an empty body, like FastAPI validation).
+
+R-MCP (v0.3): with an ``addon_token`` the fake also serves ``POST /mcp`` (tests/fake_facet_mcp.py, a real ``mcp``
+SDK server behind a bearer check); ``mcp_tools`` is the add-on's tool allowlist and ``mcp_calls`` records each call.
 """
 from __future__ import annotations
 
@@ -22,7 +25,8 @@ CAP = 50
 
 class FakeFacet:
     def __init__(self, photos: list[dict], *, password="pw", annotations_put=True, annotations_read=True,
-                 version="1.29.0", addon_token=None, addon_denied=(), plugin_tags=False):
+                 version="1.29.0", addon_token=None, addon_denied=(), plugin_tags=False, mcp_tools=None,
+                 addon_id="astro-id", album_names=None):
         self.photos = {p["path"]: {"manual_tags": [], "tags": "", **p} for p in photos}
         self.password = password
         self.annotations_put = annotations_put
@@ -36,17 +40,41 @@ class FakeFacet:
         self.plugin_tags = plugin_tags
         self.expire_next = False
         self.logins = 0
+        from fake_facet_mcp import ASTRO_TOOLS
+
+        self.mcp_tools = set(ASTRO_TOOLS if mcp_tools is None else mcp_tools)
+        self.mcp_calls: list[tuple] = []
+        self.addon_id = addon_id
+        self.album_names = dict(album_names or {1: "Night"})
+        self.mcp = None
+        self.mcp_port = None
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
 
     def __enter__(self):
+        if self.addon_token:
+            from fake_facet_mcp import StubMcp
+
+            self.mcp = StubMcp(self)
+            self.mcp_port = self.mcp.start()
         self.thread.start()
         return self
 
     def __exit__(self, *exc):
         self.server.shutdown()
         self.server.server_close()
+        if self.mcp is not None:
+            self.mcp.stop()
+
+    @staticmethod
+    def view(r):
+        v = dict(r)
+        v["manual_tags"] = sorted(r["manual_tags"])
+        v["tags_list"] = [t.strip() for t in (r.get("tags") or "").split(",") if t.strip()]
+        v.pop("tag_created_by", None)
+        v.pop("albums", None)
+        return v
 
     def writes(self):
         """Calls that could change state (the feature probes, a PUT/POST with an empty body, cannot)."""
@@ -79,7 +107,27 @@ class FakeFacet:
                     fake.tokens.discard(tok)
                 return tok in fake.tokens
 
+            def handle_mcp(self, method):
+                from fake_facet_mcp import forward
+
+                n = int(self.headers.get("Content-Length") or 0)
+                raw = self.rfile.read(n) if n else b""
+                tok = (self.headers.get("Authorization") or "").removeprefix("Bearer ")
+                fake.calls.append((method, "/mcp", {}, {}))
+                if fake.mcp is None or tok != fake.addon_token:
+                    return self._out(401, {"detail": "A valid agent token is required"})
+                status, hdrs, data = forward(fake.mcp_port, method, "/mcp", self.headers, raw)
+                self.send_response(status)
+                for k, v in hdrs:
+                    self.send_header(k, v)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return None
+
             def handle_one(self, method):
+                if urlparse(self.path).path == "/mcp":
+                    return self.handle_mcp(method)
                 u = urlparse(self.path)
                 q = {k: v[0] for k, v in parse_qs(u.query).items()}
                 body = self._body() if method in ("POST", "PUT", "DELETE") else {}
@@ -175,6 +223,25 @@ class FakeFacet:
                     if removed:
                         r["manual_tags"].remove(body["tag"])
                     return self._out(200, {"success": True, "tag": body["tag"], "removed": removed})
+                if p == "/api/photos/batch_gps" and method == "POST":
+                    f = body.get("filters") or {}
+                    rows = list(fake.photos.values())
+                    if f.get("path_prefix"):
+                        pre = f["path_prefix"].replace("\\", "/").rstrip("/") + "/"
+                        rows = [r for r in rows if r["path"].replace("\\", "/").startswith(pre)]
+                    if f.get("album_id"):
+                        rows = [r for r in rows if int(f["album_id"]) in r.get("albums", ())]
+                    coords = (body["gps_latitude"], body["gps_longitude"])
+                    changed = [r for r in rows if (r.get("gps_latitude"), r.get("gps_longitude")) != coords
+                               and (not body.get("only_missing", True) or r.get("gps_latitude") is None)]
+                    token = f"tok-{len(rows)}-{len(changed)}-{coords}"
+                    if not body.get("preview"):
+                        if body.get("preview_token") != token:
+                            return self._out(409, {"detail": "Selection changed; preview again before applying"})
+                        for r in changed:
+                            r.update(gps_latitude=coords[0], gps_longitude=coords[1], gps_manually_set=1)
+                    return self._out(200, {"changed": len(changed), "skipped": len(rows) - len(changed),
+                                           "preview_token": token})
                 if p == "/api/photo/gps" and method == "PUT":
                     r = fake.photos.get(body.get("path"))
                     if r is None:
@@ -185,10 +252,7 @@ class FakeFacet:
 
             @staticmethod
             def _view(r):
-                v = dict(r)
-                v["manual_tags"] = sorted(r["manual_tags"])
-                v["tags_list"] = [t.strip() for t in (r.get("tags") or "").split(",") if t.strip()]
-                return v
+                return fake.view(r)
 
             def do_GET(self):
                 self.handle_one("GET")

@@ -408,11 +408,20 @@ def test_serve_flow_load_gps_solve_recull_review_tag(ui, fake, monkeypatch):
     d = _req(url + "api/photos", {"path_prefix": ROOT, "category": "astro"})
     assert [p["gps_source"] for p in d["photos"]] == ["facet-exif", "none"] and d["raw_companion_field"]
     assert d["photos"][0]["facet_link"].startswith(fake.url + "/photo?path=")
-    g = _req(url + "api/gps", {"path": P2, "text": "https://www.google.com/maps/@32.61,-116.32,15z"})
-    assert g["gps"] == [32.61, -116.32] and g["gps_source"] == "facet-manual"
+    # R-LOC: a location is set for the whole folder (two photos there have no GPS), after a check and one confirm
+    app.elevation = lambda lat, lon: None
+    loc = {"scope": {"folder": ROOT}, "text": "https://www.google.com/maps/@32.61,-116.32,15z"}
+    g = _req(url + "api/location", loc)
+    assert (g["lat"], g["lon"], g["changed"], g["skipped"], g["confirmed"]) == (32.61, -116.32, 2, 1, False)
+    assert fake.photos[P2].get("gps_latitude") is None
+    g = _req(url + "api/location", {**loc, "confirm": True})
+    assert g["confirmed"] and fake.photos[P2]["gps_latitude"] == 32.61 and fake.photos[P2]["gps_manually_set"] == 1
     with pytest.raises(urllib.error.HTTPError) as ei:
-        _req(url + "api/gps", {"path": P2, "text": "no coordinates"})
+        _req(url + "api/location", {"scope": {"folder": ROOT}, "text": "no coordinates"})
     assert ei.value.code == 400
+    with pytest.raises(urllib.error.HTTPError) as ei:
+        _req(url + "api/gps", {"path": P2, "text": "32.6, -116.3"})                 # no per-photo route any more
+    assert ei.value.code == 404
 
     q = {"detected": 900, "fwhm_px": 5.0, "elongation": 1.1}
     bad = {"detected": 10, "fwhm_px": 30.0, "elongation": 1.1}

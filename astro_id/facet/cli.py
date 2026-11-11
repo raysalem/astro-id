@@ -96,9 +96,9 @@ def add_parser(sub) -> None:
 
 
 def _client(args):
-    from .client import FacetClient
+    from .client import client_from_env
 
-    return FacetClient.from_env(args.facet_url)
+    return client_from_env(args.facet_url)
 
 
 def _ctx(args, client, ledger, dry_run=False, min_conf=65):

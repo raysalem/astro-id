@@ -226,6 +226,8 @@ class SyncContext:
 
     def prepare(self) -> "SyncContext":
         self.library = library_key(self.client.url)
+        if getattr(self.client, "mode", None) == "mcp":
+            self.tags_via = "mcp add_tags (created_by = add-on)+ledger"
         self.version = self.client.server_version()
         feats = self.client.features()
         if feats.get("plugin_tags"):

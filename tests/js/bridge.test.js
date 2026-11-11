@@ -143,3 +143,18 @@ test("constEq compares in full", () => {
   assert.equal(B.constEq("abc", "ab"), false);
   assert.equal(B.constEq(undefined, "ab"), false);
 });
+
+test("openMap posts only the two fixed site keys, never a URL", () => {
+  const { win, parent } = fakeWindows();
+  const br = B.createBridge({ win, parent, nonce: NONCE });
+  assert.equal(br.openMap("earth"), true);
+  assert.equal(br.openMap("maps"), true);
+  for (const bad of ["https://evil.example/", "toString", "__proto__", "", undefined, 1]) {
+    assert.equal(br.openMap(bad), false);
+  }
+  assert.deepEqual(parent.sent.map((s) => s.m), [
+    { type: "open_map", site: "earth", v: 1, nonce: NONCE },
+    { type: "open_map", site: "maps", v: 1, nonce: NONCE },
+  ]);
+  assert.deepEqual(Object.keys(B.MAP_SITES).sort(), ["earth", "maps"]);
+});

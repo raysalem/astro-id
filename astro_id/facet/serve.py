@@ -36,12 +36,23 @@ from urllib.parse import parse_qs, parse_qsl, unquote, urlparse
 
 from .. import config as cfgmod
 from ..cull import DEFAULT_RULE, merge_rule, validate_rule
-from .client import ALL_FRAMES, FacetClient, FacetError, addon_credentials
+from .client import ALL_FRAMES, FacetClient, FacetError, addon_credentials, client_from_env, connect
 from .ledger import Ledger
 from .sync import (TAG_REVIEW, SyncContext, apply_results, facet_hints, gps_source, parse_path_map, to_local)
 
 log = logging.getLogger("astro_id.facet")
 STATIC = Path(__file__).with_name("static")
+LAST_SITE = "last_site"
+
+
+def _elevation(lat: float, lon: float):
+    """Ground elevation for a site picked without one (USGS EPQS; None when it cannot be looked up)."""
+    from ..site import fetch_elevation
+
+    try:
+        return fetch_elevation(lat, lon, timeout=8)
+    except Exception:
+        return None
 LOOPBACK = {"127.0.0.1", "localhost", "[::1]"}
 ADDON_ID = "astro-id"
 BRIDGE_MARKER = "<!--ASTRO_BRIDGE-->"
@@ -119,6 +130,7 @@ class App:
         self.notes: list[str] = []          # start-up notes shown in the page (credential mode etc.)
         self.job = Job()
         self.photos: dict[str, dict] = {}   # last listing, by Facet path
+        self.elevation = _elevation         # (lat, lon) -> metres or None; replaced in tests
 
     # ------------------------------------------------------------ helpers ---
     def local(self, path: str) -> str:
@@ -182,7 +194,8 @@ class App:
         return {"facet": self.client.url, "version": self.ctx.version, "annotations": self.ctx.mode,
                 "warnings": self.ctx.warnings + self.notes, "can_write": self.client.can_login,
                 "ledger": str(self.ledger.path), "default_rule": DEFAULT_RULE, "review_tag": TAG_REVIEW,
-                "addon": self.addon_id, "mount": self.mount, "tags_via": self.ctx.tags_via}
+                "addon": self.addon_id, "mount": self.mount, "tags_via": self.ctx.tags_via,
+                "transport": getattr(self.client, "mode", "api"), "last_site": self.last_site()}
 
     def albums(self, _q, _b):
         try:
@@ -255,14 +268,94 @@ class App:
         size = (q.get("size") or [""])[0]
         return self.client.thumbnail(path, int(size) if size.isdigit() and 16 <= int(size) <= 640 else None)
 
-    def set_gps(self, _q, b):
-        from ..site import parse_latlon
+    # ------------------------------------------------------- location (R-LOC) ---
+    def _folders_in_set(self) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for p in self.photos:
+            f = p.replace("\\", "/").rsplit("/", 1)[0]
+            out[f] = out.get(f, 0) + 1
+        return out
 
-        lat, lon = parse_latlon(str(b.get("text") or ""))
-        r = self.client.put_gps(b["path"], lat, lon)
-        ph = self.client.photo(b["path"]) or {}
-        self.photos[b["path"]] = ph
-        return {"path": b["path"], "gps": [r.get("gps_latitude"), r.get("gps_longitude")], "gps_source": gps_source(ph)}
+    def last_site(self) -> dict | None:
+        raw = self.ledger.get_meta(self.ctx.library, LAST_SITE)
+        try:
+            site = json.loads(raw) if raw else None
+        except ValueError:
+            return None
+        return site if isinstance(site, dict) and {"lat", "lon"} <= set(site) else None
+
+    def location(self, _q, b):
+        """One location for a whole folder or album (PLUGIN_BOUNDARY.md v0.3 R-LOC), never one photo.
+
+        ``{scope: {folder} | {album_id}, text, overwrite?, confirm?, name?}``. Without ``confirm``: parse the text
+        (Google Earth / Maps URL, decimal ``lat, lon[, elev]`` or DMS) and count what would change (a dry run of
+        ``set_gps``). With ``confirm``: write it, remember it as the last site, and save it as the site of each
+        local folder in the scope (``astro-id.json``) for plate solving."""
+        from ..site import parse_location
+
+        scope = b.get("scope") if isinstance(b.get("scope"), dict) else {}
+        folder, album = scope.get("folder"), scope.get("album_id")
+        if (folder is None) == (album is None):
+            raise ValueError("pick one folder or one album; a location is never set photo by photo")
+        if b.get("path") is not None or b.get("paths") is not None:
+            raise ValueError("a location is set for a folder or an album, not for single photos")
+        if folder is not None:
+            if not isinstance(folder, str) or folder not in self._folders_in_set():
+                raise ValueError("that folder is not in the current photo set")
+            kw: dict = {"path_prefix": folder}
+            name = folder.rsplit("/", 1)[-1] or folder
+            scope_out = {"kind": "folder", "folder": folder, "name": name}
+        else:
+            if isinstance(album, bool) or not str(album).isdigit():
+                raise ValueError("album_id must be a number")
+            album = int(album)
+            kw = {"album_id": album}
+            names = {int(a["id"]): a.get("name") for a in self.client.albums() if a.get("id") is not None}
+            if album not in names:
+                raise ValueError("no such album")
+            name = names[album] or f"album {album}"
+            scope_out = {"kind": "album", "album_id": album, "name": name}
+        lat, lon, elev = parse_location(str(b.get("text") or ""))
+        if elev is None:
+            elev = self.elevation(lat, lon)
+        confirm = bool(b.get("confirm"))
+        r = self.client.set_location(lat, lon, overwrite=bool(b.get("overwrite")), dry_run=not confirm, **kw)
+        out = {"lat": lat, "lon": lon, "elev": elev, "scope": scope_out, "overwrite": bool(b.get("overwrite")),
+               "changed": r.get("changed", 0), "skipped": r.get("skipped", 0), "confirmed": confirm}
+        out["photos"] = out["changed"] + out["skipped"]
+        if confirm:
+            site = {"name": str(b.get("name") or name)[:120], "lat": lat, "lon": lon, "elev_m": elev}
+            self.ledger.set_meta(self.ctx.library, LAST_SITE, json.dumps(site))
+            out["saved"] = self._save_site(kw, site)
+            for p in list(self.photos):     # re-read what changed, so the table shows the new source
+                if folder is None or p.replace("\\", "/").rsplit("/", 1)[0] == folder:
+                    self.photos[p] = self.client.photo(p) or self.photos[p]
+        return out
+
+    def _save_site(self, kw: dict, site: dict) -> list[str]:
+        """Write ``site`` into ``astro-id.json`` of every local folder of the scope (existing keys kept)."""
+        from ..config import CONFIG_NAME, Site
+        from ..site import merge_config
+
+        if "path_prefix" in kw:
+            facet_folders = {kw["path_prefix"]}
+        else:
+            facet_folders = {p["path"].replace("\\", "/").rsplit("/", 1)[0]
+                             for p in self.client.list_photos(album_id=kw["album_id"], limit=MAX_SCOPE_PHOTOS)}
+        written = []
+        for ff in sorted(facet_folders):
+            local = Path(self.local(ff + "/x")).parent
+            if not local.is_dir():
+                continue
+            path = local / CONFIG_NAME
+            try:
+                existing = cfgmod.load_config(path) if path.exists() else {}
+            except (OSError, ValueError):
+                existing = {}
+            merged = merge_config(existing, Site(site["lat"], site["lon"], site["elev_m"], site["name"]))
+            path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
+            written.append(str(path).replace("\\", "/"))
+        return written
 
     def preview(self, _q, b):
         from ..session import time_preview
@@ -349,7 +442,7 @@ class App:
         return {"reports": reports}
 
     ROUTES = {("GET", "api/state"): "state", ("GET", "api/albums"): "albums", ("GET", "api/job"): "job_state",
-              ("POST", "api/photos"): "list_photos", ("POST", "api/scope"): "scope", ("POST", "api/gps"): "set_gps",
+              ("POST", "api/photos"): "list_photos", ("POST", "api/scope"): "scope", ("POST", "api/location"): "location",
               ("POST", "api/preview"): "preview", ("POST", "api/save-config"): "save_config",
               ("POST", "api/solve"): "solve", ("POST", "api/recull"): "recull",
               ("POST", "api/review-tags"): "review_tags"}
@@ -544,7 +637,7 @@ def make_addon_handler(app_box: dict, addon_id: str, launch_secret: str):
 
 def build(args, client: FacetClient | None = None, ledger: Ledger | None = None, secret: str | None = None):
     """Standalone: (server, url, app); the caller runs ``server.serve_forever()``."""
-    client = client or FacetClient.from_env(getattr(args, "facet_url", None))
+    client = client or client_from_env(getattr(args, "facet_url", None))
     ledger = ledger or Ledger(getattr(args, "ledger", None))
     ctx = SyncContext(client=client, ledger=ledger, legacy_db=getattr(args, "legacy_db", None),
                       facet_dir=getattr(args, "facet_dir", None),
@@ -594,7 +687,7 @@ def build_addon(args, env: dict | None = None, client: FacetClient | None = None
 
 def finish_addon(args, box: dict, aenv: AddonEnv) -> App:
     """Add-on mode, step 2 (after the port line): connect to Facet and build the session app."""
-    client = box.get("client") or FacetClient(aenv.url, **aenv.credentials)
+    client = box.get("client") or connect(aenv.url, **aenv.credentials)
     ledger = box.get("ledger") or Ledger(getattr(args, "ledger", None))
     ctx = SyncContext(client=client, ledger=ledger, addon=True,
                       annotations=not getattr(args, "no_annotations", False)).prepare()
