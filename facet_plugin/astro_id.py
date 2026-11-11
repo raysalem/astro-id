@@ -4,9 +4,11 @@ Drop-in Facet plugin (copy or junction this file into ``<facet>/plugins/``).
 Stdlib only; Facet's own modules (``db.manual_tags``, ``config_resolve``) are
 imported lazily inside functions.
 
-Event hook: ``on_score_complete(data)`` (single-pass scans). Facet's multi-pass scan never emits
-it, so when this module loads inside a ``facet.py`` process it also registers an exit hook that
-spawns a detached catch-up run (``--pending``) for astro photos that have no astro-id tags yet.
+Trigger (``astro_id.trigger``): ``"manual"`` (default) = a scan never solves; photos are solved on demand
+(the backfill CLI below, or the engine's ``astro-id session``). ``"scan"`` = the event hook
+``on_score_complete(data)`` (single-pass scans) queues astro photos, and because Facet's multi-pass scan
+never emits it, a ``facet.py`` process also gets an exit hook that spawns a detached catch-up run
+(``--pending``) for astro photos that have no astro-id tags yet.
 
 Backfill CLI::
 
@@ -21,10 +23,15 @@ ever replaced or deleted. See ``facet_plugin/README.md``.
 Config (``plugins.astro_id`` in the resolved scoring config)::
 
     "plugins": {"enabled": true, "astro_id": {
-        "engine": "C:/Users/raysa/astro-id",
-        "uv": "C:/Users/raysa/.local/bin/uv.exe",
-        "min_confidence": 65, "roots": ["//192.168.1.90/Photos and Videos/2026"],
-        "overlay_dir": null, "timeout_s": 600, "enabled": true}}
+        "engine": "C:/path/to/astro-id",
+        "uv": "C:/path/to/uv.exe",
+        "min_confidence": 65, "roots": ["//nas/Photos/2026"],
+        "overlay_dir": null, "timeout_s": 600, "enabled": true, "trigger": "manual",
+        "cull": {"enabled": true, "order": ["focus", "trailing", "stars"], "thresholds": {}}}}
+
+Solved frames carry the engine's ``quality`` metrics (focus, trailing, stars, sky) as a top-level ``quality``
+object in their ``photo_annotations`` payload. ``cull`` is the culling rule the session page applies
+(astro_id/cull.py in the engine); this plugin only validates it and never writes Facet's cull flags.
 """
 
 from __future__ import annotations
@@ -55,9 +62,15 @@ _UNSET = object()
 _annotation_skip_logged = False
 ASTRO_TAGS = frozenset({"astrophotography", "night sky", "stars", "milky way",
                         "aurora", "nebula"})
-DEFAULT_UV = r"C:\Users\raysa\.local\bin\uv.exe"
+DEFAULT_UV = os.path.join(os.path.expanduser("~"), ".local", "bin", "uv.exe" if os.name == "nt" else "uv")
+TRIGGERS = ("manual", "scan")
+CULL_CHECKS = ("focus", "trailing", "stars", "solve")
+CULL_THRESHOLDS = ("focus_ratio", "focus_px", "trailing_review", "trailing_reject", "stars_ratio_review",
+                   "stars_min")
 DEFAULTS = {
     "enabled": True,
+    "trigger": "manual",   # "manual": scans never solve; "scan": on_score_complete + exit-hook catch-up
+    "cull": None,          # culling rule for the session page (see the engine's astro_id/cull.py); None = default
     "engine": None,
     "uv": DEFAULT_UV,
     "min_confidence": 65,
@@ -172,6 +185,20 @@ def validate_config(cfg: dict) -> tuple[list[str], list[str]]:
             return False
         return bool(t) and all(x in TAG_TARGETS for x in t)
     need("tag_targets", targets_ok, "must be a non-empty list of facet, raw_xmp")
+    need("trigger", lambda v: v in TRIGGERS, "must be 'manual' or 'scan'")
+
+    def cull_ok(v):
+        if v is None:
+            return True
+        if not isinstance(v, dict) or set(v) - {"enabled", "order", "thresholds"}:
+            return False
+        if "enabled" in v and not isinstance(v["enabled"], bool):
+            return False
+        if "order" in v and not (isinstance(v["order"], list) and all(c in CULL_CHECKS for c in v["order"])):
+            return False
+        th = v.get("thresholds", {})
+        return isinstance(th, dict) and all(k in CULL_THRESHOLDS and (x is None or _num(x, 0)) for k, x in th.items())
+    need("cull", cull_ok, "must be null or {enabled, order: [focus|trailing|stars|solve], thresholds: {...}}")
     return errors, warnings
 
 
@@ -458,7 +485,10 @@ def annotation_for(result: dict):
     if not result.get("solved"):
         return None
     a = result.get("annotations")
-    return a if isinstance(a, dict) and a.get("version") == 1 else _UNSET
+    if not (isinstance(a, dict) and a.get("version") == 1):
+        return _UNSET
+    q = result.get("quality")
+    return {**a, "quality": q} if isinstance(q, dict) else a   # top-level `quality`, ignored by the viewer
 
 
 def facet_hints(conn, photo_path: str) -> dict:
@@ -788,7 +818,7 @@ def on_score_complete(data: dict) -> None:
     global _warned_engine
     try:
         cfg = get_config()
-        if not cfg.get("enabled", True) or not isinstance(data, dict):
+        if not cfg.get("enabled", True) or cfg.get("trigger") != "scan" or not isinstance(data, dict):
             return
         path = data.get("path")
         if not path or not is_astro(data, cfg):
@@ -993,7 +1023,8 @@ def _on_exit() -> None:
     """Scan exit: spawn a detached catch-up when astro photos still lack astro-id tags. Never raises."""
     try:
         cfg = get_config()
-        if not cfg.get("enabled", True) or not cfg.get("catch_up", True) or not cfg.get("engine"):
+        if (not cfg.get("enabled", True) or cfg.get("trigger") != "scan" or not cfg.get("catch_up", True)
+                or not cfg.get("engine")):
             return
         db_path = get_db_path(cfg)
         if not os.path.exists(db_path):

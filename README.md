@@ -123,6 +123,37 @@ bends with the lens, clipped to the frame, in full-resolution pixels rounded to 
 the group item a star belongs to. The payload stays under 500 KB (lowest-confidence items are dropped first if not).
 The legend reads like `2026-11-07 21:57 PST +-15 min . ASTAP grade A . 2452 stars`.
 
+## Quality metrics and culling
+
+Every frame result carries `quality` (CONTRACT.md v1.1): detected and matched star counts, focus as the median
+half-flux diameter of isolated unsaturated stars (`fwhm_px`, full-resolution px; equals the FWHM for a sharp star
+and measures the disc of a defocused one), trailing as the median elongation (major/minor axis), sky background
+and noise, and an A/B/C quality grade. Stars are detected at three smoothing scales; the scale whose kernel matches
+the stars is used, so a badly defocused frame is measured on whole discs, not fragments. `--no-quality` skips it
+(about 5-15 s per 61 MP frame, mostly JPEG decoding).
+
+`astro_id/cull.py` turns the metrics into `keep | review | reject` with reasons against the session's own
+baseline (best-focus quartile, median star count). Defocused frames are `review`, never `reject` (stacking).
+The rule is configurable: `{"enabled", "order": ["focus", "trailing", "stars", "solve"], "thresholds": {...}}`
+in `astro-id.json` `"cull"` or `--cull-rule`. Nothing writes a photo library's cull flags.
+
+## Astro session (`astro-id session`)
+
+The confirm-then-solve flow for a night's photos, as JSON lines on stdout (schema in CONTRACT.md v1.1):
+
+```powershell
+uv run astro-id session --paths-file photos.json --preview --offset +2559d11h08m --tolerance-min 5 --tz America/Los_Angeles
+uv run astro-id session --paths-file photos.json --offset +2559d11h08m --tolerance-min 5 --source jpg --save-folder-config
+uv run astro-id cull --metrics-file quality.json --cull-rule '{"order": ["focus", "stars"]}'
+```
+
+`--preview` reports per photo the EXIF camera time, the corrected time and its window, where the site and
+timezone come from, and whether a RAW twin exists, without solving. The solve run emits `start`, one `photo` event
+per frame as it finishes (status, objects, grade, quality, best-fit time), and `done` with the session's cull
+verdicts and a suggested tighter tolerance when the Moon pinned the time. Per-photo facts a photo library holds
+(its GPS, a corrected capture time) are passed as `hints`; the session never reads a library itself. The same
+functions are importable (`astro_id.session`).
+
 ## RAW as the solver input (`solve_source`)
 
 `jpg` (default) solves the JPG. `raw` solves the same-stem RAW (linear demosaic, camera white balance, no
@@ -146,7 +177,7 @@ Facet's own site and capture date, when it has them, override the file's site an
 | Camera clock offset | `--offset` | `clock_offset` | - (Facet date) | none |
 | True time of one frame | `--time`, `--timezone` | - | Facet date / `timezone` | EXIF |
 | Time tolerance | `--time-tolerance` | `time_tolerance_min` | `time_tolerance_min` | 15 min |
-| Timezone | `--timezone` | `timezone` | `timezone` | inferred from the site, else system |
+| Timezone | `--timezone` (also for EXIF + offset, v1.1) | `timezone` | `timezone` | inferred from the site, else system |
 | Site | `--site lat,lon[,elev]` | `site` | Facet GPS | none |
 | Overlay folder | `--overlay-dir` | - | `overlay_dir` | `<folder>-annotated` |
 | Overlay scores | `--overlay-scores` | - | `overlay_scores` | off |
@@ -161,7 +192,9 @@ Facet's own site and capture date, when it has them, override the file's site an
 | Stacking gap | `--stack-gap` | `stack_gap_s` | `stack_gap_s` | 120 s |
 | Stacking tolerance | - | `stack_tolerance` | - | 0.02 |
 | Tag targets | - | - | `tag_targets` | `["facet"]` |
-| Plugin only: `engine`, `uv`, `enabled`, `roots`, `timeout_s`, `settle_s`, `batch_min`, `db_path`, `catch_up`, `log_path`, `exiftool` | | | see `facet_plugin/README.md` | |
+| Cull rule | `--cull-rule` (session) | `cull` | `cull` | built-in (CONTRACT.md) |
+| Quality metrics | `--no-quality` | - | - | on |
+| Plugin only: `trigger`, `engine`, `uv`, `enabled`, `roots`, `timeout_s`, `settle_s`, `batch_min`, `db_path`, `catch_up`, `log_path`, `exiftool` | | | see `facet_plugin/README.md` | |
 
 The plugin validates its config on load: unknown keys log a warning, a bad value logs an error and the plugin
 disables itself until it is fixed.

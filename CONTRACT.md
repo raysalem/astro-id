@@ -1,4 +1,4 @@
-# astro-id engine ↔ Facet plugin contract (v1)
+# astro-id engine ↔ Facet plugin contract (v1.1)
 
 Fixed before the engine and the plugin are built in parallel. Change it only with a version bump and both sides updated.
 
@@ -122,3 +122,125 @@ A sequence = consecutive frames (EXIF time gap <= `stack_gap_s`) with the same l
 - Every frame result gains `solve_source`: `"jpg"` or `"raw"` (the pixels the solver read; `null` when unsolved before that point). Coordinates are always in the JPG (Facet photo) pixel space.
 - New flags: `--overlay-scores` (overlay JPG labels carry the confidence; default off = plain names; the legend keeps the tier colour key) and `--solve-source jpg|raw|auto` (default `jpg`; also `astro-id.json` `solve_source`).
 - Consumers must ignore unknown fields.
+
+## v1.1 (non-breaking, 2026-11-11): quality metrics, culling, astro session
+
+The JSON document keeps `"contract": 1` (the major version; v1.1 only adds fields). Consumers must ignore unknown fields.
+
+### Frame result additions
+
+- `quality`: per-frame metrics for culling, or `null` (`--no-quality`, or the image could not be read). Present on solved, unsolved and stack-copy frames. Measured on the frame's own pixels (the JPG, or a lone RAW), never on the solve source.
+- `best_fit_delta_min`: `best_fit_time - true_time` in minutes (1 decimal), `null` when there is no best fit (today only a Moon in the frame pins the time).
+- `--timezone` now also applies to the camera-local EXIF time + offset (before: only to a naive `--time`). Precedence: `--timezone` > `astro-id.json` `timezone` > inferred from the site > system zone.
+- New flag `--no-quality`.
+
+```jsonc
+"quality": {
+  "version": 1,
+  "detected": 12298,        // stars detected (5 sigma, half-size image)
+  "matched": 1043,          // plate-solve catalog matches; stack-copy: registration pairs; null when unsolved
+  "measured": 150,          // isolated, unsaturated stars measured for size and shape
+  "detect_scale": 2.0,      // detection smoothing (half-size px) whose kernel matched the stars; > 2 = large discs
+  "fwhm_px": 6.99,          // median half-flux diameter, full-resolution px (= FWHM for a Gaussian; the disc for defocus)
+  "fwhm_arcsec": 470.3,     // fwhm_px x pixel scale at the centre (null when unknown)
+  "elongation": 1.163,      // median major/minor axis ratio (1 = round; trailing / wind raise it)
+  "roundness": 0.86,        // 1 / elongation
+  "background": 41.0,       // sky level, 8-bit DN on the half-size image (cells holding stars only)
+  "noise": 4.45,            // sky noise (robust sigma), same units
+  "grade": "B",             // A: fwhm <= 6 px, elongation <= 1.35, >= 500 stars; B: <= 10 px, <= 1.8, >= 100; else C
+  "measured_on": "jpg"      // "jpg" | "raw"
+}
+```
+
+Size and shape use stars within 60 % of the half diagonal when there are at least 15 (wide-angle corner coma is not trailing). The grade is absolute and lens-dependent; session-relative verdicts are the cull rule's job.
+
+### Culling (`astro_id/cull.py`, pure functions)
+
+Rule, from (first found) the session's `--cull-rule`, the folder's `astro-id.json` `"cull"`, or the defaults (the Facet plugin validates the same shape under `astro_id.cull` for the session page):
+
+```json
+{"enabled": true, "order": ["focus", "trailing", "stars"],
+ "thresholds": {"focus_ratio": 1.5, "focus_px": null, "trailing_review": 1.6, "trailing_reject": 3.0,
+                "stars_ratio_review": 0.4, "stars_min": 20}}
+```
+
+| Check | Verdict |
+|---|---|
+| `focus` | `fwhm_px >= focus_ratio x reference.fwhm_px` (or `>= focus_px`) -> `review`. **Never `reject`**: defocused frames are kept for stacking. |
+| `trailing` | `elongation >= trailing_reject` -> `reject`; `>= trailing_review` -> `review` |
+| `stars` | `detected < stars_min` -> `reject`; `< stars_ratio_review x reference.detected` -> `review` |
+| `solve` | frame not plate-solved -> `review` (off by default) |
+
+`order` lists the checks that run, most important first; reasons come out in that order. A threshold set to `null` is off. Missing metrics -> `review` ("no quality metrics"). `reference` (session baseline) = lower quartile of `fwhm_px` (the best-focused frames) and median of `detected` over the session's frames.
+
+`cull_rank(metrics, rule, reference, solved)` ->
+
+```json
+{"decision": "keep | review | reject",
+ "reasons": ["focus: star size 86.3 px is 15.2x the session best 5.7 px (defocused; kept for stacking)"],
+ "checks": [{"check": "focus", "level": "review", "value": 86.26, "threshold": 8.5, "reason": "..."}],
+ "enabled": true}
+```
+
+Nothing in the engine writes a library's cull/reject flags; a caller applies verdicts after the user confirms.
+
+### Astro session (`astro_id/session.py`, `astro-id session`)
+
+Library functions (no photo-library access; per-photo facts come in as `hints`):
+`SessionOptions(offset, tolerance_min, source, site, tz, min_confidence=65, hints={path: {"site", "time"}}, cull, overlay_dir, no_overlay, no_fallback, no_quality, overlay_scores, stack_mode, stack_gap, extra_flags, include_results)`,
+`time_preview(paths, opts, emit)`, `run_session(paths, opts, emit, save_config=False)`, `save_folder_config(folders, opts)`, `recull(metrics_by_path, rule, solved_by_path)`, `plan_jobs(paths, opts)`.
+
+```
+astro-id session (PATH ... | --paths-file F) [--hints-file F] [--preview]
+                 [--offset +2559d11h08m] [--tolerance-min 5] [--source jpg|raw|auto]
+                 [--site lat,lon[,elev_m]] [--tz America/Los_Angeles] [--min-confidence 65]
+                 [--save-folder-config] [--cull-rule JSON|@file] [--results]
+                 [--overlay-dir DIR] [--no-overlay] [--no-fallback] [--no-quality] [--overlay-scores]
+                 [--stack-mode representative|all] [--stack-gap S] [-v]
+astro-id cull --metrics-file F [--cull-rule JSON|@file]
+```
+
+- `--paths-file`: JSON list of paths, or `{"paths": [...], "hints": {path: {"site": "lat,lon[,elev]", "time": "ISO-8601"}}}`. `--hints-file`: the hints object alone. A hint `time` is that photo's true local time (naive = read in the session timezone); a hint `site` is that photo's own position.
+- Precedence: time = hint time > EXIF + offset (`--offset` > `astro-id.json`) > EXIF as is; site = hint site > `--site` > `astro-id.json` > none; timezone = `--tz` > `astro-id.json` > inferred from the site > system; tolerance, source, cull rule = flag > `astro-id.json` > default (15 min, jpg, built-in rule).
+- `--save-folder-config` writes `clock_offset`, `time_tolerance_min`, `timezone` (the ones given) into each photo folder's own `astro-id.json` before solving (merged; a folder that only inherited a parent's file gets a copy of it, so the parent's site keeps applying). Event `config_saved` per file written.
+- Jobs: photos are grouped per (folder, site) and solved together (stacking sequences intact); a photo with a hint time runs alone with `--time`. A RAW path is solved through its same-stem JPG and reported under the RAW path.
+- stdout = JSON lines, one event per line, flushed; logs on stderr. Exit 0 when the session ran (frames may fail), 2 for a bad option (after an `error` event `{"event": "error", "error": "..."}`).
+
+Events, `--preview`:
+
+```json
+{"event": "start", "mode": "preview", "total": 18, "session": 1}
+{"event": "preview", "index": 0, "path": "...", "camera_time": "2019-11-05T09:31:59", "offset": "+2559d11h08m",
+ "offset_source": "session | config | null", "true_time": "2026-11-07T20:39:59-08:00",
+ "window_start": "2026-11-07T20:34:59-08:00", "window_end": "2026-11-07T20:44:59-08:00", "tolerance_min": 5,
+ "time_source": "config | exif | facet", "timezone": "America/Los_Angeles",
+ "tz_source": "session | config | site | system",
+ "site": {"lat": 32.6, "lon": -116.3, "elev_m": 1128.8, "name": "..."},
+ "site_source": "photo | session | config | none", "raw_companion": ".../DSC07610.ARW",
+ "solve_source": "jpg | raw", "config": ".../astro-id.json", "warnings": ["..."], "error": null}
+{"event": "done", "mode": "preview", "total": 18, "errors": 0, "elapsed_s": 0.4}
+```
+
+Events, solve:
+
+```json
+{"event": "start", "mode": "solve", "total": 18, "session": 1}
+{"event": "config_saved", "path": ".../astro-id.json"}
+{"event": "photo", "index": 3, "path": "...", "file": "...", "status": "solved | failed | stack-copy",
+ "objects": 15, "grade": "A", "stars": 2452, "rms_px": 0.4, "solve_source": "jpg", "stack_of": null,
+ "true_time": "...", "time_source": "config", "tolerance_min": 5, "best_fit_time": null, "best_fit_delta_min": null,
+ "time_flag": null, "quality": {}, "overlay": "...", "error": null, "result": {}}
+{"event": "done", "mode": "solve", "total": 18, "solved": 14, "stack_copies": 1, "failed": 3, "elapsed_s": 412.0,
+ "time": {"tolerance_min": 5, "best_fit_frames": 0, "max_abs_delta_min": null, "suggest_tolerance_min": null,
+          "outside_tolerance": 0},
+ "cull": {"reference": {"fwhm_px": 5.7, "detected": 7066, "frames": 18}, "rule": {},
+          "frames": {"<path>": {"decision": "review", "reasons": ["..."]}}}}
+```
+
+- `photo` events come as frames finish (a sequence's representative first); `index` = position in the input. `objects` = taggable objects at or above `--min-confidence`. `quality` = the frame's `quality` object; `result` (the full frame result) only with `--results`.
+- `time.suggest_tolerance_min` = ceil(max |best_fit_delta_min| + 2) when that is tighter than the tolerance used; `null` otherwise (no Moon-pinned frame).
+- `astro-id cull` prints one JSON document `{"reference", "rule", "frames": {path: <cull_rank result>}}` from `{path: quality}` or `{"metrics": {...}, "solved": {...}}`; nothing is solved.
+
+### Tolerance and solving cost
+
+The tolerance never changes what ASTAP or the refit does (the plate solve is blind and time-free); identification samples the window at 5 points whatever its width, so cost is flat. A tighter window only sharpens time-dependent scoring: worst-case altitude over the window (horizon margin), planet/Moon position spread, and the `best_fit_outside_tolerance` flag. `--time-tolerance` / `--tolerance-min` is honoured end to end (frame `time_tolerance_min`, legend `±5 min`, CSV `tolerance_min`, session events).

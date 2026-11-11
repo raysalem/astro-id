@@ -12,13 +12,14 @@ Plate-solves astro photos Facet scans (or you backfill) and writes the identifie
 "plugins": {
   "enabled": true,
   "astro_id": {
-    "engine": "C:/Users/raysa/astro-id",
-    "uv": "C:/Users/raysa/.local/bin/uv.exe",
+    "engine": "C:/path/to/astro-id",
+    "uv": "C:/path/to/uv.exe",
     "min_confidence": 65,
-    "roots": ["//192.168.1.90/Photos and Videos/2026/tds-november/astro"],
+    "roots": ["//nas/Photos/2026/dark-site/astro"],
     "overlay_dir": null,
     "timeout_s": 600,
-    "enabled": true
+    "enabled": true,
+    "trigger": "manual"
   }
 }
 ```
@@ -30,8 +31,10 @@ All keys and defaults (`null` = not passed; the engine then uses the folder's `a
 | Key | Default | Meaning |
 |---|---|---|
 | `engine` | none (required) | astro-id repo folder |
-| `uv` | `C:/Users/raysa/.local/bin/uv.exe` | uv executable |
+| `uv` | `~/.local/bin/uv(.exe)` | uv executable |
 | `enabled` | `true` | plugin on/off |
+| `trigger` | `"manual"` | `"manual"`: a scan never solves (backfill CLI or the engine's `astro-id session`); `"scan"`: solve during/after scans (`on_score_complete` + the exit-hook catch-up below) |
+| `cull` | `null` [built-in rule] | culling rule for the astro session page: `{"enabled", "order": [focus, trailing, stars, solve], "thresholds": {...}}`, see `CONTRACT.md` "Culling". Validated here; the plugin itself never writes Facet's cull or reject flags |
 | `min_confidence` | `65` | tag cut |
 | `roots` | `[]` | folders whose photos are always astro |
 | `overlay_dir` | `null` [`<folder>-annotated`] | overlays + CSV |
@@ -61,6 +64,8 @@ A photo is treated as astro when its category is `astro`, its tags include one o
 
 ## How it runs
 
+With `trigger: "manual"` (the default) nothing below runs during a scan: `on_score_complete` and the exit hook return at once, and photos are solved by the backfill CLI or the engine's `astro-id session` (`CONTRACT.md`). With `trigger: "scan"`:
+
 `on_score_complete` returns at once for non-astro photos and otherwise queues the path. One background thread runs one engine job at a time (de-duplicated, never blocks the scan). Any failure is logged to `facet.plugins.astro_id` and never raised into Facet. DB path: `plugins.astro_id.db_path`, else `--db` on the scan command line, else `$DB_PATH`, else `photo_scores_pro.db`.
 
 **Multi-pass scans (the 8gb profile) never emit `on_score_complete`** (`save_photos_partial` has no event). So when the module loads inside a `facet.py` process (`sys.argv[0]` is `facet.py`; the viewer never registers it) it registers an exit hook. At scan exit it checks for pending photos and, if any, spawns a detached catch-up: Facet's python running `plugins/astro_id.py --pending --since <scan start> --db <db>` with `DB_PATH`/`FACET_CONFIG` in its environment, `CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`, output appended to `%LOCALAPPDATA%\Facet\data\logs\astro-id.log`. The scan exits at once. A lock file next to the log (pid inside; a dead pid's lock is taken over) keeps catch-ups from overlapping; a running catch-up re-checks for new pending photos up to 3 rounds before it exits.
@@ -75,8 +80,8 @@ Run with Facet's python from the Facet checkout (so `db.manual_tags` imports), o
 
 ```powershell
 $env:FACET_CONFIG="$env:LOCALAPPDATA\Facet\config\scoring_config.json"; $env:DB_PATH="$env:LOCALAPPDATA\Facet\data\photo_scores_pro.db"
-cd C:\Users\raysa\facet-wintest
-& "$env:LOCALAPPDATA\Facet\venv\Scripts\python.exe" plugins\astro_id.py "\192.168.1.90\Photos and Videos\2026\tds-november\astro" --min-confidence 65 --dry-run
+cd <facet checkout>
+& "$env:LOCALAPPDATA\Facet\venv\Scripts\python.exe" plugins\astro_id.py "\\nas\Photos\2026\dark-site\astro" --min-confidence 65 --dry-run
 ```
 
 Drop `--dry-run` to write. `--db`, `--config` override the env. `--pending [--since "YYYY-MM-DD HH:MM:SS"]` (UTC) processes the pending set instead of a target folder, under the catch-up lock (what the exit hook runs). Note: a folder run solves every frame in that folder, and only photos that are in Facet's DB receive tags.
@@ -102,7 +107,7 @@ Per photo the plugin reads `gps_latitude/gps_longitude` and `date_taken` + `date
 
 ## Annotations (Facet viewer overlay)
 
-After the tags, the plugin stores the engine's `annotations` payload (spec: `ANNOTATIONS.md`) in Facet's `photo_annotations` side table (source `astro-id`), in the same transaction as the tag swap. It uses Facet's helper `db.annotations.upsert_annotation(conn, photo_path, source, payload)` (payload is the dict) and never creates the table. If the helper module or the table does not exist yet, it logs once and skips; tags are unaffected. A re-run replaces the row; `plate-solve failed` deletes it; a frame from an older engine without a payload leaves an existing row alone.
+After the tags, the plugin stores the engine's `annotations` payload (spec: `ANNOTATIONS.md`) in Facet's `photo_annotations` side table (source `astro-id`), in the same transaction as the tag swap. It uses Facet's helper `db.annotations.upsert_annotation(conn, photo_path, source, payload)` (payload is the dict) and never creates the table. If the helper module or the table does not exist yet, it logs once and skips; tags are unaffected. A re-run replaces the row; `plate-solve failed` deletes it; a frame from an older engine without a payload leaves an existing row alone. The engine's per-frame `quality` metrics (star count, focus, trailing, sky; `CONTRACT.md`) are added to the payload as a top-level `quality` object, which the viewer ignores and a culling page reads.
 
 ## RAW XMP keywords (`tag_targets` including `raw_xmp`)
 
@@ -120,4 +125,4 @@ Each run replaces that photo's `astro-id` rows in one transaction, so re-running
 
 ## Tests
 
-`C:\Users\raysa\AppData\Local\Facet\venv\Scripts\python.exe -m pytest tests/test_facet_plugin.py tests/test_plugin_features.py` from the repo root (skips when Facet is not importable; set `FACET_DIR` to another checkout).
+`%LOCALAPPDATA%\Facet\venv\Scripts\python.exe -m pytest tests/test_facet_plugin.py tests/test_plugin_features.py` from the repo root (skips when Facet is not importable; set `FACET_DIR` to another checkout).

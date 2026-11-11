@@ -16,7 +16,7 @@ ap = TF.ap
 db, engine = TF.db, TF.engine  # fixtures
 P1, P2, P3 = TF.P1, TF.P2, TF.P3
 
-TABLE = ("CREATE TABLE photo_annotations (photo_path TEXT, source TEXT, payload TEXT, created_at TEXT, "
+TABLE = ("CREATE TABLE IF NOT EXISTS photo_annotations (photo_path TEXT, source TEXT, payload TEXT, created_at TEXT, "
          "PRIMARY KEY (photo_path, source))")
 
 
@@ -84,6 +84,10 @@ def test_annotation_skipped_gracefully_without_helper(db, engine, monkeypatch):
 
 
 def test_annotation_skipped_gracefully_without_table(db, engine, helper):
+    c = sqlite3.connect(db)                                    # Facet's schema now creates it: drop it
+    c.execute("DROP TABLE IF EXISTS photo_annotations")
+    c.commit()
+    c.close()
     TF.run(db, [P1])                                           # helper present, table absent: never created
     assert "cygnus" in TF.astro_tags(db, P1)
     c = sqlite3.connect(db)
@@ -216,3 +220,50 @@ def test_tag_targets_raw_xmp_runs_sidecar_and_facet_only_skips_tags(db, engine, 
     calls.clear()
     ap.process_paths([P2], dict(cfg, tag_targets=["raw_xmp"]), db, 65)
     assert calls and TF.astro_tags(db, P2) == []                   # no manual tags written
+
+
+# ---------------------------------------------------------- trigger / cull / quality (2026-11-11) ---
+
+def test_trigger_manual_is_default_and_skips_scan_hooks(db, monkeypatch):
+    assert ap.DEFAULTS["trigger"] == "manual"
+    seen = []
+    monkeypatch.setattr(ap._worker, "submit", lambda p: seen.append(p))
+    ap.configure({"engine": "X"}, db)
+    ap.on_score_complete({"path": P1, "category": "astro", "tags": ""})
+    assert seen == []
+    spawned = []
+    monkeypatch.setattr(ap, "spawn_catch_up", lambda *a, **k: spawned.append(a))
+    monkeypatch.setattr(ap, "select_pending", lambda *a, **k: [P1])
+    ap._on_exit()
+    assert spawned == []
+    ap.configure({"engine": "X", "trigger": "scan"}, db)
+    ap.on_score_complete({"path": P1, "category": "astro", "tags": ""})
+    assert seen == [P1]
+
+
+@pytest.mark.parametrize("bad", [{"trigger": "auto"}, {"cull": []}, {"cull": {"order": ["focus", "x"]}},
+                                 {"cull": {"thresholds": {"focus_ratio": -1}}}, {"cull": {"thresholds": {"x": 1}}},
+                                 {"cull": {"enabled": "yes"}}, {"cull": {"extra": 1}}])
+def test_trigger_and_cull_validation(bad):
+    e, _ = ap.validate_config({**ap.DEFAULTS, **bad})
+    assert e
+
+
+def test_cull_rule_valid():
+    rule = {"enabled": True, "order": ["focus", "trailing", "stars", "solve"],
+            "thresholds": {"focus_ratio": 1.4, "trailing_reject": None, "stars_min": 10}}
+    assert ap.validate_config({**ap.DEFAULTS, "cull": rule}) == ([], [])
+
+
+def test_quality_stored_in_annotation_payload(db, engine, helper):
+    c = sqlite3.connect(db)
+    c.execute(TABLE)
+    c.commit()
+    c.close()
+    TF.run(db, [P1])
+    payload = _rows(db)[(P1, "astro-id")]
+    assert payload["quality"]["fwhm_px"] == 4.8 and payload["quality"]["grade"] == "A"
+    assert payload["items"][0]["id"] == "deneb"          # the rest of the payload is untouched
+    r = TF.stub()["results"][0]
+    r.pop("quality")
+    assert "quality" not in ap.annotation_for(r)          # older engines: no quality, payload as is

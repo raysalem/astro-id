@@ -1,7 +1,7 @@
 r"""Tests for facet_plugin/astro_id.py against a real Facet schema.
 
 Run with Facet's venv python (needs the Facet checkout importable):
-  C:\Users\raysa\AppData\Local\Facet\venv\Scripts\python.exe -m pytest tests/test_facet_plugin.py
+  %LOCALAPPDATA%\Facet\venv\Scripts\python.exe -m pytest tests/test_facet_plugin.py
 Skips cleanly when Facet is not importable (e.g. the engine's `uv run pytest`).
 """
 import importlib.util
@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 HERE = Path(__file__).resolve().parent
-FACET = Path(os.environ.get("FACET_DIR", r"C:\Users\raysa\facet-wintest"))
+FACET = Path(os.environ.get("FACET_DIR", str(Path.home() / "facet-wintest")))
 STUB = HERE / "fixtures" / "contract_stub.json"
 PLUGIN = HERE.parent / "facet_plugin" / "astro_id.py"
 
@@ -48,7 +48,7 @@ def db(tmp_path):
         conn.execute("INSERT INTO photos(path, filename) VALUES (?, ?)", (p, os.path.basename(p)))
     conn.commit()
     conn.close()
-    ap.configure({"engine": "X", "settle_s": 0, "batch_min": 99}, path)
+    ap.configure({"engine": "X", "trigger": "scan", "settle_s": 0, "batch_min": 99}, path)
     yield path
     ap.configure(None, None)
 
@@ -129,7 +129,7 @@ def test_non_astro_ignored(db, monkeypatch):
     ap.on_score_complete({"path": P1, "category": "astro", "tags": ""})
     ap.on_score_complete({"path": P2, "category": "x", "tags": "Milky Way, tree"})
     assert seen == [P1, P2]
-    ap.configure({"engine": "X", "roots": ["C:/photos/night"]}, db)
+    ap.configure({"engine": "X", "trigger": "scan", "roots": ["C:/photos/night"]}, db)
     ap.on_score_complete({"path": P3, "category": "x", "tags": ""})
     assert seen[-1] == P3
     ap.on_score_complete({"path": "D:/other/a.jpg", "category": "x", "tags": ""})
@@ -139,7 +139,7 @@ def test_non_astro_ignored(db, monkeypatch):
 def test_disabled_or_no_engine_skips(db, monkeypatch):
     seen = []
     monkeypatch.setattr(ap._worker, "submit", lambda p: seen.append(p))
-    ap.configure({"engine": "X", "enabled": False}, db)
+    ap.configure({"engine": "X", "trigger": "scan", "enabled": False}, db)
     ap.on_score_complete({"path": P1, "category": "astro"})
     ap.configure({"engine": None}, db)
     ap.on_score_complete({"path": P1, "category": "astro"})
@@ -203,7 +203,7 @@ def test_missing_photo_skipped(db, engine):
 
 
 def test_folder_batch_single_engine_call(db, engine):
-    ap.configure({"engine": "X", "batch_min": 2}, db)
+    ap.configure({"engine": "X", "trigger": "scan", "batch_min": 2}, db)
     run(db, [P1, P2])
     assert engine == [("C:/photos/night", 65)]
     assert "jupiter" in astro_tags(db, P2)
@@ -266,7 +266,7 @@ def test_zero_zero_gps_ignored(db, engine):
 
 def test_timezone_and_tolerance_from_plugin_config(db, engine):
     set_photo(db, P1, taken="2026:11:07 20:34:00", manual=1)
-    ap.configure({"engine": "X", "batch_min": 99, "timezone": "America/Los_Angeles",
+    ap.configure({"engine": "X", "trigger": "scan", "batch_min": 99, "timezone": "America/Los_Angeles",
                   "time_tolerance_min": 10}, db)
     run(db, [P1])
     f = flags(engine)
@@ -275,7 +275,7 @@ def test_timezone_and_tolerance_from_plugin_config(db, engine):
 
 
 def test_batching_only_groups_same_site_without_own_time(db, engine):
-    ap.configure({"engine": "X", "batch_min": 2}, db)
+    ap.configure({"engine": "X", "trigger": "scan", "batch_min": 2}, db)
     set_photo(db, P1, lat=1.0, lon=2.0)
     set_photo(db, P2, lat=1.0, lon=2.0)
     set_photo(db, P3, lat=5.0, lon=6.0)
@@ -286,7 +286,7 @@ def test_batching_only_groups_same_site_without_own_time(db, engine):
 
 
 def test_photo_with_manual_time_never_in_folder_run(db, engine):
-    ap.configure({"engine": "X", "batch_min": 2}, db)
+    ap.configure({"engine": "X", "trigger": "scan", "batch_min": 2}, db)
     set_photo(db, P2, taken="2026:11:08 05:11:00", manual=1)
     run(db, [P1, P2, P3])
     targets = [t for t, _ in engine]
@@ -343,7 +343,7 @@ def test_kind_style_tags_with_slash_are_valid(db, monkeypatch):
 
 
 def test_policy_and_stack_flags_passed_to_engine(db, engine):
-    ap.configure({"engine": "X", "batch_min": 99, "tag_levels": [1, 2, 3, 4, 5], "star_mag_limit": 1.5,
+    ap.configure({"engine": "X", "trigger": "scan", "batch_min": 99, "tag_levels": [1, 2, 3, 4, 5], "star_mag_limit": 1.5,
                   "max_catalog_mag": 5.0, "tag_style": "kind", "stack_mode": "all", "stack_gap_s": 60}, db)
     run(db, [P1])
     f = flags(engine)
@@ -415,7 +415,7 @@ def test_pid_alive_real_process():
 def test_pending_cli_tags_and_releases_lock(db, engine, tmp_path):
     _setup_pending(db)
     log = tmp_path / "logs" / "astro-id.log"
-    ap.configure({"engine": "X", "batch_min": 99, "roots": [ROOT], "log_path": str(log)}, db)
+    ap.configure({"engine": "X", "trigger": "scan", "batch_min": 99, "roots": [ROOT], "log_path": str(log)}, db)
     assert ap.main(["--pending", "--db", db]) == 0
     assert "plate-solve failed" in astro_tags(db, P3)          # stub frame 3 is unsolved
     assert "jupiter" in astro_tags(db, P2)                     # rescanned photo re-tagged
@@ -428,7 +428,7 @@ def test_pending_cli_tags_and_releases_lock(db, engine, tmp_path):
 def test_pending_skips_when_lock_held(db, engine, tmp_path, monkeypatch):
     _setup_pending(db)
     log = tmp_path / "logs" / "astro-id.log"
-    ap.configure({"engine": "X", "roots": [ROOT], "log_path": str(log)}, db)
+    ap.configure({"engine": "X", "trigger": "scan", "roots": [ROOT], "log_path": str(log)}, db)
     (tmp_path / "logs").mkdir()
     (tmp_path / "logs" / "astro-id-catchup.lock").write_text("424242 t", encoding="utf-8")
     monkeypatch.setattr(ap, "_pid_alive", lambda pid: True)
@@ -447,7 +447,7 @@ class _FakePopen:
 def test_exit_hook_spawns_detached_catch_up(db, tmp_path, monkeypatch):
     _setup_pending(db)
     log = tmp_path / "logs" / "astro-id.log"
-    ap.configure({"engine": "X", "roots": [ROOT], "log_path": str(log)}, db)
+    ap.configure({"engine": "X", "trigger": "scan", "roots": [ROOT], "log_path": str(log)}, db)
     _FakePopen.calls = []
     monkeypatch.setattr(ap.subprocess, "Popen", _FakePopen)
     ap._on_exit()
@@ -469,12 +469,12 @@ def test_exit_hook_no_pending_or_lock_or_disabled_spawns_nothing(db, tmp_path, m
     for p in (P1, P2, P3, RAW9):
         insert_manual_tag(c, p, "plate-solved", "user", "astro-id")
     c.commit(); c.close()
-    ap.configure({"engine": "X", "roots": [ROOT], "log_path": str(log)}, db)
+    ap.configure({"engine": "X", "trigger": "scan", "roots": [ROOT], "log_path": str(log)}, db)
     ap._on_exit()                                               # everything tagged
     _setup_pending(db)
-    ap.configure({"engine": "X", "roots": [ROOT], "log_path": str(log), "catch_up": False}, db)
+    ap.configure({"engine": "X", "trigger": "scan", "roots": [ROOT], "log_path": str(log), "catch_up": False}, db)
     ap._on_exit()                                               # disabled
-    ap.configure({"engine": "X", "roots": [ROOT], "log_path": str(log)}, db)
+    ap.configure({"engine": "X", "trigger": "scan", "roots": [ROOT], "log_path": str(log)}, db)
     (tmp_path / "logs").mkdir(exist_ok=True)
     (tmp_path / "logs" / "astro-id-catchup.lock").write_text("424242 t", encoding="utf-8")
     monkeypatch.setattr(ap, "_pid_alive", lambda pid: True)

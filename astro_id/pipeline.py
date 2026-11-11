@@ -46,14 +46,28 @@ def empty_frame(path: Path) -> dict:
         "center_ra_deg": None, "center_dec_deg": None, "fov_deg": None, "true_time": None,
         "time_tolerance_min": None, "time_source": "exif", "best_fit_time": None, "time_flag": None,
         "overlay": None, "error": None, "stack_of": None, "objects": [], "annotations": None, "solve_source": None,
+        "best_fit_delta_min": None, "quality": None,
     }
+
+
+def _quality(path: Path, fr: dict, scale_deg: float | None, matched: int | None, enabled: bool) -> None:
+    """Fill ``fr["quality"]`` (never raises: metrics are an extra, the frame keeps its tags without them)."""
+    if not enabled:
+        return
+    try:
+        from .quality import frame_quality
+
+        fr["quality"] = frame_quality(path, scale_deg * 3600 if scale_deg else None, matched)
+    except Exception as exc:
+        log.warning("%s: quality metrics failed (%s)", path.name, exc)
+        log.debug(traceback.format_exc())
 
 
 def process(path: Path, offset_flag, tol_flag, site_flag, overlay_dir: Path | None, make_overlay: bool,
             use_fallback: bool, time_flag: str | None = None,
             tz_flag: str | None = None, policy_flags: dict | None = None, min_confidence: int = 65,
             ctx: dict | None = None, overlay_scores: bool = False,
-            solve_source: str | None = None) -> tuple[dict, list[dict]]:
+            solve_source: str | None = None, quality: bool = True) -> tuple[dict, list[dict]]:
     """Solve and identify one frame. ``ctx`` (if given) receives the solution and identification,
     so a stacking sequence can reuse them."""
     fr = empty_frame(path)
@@ -69,6 +83,15 @@ def process(path: Path, offset_flag, tol_flag, site_flag, overlay_dir: Path | No
         for a in sol.attempts:
             log.debug("  %s", a)
         fr["stars"] = int(sol.matched if sol.solved else (len(sol.det) if sol.det is not None else 0))
+        if sol.solved:
+            from .stack import _center_scale_deg
+
+            scale = _center_scale_deg(sol)
+        else:
+            from .solve import pixel_scale_deg
+
+            scale = pixel_scale_deg(exif, exif.width, exif.height)
+        _quality(path, fr, scale, int(sol.matched) if sol.solved else None, quality)
         if not sol.solved:
             fr["error"] = sol.error or "no plate solution"
             log.info("%s: not solved (%s)", path.name, fr["error"])
@@ -87,6 +110,8 @@ def process(path: Path, offset_flag, tol_flag, site_flag, overlay_dir: Path | No
             ctx.update(sol=sol, ident=ident)
         fr["objects"] = [o.as_dict() for o in ident.objects]
         fr["best_fit_time"] = iso(ident.best_fit_time.astimezone(t_true.tzinfo)) if ident.best_fit_time else None
+        if ident.best_fit_time and fr["true_time"]:
+            fr["best_fit_delta_min"] = round((ident.best_fit_time - t_true).total_seconds() / 60, 1)
         fr["time_flag"] = ident.time_flag
         fr["annotations"] = _annotations(ident.objects, sol, sol.width, sol.height, legend_text(
             t_true if fr["true_time"] else None, fr["time_tolerance_min"], sol.solver, sol.grade, fr["stars"]))
@@ -154,7 +179,8 @@ def _frame_time(path: Path, fr: dict, offset_flag, tol_flag, site_flag, time_fla
 
 def process_copy(path: Path, rep_fr: dict, rep_sol, rep_ident: Identification, m, offset_flag, tol_flag, site_flag,
                  overlay_dir: Path | None, make_overlay: bool, tz_flag: str | None = None,
-                 policy_flags: dict | None = None, overlay_scores: bool = False) -> tuple[dict, list[dict]]:
+                 policy_flags: dict | None = None, overlay_scores: bool = False,
+                 quality: bool = True) -> tuple[dict, list[dict]]:
     """A stacking-sequence frame whose pointing matches the representative: reuse its objects."""
     from .stack import map_objects
 
@@ -169,6 +195,9 @@ def process_copy(path: Path, rep_fr: dict, rep_sol, rep_ident: Identification, m
                   stars=int(m.pairs), center_ra_deg=round(float(c.ra.deg), 3), center_dec_deg=round(float(c.dec.deg), 3),
                   fov_deg=rep_fr["fov_deg"], solve_source=rep_fr.get("solve_source"), best_fit_time=None, time_flag=None, stack_of=rep_fr["file"],
                   objects=[o.as_dict() for o in objs])
+        from .stack import _center_scale_deg
+
+        _quality(path, fr, _center_scale_deg(rep_sol), int(m.pairs), quality)
         log.info("%s: stack-copy of %s (shift %.2f deg, %d pairs)", path.name, Path(rep_fr["file"]).name,
                  m.offset_deg, m.pairs)
         fr["annotations"] = _annotations(objs, rep_sol, rep_sol.width, rep_sol.height, legend_text(

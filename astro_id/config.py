@@ -164,8 +164,9 @@ def resolve(folder: Path, offset_flag: str | None, tol_flag: str | None, site_fl
     if site_flag and len([p for p in site_flag.split(",") if p.strip()]) == 2:
         site = site_with_elevation(site)
     # timezone: astro-id.json, else inferred from the site, else None (= system local zone)
-    tz_name = cfg.get("timezone") or (infer_timezone(site.lat, site.lon) if site else None)
-    t_over = parse_time_flag(time_flag, tz_flag or tz_name) if time_flag else None
+    # --timezone (v1.1) applies to EXIF + offset too, not only to a naive --time
+    tz_name = tz_flag or cfg.get("timezone") or (infer_timezone(site.lat, site.lon) if site else None)
+    t_over = parse_time_flag(time_flag, tz_name) if time_flag else None
     return FrameConfig(
         offset=parse_offset(offset_txt) if have_offset else timedelta(0),
         tolerance_min=tol,

@@ -44,3 +44,6 @@ Side table `photo_annotations` (sticky, never rewritten by a rescan):
 - Filters the viewer applies live: item shown when its group toggle is on, `score >= score slider`, and for each metric with `direction: "max"`, `values[key] <= slider` (items without that value are not filtered by it). `member_of` items are hidden when the item they belong to is shown (optional toggle "show members").
 - Labels are the plain `label`. The score appears only in a hover/focus tooltip, or on labels when the user turns on "Show scores" (default off).
 - Unknown fields are ignored; `version` other than 1 is not drawn.
+
+## Top-level `quality` (astro-id, 2026-11-11)
+The astro-id plugin adds the engine's per-frame metrics as a top-level `quality` object next to `items` (fields in `CONTRACT.md` v1.1: `detected`, `matched`, `measured`, `fwhm_px`, `elongation`, `roundness`, `background`, `noise`, `grade`...). The viewer ignores it (unknown fields are kept and ignored; Facet's `validate_payload` keeps it); a culling page reads it. It is data about the frame, not an overlay item, so it never affects drawing or filtering. Unsolved frames have no annotation row, so their metrics are only in the engine/session output.
