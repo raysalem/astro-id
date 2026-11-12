@@ -12,11 +12,21 @@ Two modes share one ``App`` (the five-step session) and one static page:
   needs ``X-Facet-Launch: <secret>`` (403 otherwise). The page is served at ``/ui/`` and its API at ``/ui/api/...``
   with relative URLs only, because Facet's proxy mounts it at ``/addons/<id>/``. No cookies are set or read.
 
-Flow (one page, five steps): photos (Facet's scope in add-on mode, else path prefix / album / tag) -> location
-(GPS source per photo; set a missing one through ``PUT /api/photo/gps``) -> time (camera time, corrected time,
-offset, tolerance, timezone, RAW/JPG; ``time_preview``) -> plate solve (background thread, JSON-lines events, then
-the sync layer writes tags + annotations) -> culling (quality, keep/review/reject with reasons, editable rule,
-re-cull without re-solving). Facet's own reject / cull flags are never written.
+Flow (one page, two sections):
+
+- **A. Setup for this folder or album**: photos (Facet's scope in add-on mode, else a folder or an album), location
+  (one site for the folder / album, R-LOC), time offset, JPG/RAW. ``api/save-config`` writes it to every folder's
+  ``astro-id.json`` and, for an album, to the album setup store (the ledger's meta table, key ``album_setup:<id>``
+  per Facet library).
+- **B. Run**: plate solve (background thread, JSON-lines events; it writes **nothing** to Facet) -> the results
+  review in the panel (``api/job`` ``done.review``) -> ``api/save`` writes tags + sky labels (annotations) for the
+  last solve's results -> culling (low priority; quality, keep/review/reject, re-cull without re-solving). The
+  sky-label view (groups, min confidence, max magnitude, scores) is a display setting the panel sends to Facet over
+  the bridge; ``api/annotations`` reads a photo's stored astro-id overlay so the panel can offer the controls.
+
+Terms: **tags** = searchable words on a photo in Facet; **sky labels** = names Facet draws over the photo (the
+annotation payload); **labeled copies** = separate JPG files with the labels burned in (was "overlay images").
+Facet's own reject / cull flags are never written.
 """
 from __future__ import annotations
 
@@ -38,11 +48,61 @@ from .. import config as cfgmod
 from ..cull import DEFAULT_RULE, merge_rule, validate_rule
 from .client import ALL_FRAMES, FacetClient, FacetError, addon_credentials, client_from_env, connect
 from .ledger import Ledger
-from .sync import (TAG_REVIEW, SyncContext, apply_results, facet_hints, gps_source, parse_path_map, to_local)
+from .sync import (ANNOTATION_SOURCE, TAG_REVIEW, SyncContext, apply_results, facet_hints, gps_source,
+                   parse_path_map, to_local)
 
 log = logging.getLogger("astro_id.facet")
 STATIC = Path(__file__).with_name("static")
 LAST_SITE = "last_site"
+ALBUM_SETUP = "album_setup:"          # ledger meta key prefix: one album's saved setup (JSON), per Facet library
+COPY_KEYS = ("on", "lines", "scores")
+
+
+def labeled_copies(d: dict) -> dict | None:
+    """The labeled-copies settings of a folder / album setup; an older ``astro-id.json`` has them as ``overlay``."""
+    v = d.get("labeled_copies")
+    if not isinstance(v, dict):
+        v = d.get("overlay")
+    return {k: bool(v.get(k)) for k in COPY_KEYS if k in v} if isinstance(v, dict) else None
+
+
+def sky_view(v) -> dict | None:
+    """A saved sky-label view (never ``visible``: labels always start hidden), keys and types checked."""
+    if not isinstance(v, dict):
+        return None
+    out: dict = {}
+    g = v.get("groups")
+    if isinstance(g, dict):
+        out["groups"] = {str(k)[:40]: x for k, x in list(g.items())[:20] if isinstance(x, bool)}
+    if "score" in v and (v["score"] is None or (isinstance(v["score"], (int, float))
+                                                and not isinstance(v["score"], bool))):
+        out["score"] = v["score"]
+    m = v.get("metrics")
+    if isinstance(m, dict):
+        out["metrics"] = {str(k)[:40]: x for k, x in list(m.items())[:10]
+                          if isinstance(x, (int, float)) and not isinstance(x, bool)}
+    for k in ("show_scores", "show_members"):
+        if isinstance(v.get(k), bool):
+            out[k] = v[k]
+    return out
+
+
+def review_rows(paths: list[str], results: dict) -> list[dict]:
+    """The panel's results review: per photo solved?, grade, and the objects found (name, confidence, group),
+    best first. Compact: no geometry."""
+    from ..annotations import LEVEL_GROUP
+
+    rows = []
+    for p in paths:
+        fr = results.get(p) or {}
+        objs = [{"name": o.get("name") or o.get("tag"), "confidence": o.get("confidence"),
+                 "group": LEVEL_GROUP.get(o.get("level")), "tag": o.get("taggable", True) is not False}
+                for o in fr.get("objects") or [] if isinstance(o, dict)]
+        objs.sort(key=lambda o: (-(o["confidence"] or 0), str(o["name"])))
+        status = "stack-copy" if fr.get("solver") == "stack-copy" else ("solved" if fr.get("solved") else "failed")
+        rows.append({"path": p, "status": status, "grade": fr.get("grade"), "error": fr.get("error"),
+                     "objects": objs})
+    return rows
 
 
 def _elevation(lat: float, lon: float):
@@ -109,6 +169,7 @@ class Job:
         self.reports: list[dict] = []
         self.results: dict = {}           # facet path -> frame result
         self.error: str | None = None
+        self.saved = False                 # "Save to Facet" ran for these results
         self.min_confidence = 65
         self.lock = threading.Lock()
 
@@ -119,7 +180,7 @@ class Job:
     def snapshot(self, after: int) -> dict:
         with self.lock:
             return {"running": self.running, "events": self.events[after:], "next": len(self.events),
-                    "done": self.done, "reports": self.reports, "error": self.error}
+                    "done": self.done, "reports": self.reports, "error": self.error, "saved": self.saved}
 
 
 class App:
@@ -145,7 +206,7 @@ class App:
         return {"file": str(c).replace("\\", "/") if c else None, "clock_offset": d.get("clock_offset"),
                 "time_tolerance_min": d.get("time_tolerance_min"), "timezone": d.get("timezone"),
                 "solve_source": d.get("solve_source"), "site": d.get("site"), "cull": d.get("cull"),
-                "overlay": d.get("overlay") if isinstance(d.get("overlay"), dict) else None}
+                "labeled_copies": labeled_copies(d), "sky_labels": sky_view(d.get("sky_labels"))}
 
     def photo_row(self, p: dict, fcfg: dict) -> dict:
         src = gps_source(p)
@@ -181,14 +242,18 @@ class App:
             self.photos[fp] = ph
             hints[self.local(fp)] = facet_hints(ph)
         tol = body.get("tolerance_min")
+        copies = labeled_copies(body)       # also reads an older caller's "overlay"
+        if copies is None:                  # older callers: no_overlay / overlay_lines / overlay_scores; default off
+            copies = {"on": body.get("no_overlay") is False, "lines": body.get("overlay_lines", True) is not False,
+                      "scores": bool(body.get("overlay_scores"))}
         opts = SessionOptions(offset=(body.get("offset") if body.get("offset") not in (None, "") else None),
                               tolerance_min=float(tol) if tol not in (None, "") else None,
                               source=body.get("source") or None, tz=body.get("tz") or None,
                               site=body.get("site") or None, min_confidence=int(body.get("min_confidence") or 65),
                               hints=hints, cull=body.get("cull") or None, overlay_dir=body.get("overlay_dir") or None,
-                              no_overlay=bool(body.get("no_overlay")), include_results=False,
-                              overlay_scores=bool(body.get("overlay_scores")),
-                              overlay_lines=body.get("overlay_lines", True) is not False)
+                              no_overlay=not copies.get("on"), include_results=False,
+                              overlay_scores=bool(copies.get("scores")),
+                              overlay_lines=copies.get("lines", True) is not False)
         opts.validate()
         return opts
 
@@ -215,7 +280,35 @@ class App:
         photos = self.client.list_photos(path_prefix=b.get("path_prefix") or None, category=b.get("category") or None,
                                          tag=b.get("tag") or None, album_id=b.get("album_id") or None,
                                          limit=int(b.get("limit") or MAX_SCOPE_PHOTOS))
-        return self.listing(photos, scope={"kind": "manual"})
+        extra = {}
+        if b.get("album_id") not in (None, ""):
+            extra["album_config"] = self.album_config(b["album_id"])
+        return self.listing(photos, scope={"kind": "manual"}, **extra)
+
+    # ------------------------------------------------------ album setup store ---
+    @staticmethod
+    def _album_key(album_id) -> str:
+        if isinstance(album_id, bool) or not str(album_id).isdigit():
+            raise ValueError("album_id must be a number")
+        return ALBUM_SETUP + str(int(album_id))
+
+    def album_config(self, album_id) -> dict | None:
+        """The setup saved for one album (ledger meta table, this Facet library), or None."""
+        raw = self.ledger.get_meta(self.ctx.library, self._album_key(album_id))
+        try:
+            d = json.loads(raw) if raw else None
+        except ValueError:
+            return None
+        return d if isinstance(d, dict) else None
+
+    def save_album_config(self, album_id, setup: dict) -> bool:
+        """Merge ``setup`` into the album's saved setup (None values leave a key as it is); True when it changed."""
+        cur = self.album_config(album_id) or {}
+        new = {**cur, **{k: v for k, v in setup.items() if v is not None}}
+        if new == cur:
+            return False
+        self.ledger.set_meta(self.ctx.library, self._album_key(album_id), json.dumps(new, sort_keys=True))
+        return True
 
     def scope(self, _q, b):
         """The step-1 photo set from the Facet scope the sidebar was opened with (bridge ``context.scope``):
@@ -376,15 +469,33 @@ class App:
         return {"preview": rows}
 
     def save_config(self, _q, b):
+        """"Save setup": every folder's ``astro-id.json`` and, with ``album_id``, the album's own setup."""
         from ..session import save_folder_config
+        from ..timeutil import format_offset, parse_offset
 
         paths = list(b.get("paths") or [])
         opts = self.session_opts(b, paths)
-        extra = {}
-        ov = b.get("overlay")
-        if isinstance(ov, dict):
-            extra["overlay"] = {k: bool(ov.get(k)) for k in ("on", "lines", "scores")}
-        return {"written": save_folder_config(sorted({str(Path(self.local(p)).parent) for p in paths}), opts, extra)}
+        extra: dict = {}
+        copies = labeled_copies(b)
+        if copies is not None:
+            extra["labeled_copies"] = {k: copies.get(k, k == "lines") for k in COPY_KEYS}
+            extra["overlay"] = None                  # the older key, replaced by labeled_copies
+        view = sky_view(b.get("sky_labels"))
+        if view is not None:
+            extra["sky_labels"] = view
+        out = {"written": save_folder_config(sorted({str(Path(self.local(p)).parent) for p in paths}), opts, extra),
+               "album": None}
+        if b.get("album_id") not in (None, ""):
+            tol = opts.tolerance_min
+            off = None
+            if opts.offset is not None:
+                off = format_offset(parse_offset(opts.offset)) if str(opts.offset).strip() else ""
+            setup = {"clock_offset": off,
+                     "time_tolerance_min": (int(tol) if float(tol).is_integer() else tol) if tol is not None else None,
+                     "timezone": opts.tz, "solve_source": opts.source if opts.source in ("jpg", "raw", "auto") else None,
+                     "labeled_copies": extra.get("labeled_copies"), "sky_labels": extra.get("sky_labels")}
+            out["album"] = {"album_id": int(b["album_id"]), "changed": self.save_album_config(b["album_id"], setup)}
+        return out
 
     def solve(self, _q, b):
         paths = list(b.get("paths") or [])
@@ -393,14 +504,14 @@ class App:
         if self.job.running:
             raise ValueError("a solve is already running")
         opts = self.session_opts(b, paths)
-        write = bool(b.get("write", True))
         self.job = job = Job()
         job.min_confidence = opts.min_confidence
         job.running = True
-        threading.Thread(target=self._run, args=(job, paths, opts, write), name="astro-solve", daemon=True).start()
-        return {"started": len(paths), "write": write}
+        threading.Thread(target=self._run, args=(job, paths, opts), name="astro-solve", daemon=True).start()
+        return {"started": len(paths), "write": False}
 
-    def _run(self, job: Job, paths: list[str], opts, write: bool) -> None:
+    def _run(self, job: Job, paths: list[str], opts) -> None:
+        """Solve only. Nothing goes to Facet here: the user reviews the results, then ``api/save`` writes them."""
         from ..session import run_session
 
         try:
@@ -411,9 +522,7 @@ class App:
             job.done["cull"]["frames"] = {back.get(k, k): v for k, v in job.done["cull"]["frames"].items()}
             job.done["quality"] = {fp: fr.get("quality") for fp, fr in job.results.items()}
             job.done["solved_by_path"] = {fp: bool(fr.get("solved")) for fp, fr in job.results.items()}
-            if write:
-                job.emit({"event": "writing", "photos": len(job.results)})
-                job.reports = apply_results(self._ctx_for(job), job.results, emit=job.emit)
+            job.done["review"] = review_rows(paths, job.results)
         except Exception as exc:   # surfaced to the page
             log.exception("solve job failed")
             job.error = f"{type(exc).__name__}: {exc}"
@@ -428,6 +537,49 @@ class App:
 
     def job_state(self, q, _b):
         return self.job.snapshot(int((q.get("after") or ["0"])[0]))
+
+    def save(self, _q, b):
+        """"Save to Facet": tags + sky labels for the last solve's results (all of them, or ``paths``). Safe to
+        repeat: the ledger makes a second save of the same results a no-op."""
+        if self.job.running:
+            raise ValueError("the solve is still running")
+        if not self.job.results:
+            raise ValueError("solve first")
+        want = b.get("paths")
+        results = self.job.results if want is None else {p: r for p, r in self.job.results.items() if p in set(want)}
+        if not results:
+            raise ValueError("none of those photos are in the last solve")
+        reports = apply_results(self._ctx_for(self.job), results)
+        with self.job.lock:
+            self.job.reports = reports
+            self.job.saved = True
+        ok = [r for r in reports if not r.get("error")]
+        return {"reports": reports, "photos": len(ok), "errors": len(reports) - len(ok),
+                "tags_added": sum(len(r.get("add") or []) for r in ok),
+                "tags_removed": sum(len(r.get("remove") or []) for r in ok),
+                "sky_labels": sum(1 for r in ok if r.get("annotation") in ("stored", "unchanged")),
+                "annotations": self.ctx.mode}
+
+    def annotations(self, q, _b):
+        """The astro-id sky labels stored on one photo (the photo open in Facet), for the sky-label controls:
+        the payload's vocabulary (groups, metrics, score), not its geometry."""
+        path = (q.get("path") or [""])[0]
+        if not path:
+            raise ValueError("path required")
+        if not self.client.features().get("annotations_read"):
+            return {"path": path, "payload": None, "note": "this Facet has no annotations route"}
+        try:
+            rows = self.client.annotations(path)
+        except FacetError as exc:
+            if exc.status == 404:
+                return {"path": path, "payload": None}
+            raise
+        mine = next((r.get("payload") for r in rows if r.get("source") in (ANNOTATION_SOURCE, self.addon_id)
+                     and isinstance(r.get("payload"), dict)), None)
+        if mine is None:
+            return {"path": path, "payload": None}
+        return {"path": path, "payload": {k: mine.get(k) for k in ("version", "groups", "metrics", "score")},
+                "items": len(mine.get("items") or [])}
 
     def recull(self, _q, b):
         from ..session import recull
@@ -450,13 +602,15 @@ class App:
         flagged = set(b.get("paths") or [])
         extra = {p: ([TAG_REVIEW] if p in flagged else []) for p in self.job.results}
         reports = apply_results(self._ctx_for(self.job), self.job.results, extra_tags=extra)
+        self.job.saved = True        # it re-asserts every tag and sky label of the results, i.e. a save
         return {"reports": reports}
 
     ROUTES = {("GET", "api/state"): "state", ("GET", "api/albums"): "albums", ("GET", "api/job"): "job_state",
               ("POST", "api/photos"): "list_photos", ("POST", "api/scope"): "scope", ("POST", "api/location"): "location",
               ("POST", "api/preview"): "preview", ("POST", "api/save-config"): "save_config",
               ("POST", "api/solve"): "solve", ("POST", "api/recull"): "recull",
-              ("POST", "api/review-tags"): "review_tags"}
+              ("POST", "api/review-tags"): "review_tags", ("POST", "api/save"): "save",
+              ("GET", "api/annotations"): "annotations"}
     BINARY = {("GET", "api/thumb"): "thumb"}
 
 

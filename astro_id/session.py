@@ -194,7 +194,8 @@ def time_preview(paths: list[str], opts: SessionOptions, emit: Callable[[dict], 
 # -------------------------------------------------------------- folder config ---
 
 def save_folder_config(folders: list[str], opts: SessionOptions, extra: dict | None = None) -> list[str]:
-    """Write the session's offset / tolerance / timezone into each folder's own astro-id.json.
+    """Write the session's offset / tolerance / timezone (+ ``extra`` keys; a None value removes that key) into
+    each folder's own astro-id.json.
 
     An existing file in the folder is merged (other keys kept). A folder that only inherits a parent's file gets
     a new one copied from it (so the parent's site keeps applying: the nearest file wins whole)."""
@@ -213,8 +214,11 @@ def save_folder_config(folders: list[str], opts: SessionOptions, extra: dict | N
             new["timezone"] = opts.tz
         if opts.source in ("jpg", "raw", "auto"):
             new["solve_source"] = opts.source
-        for k, v in (extra or {}).items():   # panel settings kept per folder (e.g. "overlay")
-            new[k] = v
+        for k, v in (extra or {}).items():   # panel settings kept per folder (labeled_copies, sky_labels)
+            if v is None:
+                new.pop(k, None)             # None removes a key (e.g. the older "overlay", now "labeled_copies")
+            else:
+                new[k] = v
         if new == cfgmod.load_config(target if target.is_file() else None) and target.is_file():
             continue
         tmp = target.with_name(target.name + ".tmp")

@@ -428,6 +428,53 @@ def test_location_saves_the_folder_site_for_solving(tmp_path):
             server.server_close()
 
 
+def test_album_setup_is_saved_per_album_and_prefills_the_album(tmp_path):
+    """Save setup with an album: every folder's astro-id.json plus the album's own setup (ledger meta); loading the
+    album returns it first. An older astro-id.json "overlay" reads as labeled copies and is replaced on save."""
+    folder = tmp_path / "night"
+    folder.mkdir()
+    (folder / "astro-id.json").write_text(json.dumps({"overlay": {"on": True, "lines": False, "scores": True}}),
+                                          encoding="utf-8")
+    root = str(folder).replace("\\", "/")
+    rows = [{"path": f"{root}/B1.JPG", "filename": "B1.JPG", "albums": [1]}]
+    with FakeFacet(rows, addon_token=TOKEN) as fake:
+        args = type("A", (), {"ledger": str(tmp_path / "l.sqlite"), "legacy_db": None, "no_annotations": False,
+                              "path_map": None})()
+        server, box, aenv = SV.build_addon(args, addon_env(fake))
+        try:
+            app = SV.finish_addon(args, box, aenv)
+            d = app.list_photos({}, {"album_id": 1})
+            assert d["album_config"] is None
+            assert d["folders"][root]["labeled_copies"] == {"on": True, "lines": False, "scores": True}
+            view = {"visible": True, "groups": {"star": True, "planet": False}, "score": 80, "metrics": {"mag": 4.5},
+                    "show_scores": True, "junk": 1}
+            body = {"paths": [f"{root}/B1.JPG"], "offset": "+1h", "tolerance_min": "5", "tz": "America/Los_Angeles",
+                    "source": "raw", "labeled_copies": {"on": False, "lines": True, "scores": False},
+                    "sky_labels": view, "album_id": 1}
+            r = app.save_config({}, body)
+            assert r["written"] == [f"{root}/astro-id.json"] and r["album"] == {"album_id": 1, "changed": True}
+            saved = json.loads((folder / "astro-id.json").read_text(encoding="utf-8"))
+            assert "overlay" not in saved and saved["labeled_copies"] == {"on": False, "lines": True, "scores": False}
+            want_view = {"groups": {"star": True, "planet": False}, "score": 80, "metrics": {"mag": 4.5},
+                         "show_scores": True}
+            assert saved["sky_labels"] == want_view and saved["clock_offset"] == "+1h00m"
+            a = app.list_photos({}, {"album_id": 1})["album_config"]
+            assert a == {"clock_offset": "+1h00m", "time_tolerance_min": 5, "timezone": "America/Los_Angeles",
+                         "solve_source": "raw", "labeled_copies": {"on": False, "lines": True, "scores": False},
+                         "sky_labels": want_view}
+            assert app.save_config({}, body)["album"]["changed"] is False          # same setup: unchanged
+            assert app.list_photos({}, {"path_prefix": root})["scope"] == {"kind": "manual"}
+            assert "album_config" not in app.list_photos({}, {"path_prefix": root})
+            # a second album keeps its own setup
+            app.save_album_config(2, {"clock_offset": "-2h"})
+            assert app.album_config(2) == {"clock_offset": "-2h"} and app.album_config(1)["clock_offset"] == "+1h00m"
+            with pytest.raises(ValueError):
+                app.album_config("x")
+            app.ledger.close()
+        finally:
+            server.server_close()
+
+
 def test_mcp_client_against_the_stub(fake):
     c = connect(fake.url, token=TOKEN)
     assert isinstance(c, McpFacetClient)
@@ -498,7 +545,9 @@ def test_addon_solve_writes_tags_with_the_token_and_never_cull_flags(fake, addon
         if not j["running"]:
             break
         time.sleep(0.02)
-    assert j["error"] is None and {r["path"] for r in j["reports"]} == {P1, P2}
+    assert j["error"] is None and not j["reports"] and not mcp_calls(fake, "add_tags")   # solving writes nothing
+    st, _, s = req("POST", "/ui/api/save", {})
+    assert st == 200 and {r["path"] for r in s["reports"]} == {P1, P2} and s["sky_labels"] == 0
     assert fake.photos[P1]["manual_tags"] == ["orion", "plate-solved"]
     assert not fake.annotations                                   # not on MCP until Facet PR-1: skipped
     assert fake.photos[P1]["tag_created_by"]["orion"] == "astro-id"
@@ -532,6 +581,28 @@ def test_bridge_js_under_node():
     assert r.returncode == 0, r.stdout + r.stderr
     m = re.search(r"# pass (\d+)", r.stdout)
     assert m and int(m.group(1)) >= 8, r.stdout
+
+
+def test_page_two_sections_terms_and_script_parses(tmp_path):
+    """Panel restructure (Ray's review 2026-11-12): A. Setup / B. Run, one term each, min confidence only as a
+    sky-label display setting, Save to Facet after the review, culling last and low priority."""
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    text = re.sub(r"<script>.*?</script>", "", html, flags=re.S)
+    for want in ("A. Setup for this folder or album", "B. Run", "Save setup", "Save to Facet", "Sky labels",
+                 "Labeled copies", "Show sky labels", "Min confidence", "Culling (low priority)", "<b>tags</b>"):
+        assert want in text, want
+    assert text.index("A. Setup") < text.index("Plate solve") < text.index("Save to Facet") < text.index("Culling")
+    for gone in ("Overlay", "overlay images", "write tags to Facet", 'id="minconf"', 'id="write"'):
+        assert gone not in text, gone
+    solve_step = text[text.index('id="s4"'):text.index('id="s5"')]
+    assert "confidence" not in solve_step.replace("confidence after each name", "")   # min confidence left the solve
+    assert "bridge.annotationView(" in html and '"api/save"' in html and "api/annotations?path=" in html
+    if NODE:
+        script = re.findall(r"<script>(.*?)</script>", html.replace("<!--ASTRO_BRIDGE-->", ""), flags=re.S)[-1]
+        f = tmp_path / "page.js"
+        f.write_text(script, encoding="utf-8")
+        r = subprocess.run([NODE, "--check", str(f)], capture_output=True, text=True, timeout=60)
+        assert r.returncode == 0, r.stderr
 
 
 def test_lifeline_watches_the_chain_through_uv_and_facet():

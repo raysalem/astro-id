@@ -161,3 +161,29 @@ test("openMap posts only the two fixed site keys, never a URL", () => {
   ]);
   assert.deepEqual(Object.keys(B.MAP_SITES).sort(), ["earth", "maps"]);
 });
+
+test("annotationView posts {type: annotation_view, view} with v and nonce (§6c)", () => {
+  const { win, parent } = fakeWindows();
+  const br = B.createBridge({ win, parent, nonce: NONCE });
+  const view = { visible: true, groups: { constellation: true, star: false }, score: 70, metrics: { mag: 4.5 },
+                 show_scores: true };
+  assert.equal(br.annotationView(view), true);
+  assert.deepEqual(parent.sent, [{ m: { type: "annotation_view", view, v: 1, nonce: NONCE }, origin: "*" }]);
+});
+
+test("annotation_view is sanitised: hidden by default, unknown keys and bad types dropped", () => {
+  assert.deepEqual(B.sanitizeView(undefined), { visible: false });
+  assert.deepEqual(B.sanitizeView({ visible: "yes", source: "other-addon", html: "<b>" }), { visible: false });
+  const v = B.sanitizeView({ visible: 1, groups: { planet: true, "bad key!": true, star: "no" }, score: "70",
+                             metrics: { mag: 6, evil: "x", "__proto__ x": 1 }, show_scores: "true", show_members: false });
+  assert.deepEqual(v, { visible: false, groups: { planet: true }, metrics: { mag: 6 }, show_members: false });
+  assert.deepEqual(B.sanitizeView({ score: null }), { visible: false, score: null });
+  assert.deepEqual(B.sanitizeView({ score: Infinity }), { visible: false });
+});
+
+test("annotationView is inert without a nonce (standalone page)", () => {
+  const { win, parent } = fakeWindows();
+  const br = B.createBridge({ win, parent, nonce: null });
+  assert.equal(br.annotationView({ visible: true }), false);
+  assert.equal(parent.sent.length, 0);
+});

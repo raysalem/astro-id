@@ -448,8 +448,20 @@ def test_serve_flow_load_gps_solve_recull_review_tag(ui, fake, monkeypatch):
             break
         threading.Event().wait(0.05)
     assert j["error"] is None and j["done"]["cull"]["frames"][P2]["decision"] == "reject"
-    assert any(e["event"] == "written" for e in j["events"]) and "orion" in fake.photos[P2]["manual_tags"]
-    assert "weak" not in fake.photos[P1]["manual_tags"]       # regression: the page's min confidence (85) is the tag cut
+    # Solving writes nothing to Facet: the user reviews first, then saves.
+    assert not any(e["event"] == "written" for e in j["events"]) and not j["saved"]
+    assert "orion" not in fake.photos[P2]["manual_tags"] and not fake.annotations
+    rv = {r["path"]: r for r in j["done"]["review"]}
+    assert rv[P1]["status"] == "solved" and [o["name"] for o in rv[P1]["objects"]] == ["orion", "weak"]
+    assert rv[P1]["objects"][0]["confidence"] == 90 and rv[P1]["objects"][0]["group"] == "constellation"
+    s1 = _req(url + "api/save", {})
+    assert s1["photos"] == 2 and s1["errors"] == 0 and s1["sky_labels"] == 2 and s1["annotations"] == "api"
+    assert "orion" in fake.photos[P2]["manual_tags"] and len(fake.annotations) == 2
+    assert "weak" not in fake.photos[P1]["manual_tags"]       # regression: the session's min confidence (85) is the tag cut
+    assert _req(url + "api/job?after=0")["saved"] is True
+    n = len(fake.writes())
+    s2 = _req(url + "api/save", {})                           # saving again: no new writes (ledger)
+    assert len(fake.writes()) == n and s2["tags_added"] == 0 and s2["tags_removed"] == 0
     rc = _req(url + "api/recull", {"rule": {"enabled": True, "order": ["focus"], "thresholds": {}}})
     assert rc["frames"][P2]["decision"] == "review"          # defocus alone never rejects
     with pytest.raises(urllib.error.HTTPError):
@@ -459,6 +471,79 @@ def test_serve_flow_load_gps_solve_recull_review_tag(ui, fake, monkeypatch):
     _req(url + "api/review-tags", {"paths": []})
     assert "astro-review" not in fake.photos[P2]["manual_tags"] and "orion" in fake.photos[P2]["manual_tags"]
     assert not any(c[1] in ("/api/photos/batch_reject", "/api/photos/batch_review") for c in fake.calls)
+
+
+def _run_job(url, monkeypatch, res_for):
+    from astro_id import session
+
+    seen = {}
+
+    def fake_run(paths, opts, emit):
+        seen["opts"] = opts
+        done = {"event": "done", "solved": len(paths), "elapsed_s": 0.1, "time": {},
+                "cull": {"reference": {}, "rule": {}, "frames": {p: {"decision": "keep", "reasons": []} for p in paths}}}
+        emit(done)
+        return {**done, "results": {p: res_for(p) for p in paths}}
+    monkeypatch.setattr(session, "run_session", fake_run)
+    return seen
+
+
+def _wait(url):
+    for _ in range(100):
+        j = _req(url + "api/job?after=0")
+        if not j["running"]:
+            return j
+        threading.Event().wait(0.05)
+    raise AssertionError("solve did not finish")
+
+
+def test_solve_does_not_write_and_save_writes_once(ui, fake, monkeypatch):
+    url, app = ui
+    _req(url + "api/photos", {"path_prefix": ROOT, "category": "astro"})
+    with pytest.raises(urllib.error.HTTPError) as ei:
+        _req(url + "api/save", {})                                # nothing solved yet
+    assert ei.value.code == 400
+    seen = _run_job(url, monkeypatch, lambda p: frame(objs=[obj("orion")]))
+    _req(url + "api/solve", {"paths": [P1, P2], "write": True})   # "write" is ignored now
+    j = _wait(url)
+    assert seen["opts"].no_overlay is True                        # labeled copies are off by default
+    assert fake.writes() == [] and not j["reports"]
+    r = _req(url + "api/save", {"paths": [P1]})                   # a subset
+    assert r["photos"] == 1 and fake.photos[P1]["manual_tags"] == ["orion", "plate-solved"]
+    assert "orion" not in fake.photos[P2]["manual_tags"]
+    _req(url + "api/save", {})
+    n = len(fake.writes())
+    assert _req(url + "api/save", {})["tags_added"] == 0 and len(fake.writes()) == n
+    with pytest.raises(urllib.error.HTTPError):
+        _req(url + "api/save", {"paths": ["//nas/other.jpg"]})
+
+
+def test_labeled_copies_option_and_old_overlay_key(ui, fake, monkeypatch):
+    url, app = ui
+    _req(url + "api/photos", {"path_prefix": ROOT})
+    seen = _run_job(url, monkeypatch, lambda p: frame())
+    _req(url + "api/solve", {"paths": [P1], "labeled_copies": {"on": True, "lines": False, "scores": True}})
+    _wait(url)
+    o = seen["opts"]
+    assert (o.no_overlay, o.overlay_lines, o.overlay_scores) == (False, False, True)
+    _req(url + "api/solve", {"paths": [P1], "overlay": {"on": True, "lines": True, "scores": False}})   # older caller
+    _wait(url)
+    assert (seen["opts"].no_overlay, seen["opts"].overlay_lines) == (False, True)
+
+
+def test_annotations_route_returns_the_payload_vocabulary(ui, fake):
+    url, app = ui
+    assert _req(url + "api/annotations?path=" + urllib.request.quote(P1))["payload"] is None
+    from astro_id.annotations import GROUPS, METRICS, SCORE
+    fake.annotations[(P1, "astro-id")] = {"version": 1, "groups": GROUPS, "metrics": METRICS, "score": SCORE,
+                                          "items": [{"id": "a"}, {"id": "b"}], "image": {"width": 1, "height": 1}}
+    fake.annotations[(P1, "other")] = {"version": 1, "items": []}
+    d = _req(url + "api/annotations?path=" + urllib.request.quote(P1))
+    assert d["items"] == 2 and [g["id"] for g in d["payload"]["groups"]] == [g["id"] for g in GROUPS]
+    assert d["payload"]["metrics"][0]["key"] == "mag" and d["payload"]["score"]["default"] == 65
+    assert "items" not in d["payload"]                          # vocabulary only, no geometry
+    with pytest.raises(urllib.error.HTTPError):
+        _req(url + "api/annotations")
 
 
 def test_adopt_takes_over_old_plugin_rows_read_only(fake, ledger, tmp_path):

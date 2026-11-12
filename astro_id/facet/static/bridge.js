@@ -85,6 +85,31 @@
     return "selection:" + req.paths.join("\n");
   }
 
+  /* annotation_view (PLUGIN_BOUNDARY.md §6c): how Facet draws this add-on's sky labels. Only the contract's keys,
+   * with the right types, go out; `visible` defaults to false (labels start hidden). */
+  const KEY_RE = /^[A-Za-z0-9_.-]{1,40}$/;
+  function num(x) { return typeof x === "number" && isFinite(x); }
+  function sanitizeView(v) {
+    v = v && typeof v === "object" ? v : {};
+    const out = {visible: v.visible === true};
+    if (v.groups && typeof v.groups === "object") {
+      const g = {};
+      Object.keys(v.groups).slice(0, 20).forEach(function (k) {
+        if (KEY_RE.test(k) && typeof v.groups[k] === "boolean") g[k] = v.groups[k];
+      });
+      out.groups = g;
+    }
+    if (v.score === null || num(v.score)) out.score = v.score;
+    if (v.metrics && typeof v.metrics === "object") {
+      const m = {};
+      Object.keys(v.metrics).slice(0, 10).forEach(function (k) { if (KEY_RE.test(k) && num(v.metrics[k])) m[k] = v.metrics[k]; });
+      out.metrics = m;
+    }
+    if (typeof v.show_scores === "boolean") out.show_scores = v.show_scores;
+    if (typeof v.show_members === "boolean") out.show_members = v.show_members;
+    return out;
+  }
+
   /* opts: {win, parent, nonce, onContext(ctx)}. Without a nonce (standalone page) the bridge stays inert. */
   function createBridge(opts) {
     const win = opts.win, parent = opts.parent, nonce = opts.nonce;
@@ -121,6 +146,7 @@
       openMap: function (site) {
         return Object.prototype.hasOwnProperty.call(MAP_SITES, site) ? post({type: "open_map", site: site}) : false;
       },
+      annotationView: function (view) { return post({type: "annotation_view", view: sanitizeView(view)}); },
       close: function () { return post({type: "close"}); },
     };
   }
@@ -153,5 +179,6 @@
   }
 
   return {V: V, MAP_SITES: MAP_SITES, readNonce: readNonce, constEq: constEq, sanitizeContext: sanitizeContext,
-          scopeRequest: scopeRequest, scopeKey: scopeKey, createBridge: createBridge, makeApi: makeApi};
+          scopeRequest: scopeRequest, scopeKey: scopeKey, createBridge: createBridge, makeApi: makeApi,
+          sanitizeView: sanitizeView};
 });
