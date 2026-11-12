@@ -523,7 +523,9 @@ function loaded(d) {
   }
   if (!$("tol").value) $("tol").value = 15;
   drawLoc();
-  if (photos.length) openStep(2, [1]);
+  // Priority: setup is once per folder/album, running is the job. A saved site + offset -> go straight to step 4.
+  const ready = f && fcfg && fcfg.site && f.clock_offset != null;
+  if (photos.length) { if (ready) openStep(4, [1, 2, 3]); else openStep(2, [1]); }
 }
 $("showAll").onclick = () => { if (bridge) bridge.showPhotos(photos.map((p) => p.path)); };
 
