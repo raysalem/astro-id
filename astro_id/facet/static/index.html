@@ -45,6 +45,9 @@
   th { color:var(--muted); font-weight:600; font-size:12px; }
   td.n { white-space:nowrap; }
   .name { word-break:break-all; }
+  td.fname { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:9em; }
+  tr.names > td { border-top:0; padding:0 6px 6px 52px; }
+  tr.names > td > div { margin:2px 0; }
   .muted { color:var(--muted); } .small { font-size:12px; }
   .warn { color:var(--review); } .err { color:var(--reject); }
   .keep { color:var(--keep); font-weight:600; } .review { color:var(--review); font-weight:600; }
@@ -261,7 +264,7 @@
     <table id="results"><thead><tr><th><input type="checkbox" id="resAll" checked title="tick all to save"></th>
       <th></th><th>Photo</th><th>Solved</th><th class="wide">Grade</th>
       <th>Names</th></tr></thead><tbody></tbody></table>
-    <div class="row"><label>Save names at confidence &ge; <input type="range" id="saveScore" min="0" max="100"
+    <div class="row"><label>Save names at confidence&nbsp;&ge; <input type="range" id="saveScore" min="0" max="100"
         step="5" value="65"> <span id="saveScoreV" class="n">65</span></label>
       <span id="saveCount" class="muted small"></span></div>
     <div class="row">
@@ -283,7 +286,7 @@
     <div id="skyCtl" hidden>
       <div class="row"><label><input type="checkbox" id="skyOn"> <b>Show sky labels</b></label></div>
       <fieldset><legend>Groups</legend><div class="row" id="skyGroups"></div></fieldset>
-      <div class="row"><label>Show names at confidence &ge; <input type="range" id="skyScore"> <span id="skyScoreV" class="n"></span></label></div>
+      <div class="row"><label>Show names at confidence&nbsp;&ge; <input type="range" id="skyScore"> <span id="skyScoreV" class="n"></span></label></div>
       <div id="skyMetrics"></div>
       <div class="row"><label><input type="checkbox" id="skyScores"> show scores</label></div>
       <p class="muted small" style="margin:2px 0">Display only: Facet redraws as you change these; no tags change.
@@ -730,23 +733,33 @@ function drawResults() {
   for (const r of review) {
     n[r.status] = (n[r.status] || 0) + 1;
     const tr = document.createElement("tr");
-    // Saved names first and plain; the rest muted (stored as sky labels, not tags).
-    const one = (o) => `<span title="${esc(GROUP_LABEL[o.group] || o.group || "")}${saved(o) ? " · saved as a tag" : o.tag ? " · below the save cut" : " · not tagged (its group is)"}"${saved(o) ? "" : ' class="muted"'}>${esc(o.name)} <span class="muted">${esc(o.confidence)}</span></span>`;
-    const keep = r.objects.filter(saved), rest = r.objects.filter((o) => !saved(o));
-    const names = keep.map(one).join(" · ") + (rest.length ? `<div class="small">${rest.map(one).join(" · ")}</div>` : "");
+    // Three lists, so grey never just means "low": saved as tags / below the save cut / covered by its group.
+    const one = (o) => `<span title="${esc(GROUP_LABEL[o.group] || o.group || "")}">${esc(o.name)} <span class="muted">${esc(o.confidence)}</span></span>`;
+    const keep = r.objects.filter(saved), low = r.objects.filter((o) => o.tag && !saved(o)), grouped = r.objects.filter((o) => !o.tag);
+    const list = (title, objs, cls) => objs.length ? `<div class="${cls}"><b>${title} (${objs.length}):</b> ${objs.map(one).join(" · ")}</div>` : "";
+    const names = list("Saved as tags", keep, "") + list("Below the save cut", low, "muted")
+      + list("Covered by their constellation, cluster or asterism tag", grouped, "muted");
     const cls = r.status === "failed" ? "reject" : "keep";
+    const isOpen = openNames.has(r.path);
     // Ticked = written by Save to Facet. A failed solve stays tickable: saving it clears earlier astro-id tags.
-    tr.innerHTML = `<td><input type="checkbox" data-save="${esc(r.path)}" ${toSave.has(r.path) ? "checked" : ""}></td><td><img class="th" alt=""></td><td class="name">${inFacet(r.path, base(r.path))}</td>
-      <td class="${cls}">${r.status === "solved" ? "yes" : r.status === "stack-copy" ? "stack copy" : "no"}</td>
+    tr.innerHTML = `<td><input type="checkbox" data-save="${esc(r.path)}" ${toSave.has(r.path) ? "checked" : ""}></td><td><img class="th" alt=""></td><td class="fname" title="${esc(base(r.path))}">${inFacet(r.path, base(r.path))}</td>
+      <td class="${cls}">${r.status === "solved" ? "yes" : r.status === "stack-copy" ? "stack" : "no"}</td>
       <td class="wide">${esc(r.grade ?? "-")}</td>
       <td class="small">${r.error ? `<span class="err">${esc(r.error)}</span>` : !r.objects.length ? '<span class="muted">none</span>'
-        : `<details class="sub"><summary>${keep.length} to save · ${r.objects.length} found</summary>${names}</details>`}</td>`;
+        : `<button class="link" data-names="${esc(r.path)}" aria-expanded="${isOpen}">${keep.length}&nbsp;to&nbsp;save · ${r.objects.length}&nbsp;found ${isOpen ? "&#9662;" : "&#9656;"}</button>`}</td>`;
     tb.appendChild(tr);
+    if (isOpen && r.objects.length) {   // the names under the row, full width, so the columns stay narrow
+      const nr = document.createElement("tr"); nr.className = "names";
+      nr.innerHTML = `<td colspan="6" class="small">${names}</td>`; tb.appendChild(nr);
+    }
     queueThumb(tr.querySelector("img.th"), r.path);
   }
   $("resinfo").textContent = `${n.solved} solved · ${n["stack-copy"]} stack copies · ${n.failed} failed. Review, then Save to Facet.`;
   $("st5").textContent = `${n.solved + n["stack-copy"]}/${review.length} solved · not saved`;
   $("showSolved").hidden = !(bridge && bridge.active);
+  tb.querySelectorAll("button[data-names]").forEach((b) => b.onclick = () => {
+    const p = b.dataset.names; if (openNames.has(p)) openNames.delete(p); else openNames.add(p); drawResults();
+  });
   tb.querySelectorAll("input[data-save]").forEach((c) => c.onchange = () => {
     if (c.checked) toSave.add(c.dataset.save); else toSave.delete(c.dataset.save);
     $("resAll").checked = review.every((r) => toSave.has(r.path)); showSaveCut();
@@ -755,6 +768,7 @@ function drawResults() {
   showSaveCut();
 }
 let toSave = new Set();   // Results rows ticked for Save to Facet (all solved ones after each solve)
+let openNames = new Set();   // Results rows whose names list is open (kept while the save slider redraws)
 $("resAll").onchange = () => {
   toSave = new Set($("resAll").checked ? review.map((r) => r.path) : []); drawResults();
 };
