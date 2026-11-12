@@ -585,12 +585,18 @@ def test_bridge_js_under_node():
 
 def test_page_two_sections_terms_and_script_parses(tmp_path):
     """Panel restructure (Ray's review 2026-11-12): A. Setup / B. Run, one term each, min confidence only as a
-    sky-label display setting, Save to Facet after the review, culling last and low priority."""
+    sky-label display setting, Save to Facet after the review, culling last and low priority. Then (same day) the
+    save cut as its own slider in step 5, a Help page, and a tick box per result."""
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     text = re.sub(r"<script>.*?</script>", "", html, flags=re.S)
     for want in ("A. Setup for this folder or album", "B. Run", "Save setup", "Save to Facet", "Sky labels",
-                 "Labeled copies", "Show sky labels", "Min confidence", "Culling (low priority)", "<b>tags</b>"):
+                 "Labeled copies", "Show sky labels", "Culling (low priority)", "<b>tags</b>",
+                 # Ray 2026-11-12: two sliders (save vs show), a Help page, a tick box per result
+                 'id="saveScore"', "Save names at confidence", "Show names at confidence", 'id="help"',
+                 'id="helpBtn"', "The two confidence sliders", 'id="resAll"'):
         assert want in text, want
+    text = text[text.index("<main>"):]          # the panel itself (the help page above uses the same words)
+    assert text.index('id="saveScore"') < text.index('id="saveFacet"') < text.index('id="skyScore"')
     assert text.index("A. Setup") < text.index("Plate solve") < text.index("Save to Facet") < text.index("Culling")
     for gone in ("Overlay", "overlay images", "write tags to Facet", 'id="minconf"', 'id="write"'):
         assert gone not in text, gone

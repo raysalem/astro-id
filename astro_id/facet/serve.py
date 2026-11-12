@@ -105,6 +105,16 @@ def review_rows(paths: list[str], results: dict) -> list[dict]:
     return rows
 
 
+def _confidence(v) -> int | None:
+    """A tag cut (0-100) from a page or a config file, or None when absent or not a number."""
+    if isinstance(v, bool) or v in (None, ""):
+        return None
+    try:
+        return max(0, min(100, int(float(v))))
+    except (TypeError, ValueError):
+        return None
+
+
 def _elevation(lat: float, lon: float):
     """Ground elevation for a site picked without one (USGS EPQS; None when it cannot be looked up)."""
     from ..site import fetch_elevation
@@ -170,6 +180,7 @@ class Job:
         self.results: dict = {}           # facet path -> frame result
         self.error: str | None = None
         self.saved = False                 # "Save to Facet" ran for these results
+        self.saved_paths: set[str] = set() # the photos it wrote (culling's review tag goes only on these)
         self.min_confidence = 65
         self.lock = threading.Lock()
 
@@ -206,7 +217,8 @@ class App:
         return {"file": str(c).replace("\\", "/") if c else None, "clock_offset": d.get("clock_offset"),
                 "time_tolerance_min": d.get("time_tolerance_min"), "timezone": d.get("timezone"),
                 "solve_source": d.get("solve_source"), "site": d.get("site"), "cull": d.get("cull"),
-                "labeled_copies": labeled_copies(d), "sky_labels": sky_view(d.get("sky_labels"))}
+                "labeled_copies": labeled_copies(d), "sky_labels": sky_view(d.get("sky_labels")),
+                "min_confidence": _confidence(d.get("min_confidence"))}
 
     def photo_row(self, p: dict, fcfg: dict) -> dict:
         src = gps_source(p)
@@ -483,6 +495,9 @@ class App:
         view = sky_view(b.get("sky_labels"))
         if view is not None:
             extra["sky_labels"] = view
+        cut = _confidence(b.get("min_confidence"))
+        if cut is not None:
+            extra["min_confidence"] = cut            # "Save names at confidence >=" (step 5)
         out = {"written": save_folder_config(sorted({str(Path(self.local(p)).parent) for p in paths}), opts, extra),
                "album": None}
         if b.get("album_id") not in (None, ""):
@@ -493,7 +508,8 @@ class App:
             setup = {"clock_offset": off,
                      "time_tolerance_min": (int(tol) if float(tol).is_integer() else tol) if tol is not None else None,
                      "timezone": opts.tz, "solve_source": opts.source if opts.source in ("jpg", "raw", "auto") else None,
-                     "labeled_copies": extra.get("labeled_copies"), "sky_labels": extra.get("sky_labels")}
+                     "labeled_copies": extra.get("labeled_copies"), "sky_labels": extra.get("sky_labels"),
+                     "min_confidence": cut}
             out["album"] = {"album_id": int(b["album_id"]), "changed": self.save_album_config(b["album_id"], setup)}
         return out
 
@@ -549,10 +565,14 @@ class App:
         results = self.job.results if want is None else {p: r for p, r in self.job.results.items() if p in set(want)}
         if not results:
             raise ValueError("none of those photos are in the last solve")
+        cut = _confidence(b.get("min_confidence"))   # step 5's "Save names at confidence >=" (else the solve's)
+        if cut is not None:
+            self.job.min_confidence = cut
         reports = apply_results(self._ctx_for(self.job), results)
         with self.job.lock:
             self.job.reports = reports
             self.job.saved = True
+            self.job.saved_paths |= {r["path"] for r in reports if not r.get("error") and r.get("path")}
         ok = [r for r in reports if not r.get("error")]
         return {"reports": reports, "photos": len(ok), "errors": len(reports) - len(ok),
                 "tags_added": sum(len(r.get("add") or []) for r in ok),
@@ -599,11 +619,14 @@ class App:
         others of this session; every other astro-id tag is re-asserted unchanged."""
         if not self.job.results:
             raise ValueError("solve first")
+        if not self.job.saved_paths:
+            raise ValueError("Save to Facet first (step 5): the review tag only goes on photos already saved")
+        # Only the photos already saved: re-asserting their tags + sky labels writes nothing new for them.
+        results = {p: r for p, r in self.job.results.items() if p in self.job.saved_paths}
         flagged = set(b.get("paths") or [])
-        extra = {p: ([TAG_REVIEW] if p in flagged else []) for p in self.job.results}
-        reports = apply_results(self._ctx_for(self.job), self.job.results, extra_tags=extra)
-        self.job.saved = True        # it re-asserts every tag and sky label of the results, i.e. a save
-        return {"reports": reports}
+        extra = {p: ([TAG_REVIEW] if p in flagged else []) for p in results}
+        reports = apply_results(self._ctx_for(self.job), results, extra_tags=extra)
+        return {"reports": reports, "skipped_unsaved": len(flagged - set(results))}
 
     ROUTES = {("GET", "api/state"): "state", ("GET", "api/albums"): "albums", ("GET", "api/job"): "job_state",
               ("POST", "api/photos"): "list_photos", ("POST", "api/scope"): "scope", ("POST", "api/location"): "location",

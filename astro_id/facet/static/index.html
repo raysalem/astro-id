@@ -60,15 +60,98 @@
   fieldset { border:1px solid var(--line); border-radius:5px; margin:6px 0; padding:4px 8px; }
   legend { color:var(--muted); font-size:12px; padding:0 4px; }
   @media (max-width: 560px) { .wide { display:none; } }
+  section.help { max-width:760px; margin:0 auto; padding:4px 12px 32px; }
+  section.help h2 { font-size:14px; margin:16px 0 4px; }
+  section.help p, section.help li, section.help dd { margin-top:2px; }
+  section.help dt { font-weight:600; margin-top:6px; }
+  section.help dd { margin-left:14px; }
+  section.help ol, section.help ul { padding-left:20px; }
 </style>
 </head>
 <body>
 <header>
-  <h1>Astro</h1>
+  <div class="row" style="margin:0"><h1 style="flex:1">Astro</h1>
+    <button id="helpBtn" class="secondary" aria-expanded="false">Help</button></div>
   <div id="facet" class="err small"></div>
   <details class="sub small" id="notesBox" hidden><summary id="notesSum">Notes</summary>
     <div id="warnings" class="muted small"></div></details>
 </header>
+<section id="help" class="help" hidden>
+  <div class="row"><button id="helpBack">&larr; Back to the panel</button></div>
+
+  <h2 id="h-what">What Astro does</h2>
+  <p>Astro <b>plate-solves</b> your night-sky photos: it matches the stars in each frame against a star catalog to
+    work out exactly where the camera was pointing. From that it names what is in the frame (constellations, planets,
+    the Moon, bright stars, Messier / NGC objects) and gives every name a <b>confidence</b> from 0 to 100.</p>
+
+  <h2 id="h-flow">The flow</h2>
+  <ol>
+    <li><b>Setup</b> (section A, once per folder or album): pick the photos (1), where they were taken (2) and how
+      far the camera clock was off (3), then <b>Save setup</b>. Next time you load that folder or album, it is all
+      filled in.</li>
+    <li><b>Plate solve</b> (4). This only reads the photos. Nothing in Facet changes.</li>
+    <li><b>Review</b> the results (5): which photos solved and what was named in each. Untick any photo you do not
+      want saved.</li>
+    <li><b>Save to Facet</b> (5): writes the tags and sky labels for the ticked photos.</li>
+    <li><b>Look</b> at a photo in Facet and use <b>Sky labels</b> (6) to show the names over it.</li>
+  </ol>
+
+  <h2 id="h-terms">Words used here</h2>
+  <dl>
+    <dt>Tag</dt><dd>A searchable word on a photo in Facet, e.g. <i>cygnus</i> or <i>jupiter</i>. You filter the
+      gallery by tags. Written by <b>Save to Facet</b>.</dd>
+    <dt>Sky labels</dt><dd>The names Facet draws on top of the photo, each with a small circle at the object. Stored
+      with the photo by <b>Save to Facet</b>, but drawn only while this panel is open and <b>Show sky labels</b> is
+      on. They never change the photo file.</dd>
+    <dt>Labeled copies</dt><dd>Separate JPG files with the names burned into the image, for sharing outside Facet.
+      Off by default; written to a "&lt;folder&gt;-annotated" folder beside the originals.</dd>
+    <dt>Confidence</dt><dd>0 to 100: how sure Astro is that a name is right <i>and</i> visible in that frame. It
+      combines how well the frame solved, how precisely the object's position is known at that spot in the frame,
+      how bright it is compared with the faintest stars the photo caught, and whether it is cut by the frame edge or
+      sits near the horizon. Rough guide: <b>80+</b> high, <b>65 to 79</b> likely, <b>below 65</b> a candidate.</dd>
+    <dt>Grade</dt><dd>How well a whole frame solved (A best, C weakest), from the number of matched stars and how
+      tightly they fit.</dd>
+  </dl>
+
+  <h2 id="h-sliders">The two confidence sliders</h2>
+  <p>They do different jobs:</p>
+  <ul>
+    <li><b>Save names at confidence &ge;</b> (step 5, default 65) decides what is <b>saved</b>. Names at or above it
+      become tags. Raising it and saving again removes the tags that are now below it; lowering it adds them.</li>
+    <li><b>Show names at confidence &ge;</b> (step 6) decides what is <b>shown</b> on the photo. It is display only:
+      moving it never changes tags. Every name found is stored as a sky label, so you can show more (or fewer) names
+      than you tagged.</li>
+  </ul>
+  <p class="muted">A star that belongs to a tagged constellation is not tagged on its own (the constellation tag
+    covers it). It still appears as a sky label.</p>
+
+  <h2 id="h-setup">Setup details</h2>
+  <dl>
+    <dt>Folder or album</dt><dd>A folder: paste its path. An album: pick a regular album. Smart albums are not
+      listed, because they are saved filters rather than fixed sets of photos; load their folder instead.</dd>
+    <dt>Location</dt><dd>Needed to place the planets and the Moon and to know where the horizon was. Use
+      <b>Google Earth</b> or <b>Google Maps</b>, find the spot, copy its coordinates (or the page URL) and paste
+      them, then <b>Check</b> and <b>Confirm</b>. Confirm writes the location to the photos in Facet and to the
+      folder's setup. Photos that already carry camera GPS keep theirs unless you tick
+      <i>also replace GPS the camera recorded</i>.</dd>
+    <dt>Time offset</dt><dd>How far the camera clock was off, e.g. <code>+2559d11h08m</code>. The &plusmn; minutes
+      allow for not knowing it exactly: every time-sensitive check is tried across that whole window and the worst
+      case is used, so a wide window lowers confidence for planets and objects near the horizon.</dd>
+    <dt>JPG or RAW</dt><dd>Which file to solve from. JPG is faster and usually enough.</dd>
+    <dt>Where setup is kept</dt><dd>In each folder's <code>astro-id.json</code> and, when you loaded an album, with
+      that album too.</dd>
+  </dl>
+
+  <h2 id="h-cull">Culling (optional)</h2>
+  <p>Flags frames that look soft, trailed or have too few stars as <i>review</i> or <i>reject</i>. It never deletes
+    or rejects anything in Facet. <b>Apply tag</b> adds an <i>astro-review</i> tag to those frames so you can find
+    them; it works only on photos you have already saved to Facet.</p>
+
+  <h2 id="h-safe">Is it safe to repeat?</h2>
+  <p>Yes. Solving writes nothing. Saving again writes only what changed, and Astro only ever changes its own tags
+    and sky labels, never the ones you or other tools added.</p>
+  <div class="row"><button id="helpBack2">&larr; Back to the panel</button></div>
+</section>
 <main>
 
 <h2 class="sec">A. Setup for this folder or album</h2>
@@ -175,14 +258,20 @@
   <summary>5. Results <span class="st" id="st5"></span></summary>
   <div class="body">
     <div class="row"><span id="resinfo" class="muted">Solve first (step 4).</span></div>
-    <table id="results"><thead><tr><th></th><th>Photo</th><th>Solved</th><th class="wide">Grade</th>
-      <th>Objects found</th></tr></thead><tbody></tbody></table>
+    <table id="results"><thead><tr><th><input type="checkbox" id="resAll" checked title="tick all to save"></th>
+      <th></th><th>Photo</th><th>Solved</th><th class="wide">Grade</th>
+      <th>Names</th></tr></thead><tbody></tbody></table>
+    <div class="row"><label>Save names at confidence &ge; <input type="range" id="saveScore" min="0" max="100"
+        step="5" value="65"> <span id="saveScoreV" class="n">65</span></label>
+      <span id="saveCount" class="muted small"></span></div>
     <div class="row">
       <button id="saveFacet" disabled>Save to Facet</button>
       <button id="showSolved" class="secondary" hidden>Show solved photos in Facet</button>
     </div>
-    <p class="muted small" style="margin:2px 0">Writes <b>tags</b> (searchable words on each photo in Facet) and
-      <b>sky labels</b> (the names Facet draws over the photo) for these results. Safe to repeat.</p>
+    <p class="muted small" style="margin:2px 0">This slider decides what is <b>saved</b>: names at or above it
+      become <b>tags</b> (searchable words on each photo in Facet). Every name found is stored as a <b>sky label</b>;
+      what is <b>shown</b> is step 6's own slider. Safe to repeat; saving again with a new value adds or removes
+      tags to match. <button class="link" data-help="h-sliders">More</button></p>
     <div class="row"><span id="saveinfo" class="small"></span></div>
   </div>
 </details>
@@ -194,11 +283,11 @@
     <div id="skyCtl" hidden>
       <div class="row"><label><input type="checkbox" id="skyOn"> <b>Show sky labels</b></label></div>
       <fieldset><legend>Groups</legend><div class="row" id="skyGroups"></div></fieldset>
-      <div class="row"><label>Min confidence <input type="range" id="skyScore"> <span id="skyScoreV" class="n"></span></label></div>
+      <div class="row"><label>Show names at confidence &ge; <input type="range" id="skyScore"> <span id="skyScoreV" class="n"></span></label></div>
       <div id="skyMetrics"></div>
       <div class="row"><label><input type="checkbox" id="skyScores"> show scores</label></div>
-      <p class="muted small" style="margin:2px 0">Display only: Facet redraws as you change these. Saved with the
-        setup (except Show, which always starts off).</p>
+      <p class="muted small" style="margin:2px 0">Display only: Facet redraws as you change these; no tags change.
+        Saved with the setup (except Show, which always starts off). <button class="link" data-help="h-sliders">More</button></p>
     </div>
   </div>
 </details>
@@ -223,7 +312,7 @@
       <tbody></tbody></table>
     <div class="row">
       <label><input type="checkbox" id="reviewTag"> tag review/reject "<span id="rtname">astro-review</span>"</label>
-      <button id="applyReview" class="secondary" disabled>Apply tag</button>
+      <button id="applyReview" class="secondary" disabled title="Save to Facet first (step 5)">Apply tag</button>
     </div>
     <div class="row"><span id="reviewinfo" class="muted"></span></div>
   </div>
@@ -258,7 +347,8 @@ function srcValue() { const r = document.querySelector('input[name="src"]:checke
 function copies() { return {on: $("lcOn").checked, lines: $("lcLines").checked, scores: $("lcScores").checked}; }
 function opts() {
   const o = {paths: selected(), offset: $("offset").value.trim(), tolerance_min: $("tol").value,
-             tz: $("tz").value.trim(), source: srcValue(), labeled_copies: copies(), sky_labels: savedView()};
+             tz: $("tz").value.trim(), source: srcValue(), labeled_copies: copies(), sky_labels: savedView(),
+             min_confidence: saveCut()};
   if (loadedAlbum) o.album_id = loadedAlbum.id;
   return o;
 }
@@ -378,7 +468,7 @@ async function fillAlbums() {
 }
 document.querySelectorAll('input[name="pick"]').forEach((r) => r.onchange = () => {
   const album = pickMode() === "album";
-  $("pickFolder").hidden = album; $("pickAlbum").hidden = !album;
+  $("pickFolder").hidden = album; $("pickAlbum").hidden = !album; $("albumNote").hidden = !album;
   if (album) fillAlbums();
 });
 $("loadAlbum").onclick = () => {
@@ -405,7 +495,7 @@ function loaded(d) {
   $("rawinfo").textContent = d.raw_companion_field ? `${nRaw} of ${photos.length} have a RAW` : "";
   $("photosSum").textContent = `Photos (${photos.length})`;
   const names = Object.keys(folders).map((k) => k.split("/").pop());
-  $("st1").textContent = `${names.length === 1 ? names[0] : names.length + " folders"} · ${photos.length} photo(s)`;
+  $("st1").textContent = `${loadedAlbum ? "album " + loadedAlbum.name : names.length === 1 ? names[0] : names.length + " folders"} · ${photos.length} photo(s)`;
   // An album's own setup first, else its folders' astro-id.json.
   const fcfg = Object.values(folders).find((c) => c && c.file);
   const acfg = loadedAlbum && d.album_config ? d.album_config : null;
@@ -421,6 +511,8 @@ function loaded(d) {
     if (lc) { $("lcOn").checked = !!lc.on; $("lcLines").checked = lc.lines !== false; $("lcScores").checked = !!lc.scores; }
     const sv = f.sky_labels || (fcfg && fcfg.sky_labels);
     if (sv) { skyView = Object.assign({}, sv, {visible: skyView.visible}); drawSky(); postView(); }
+    const cut = f.min_confidence ?? (fcfg && fcfg.min_confidence);
+    if (cut != null) { $("saveScore").value = cut; showSaveCut(); }
     if (f.clock_offset) $("st3").textContent = `${f.clock_offset} ±${f.time_tolerance_min ?? 15} min`;
     const c = (fcfg && fcfg.cull) || f.cull;
     if (c) { rule = Object.assign(JSON.parse(JSON.stringify(state.default_rule)), c);
@@ -606,9 +698,11 @@ async function poll() {
     }
     $("lcRedo").disabled = false;
     if (d.done) { quality = d.done.quality || {}; solved = d.done.solved_by_path || {}; cull = d.done.cull;
-                  review = d.done.review || []; drawResults(); drawCull();
-                  $("saveFacet").disabled = !state.can_write || !review.length;
-                  $("applyReview").disabled = false; openStep(5, [4]);
+                  review = d.done.review || [];
+                  toSave = new Set(review.filter((r) => r.status !== "failed").map((r) => r.path));
+                  drawResults(); drawCull(); $("reviewinfo").textContent = "";
+                  $("saveFacet").disabled = !state.can_write || !toSave.size;
+                  $("applyReview").disabled = true; openStep(5, [4]);   // culling's tag waits for a Save
                   $("lcinfo").textContent = copies().on ? "Labeled copies written to the -annotated folder." : ""; }
   }
 }
@@ -620,39 +714,64 @@ for (const id of ["lcOn", "lcLines", "lcScores"]) $(id).onchange = () => {
 /* --------------------------------------------------------------- step 5 --- */
 const GROUP_LABEL = {constellation: "constellation", planet: "planet / Moon", catalog: "Messier / NGC / IC",
                      asterism: "asterism", star: "star"};
+function saveCut() { return Number($("saveScore").value); }
+const saved = (o) => o.tag && (o.confidence || 0) >= saveCut();   // becomes a tag at the current cut
+function showSaveCut() {
+  $("saveScoreV").textContent = saveCut();
+  const rows = review.filter((r) => toSave.has(r.path));
+  const n = rows.reduce((a, r) => a + r.objects.filter(saved).length, 0);
+  $("saveCount").textContent = review.length ? `${n} tag(s) on ${rows.length} ticked photo(s)` : "";
+  if (review.length) $("saveFacet").disabled = !state.can_write || !rows.length;
+}
+$("saveScore").oninput = () => { showSaveCut(); if (review.length) drawResults(); };
 function drawResults() {
   const tb = $("results").tBodies[0]; tb.innerHTML = "";
   const n = {solved: 0, failed: 0, "stack-copy": 0};
   for (const r of review) {
     n[r.status] = (n[r.status] || 0) + 1;
     const tr = document.createElement("tr");
-    const names = r.objects.map((o) => `<span title="${esc(GROUP_LABEL[o.group] || o.group || "")}${o.tag ? "" : " · not tagged"}">${esc(o.name)} <span class="muted">${esc(o.confidence)}</span></span>`).join(" · ");
+    // Saved names first and plain; the rest muted (stored as sky labels, not tags).
+    const one = (o) => `<span title="${esc(GROUP_LABEL[o.group] || o.group || "")}${saved(o) ? " · saved as a tag" : o.tag ? " · below the save cut" : " · not tagged (its group is)"}"${saved(o) ? "" : ' class="muted"'}>${esc(o.name)} <span class="muted">${esc(o.confidence)}</span></span>`;
+    const keep = r.objects.filter(saved), rest = r.objects.filter((o) => !saved(o));
+    const names = keep.map(one).join(" · ") + (rest.length ? `<div class="small">${rest.map(one).join(" · ")}</div>` : "");
     const cls = r.status === "failed" ? "reject" : "keep";
-    tr.innerHTML = `<td><img class="th" alt=""></td><td class="name">${inFacet(r.path, base(r.path))}</td>
+    // Ticked = written by Save to Facet. A failed solve stays tickable: saving it clears earlier astro-id tags.
+    tr.innerHTML = `<td><input type="checkbox" data-save="${esc(r.path)}" ${toSave.has(r.path) ? "checked" : ""}></td><td><img class="th" alt=""></td><td class="name">${inFacet(r.path, base(r.path))}</td>
       <td class="${cls}">${r.status === "solved" ? "yes" : r.status === "stack-copy" ? "stack copy" : "no"}</td>
       <td class="wide">${esc(r.grade ?? "-")}</td>
       <td class="small">${r.error ? `<span class="err">${esc(r.error)}</span>` : !r.objects.length ? '<span class="muted">none</span>'
-        : `<details class="sub"><summary>${r.objects.length} found</summary>${names}</details>`}</td>`;
+        : `<details class="sub"><summary>${keep.length} to save · ${r.objects.length} found</summary>${names}</details>`}</td>`;
     tb.appendChild(tr);
     queueThumb(tr.querySelector("img.th"), r.path);
   }
   $("resinfo").textContent = `${n.solved} solved · ${n["stack-copy"]} stack copies · ${n.failed} failed. Review, then Save to Facet.`;
   $("st5").textContent = `${n.solved + n["stack-copy"]}/${review.length} solved · not saved`;
   $("showSolved").hidden = !(bridge && bridge.active);
+  tb.querySelectorAll("input[data-save]").forEach((c) => c.onchange = () => {
+    if (c.checked) toSave.add(c.dataset.save); else toSave.delete(c.dataset.save);
+    $("resAll").checked = review.every((r) => toSave.has(r.path)); showSaveCut();
+  });
+  $("resAll").checked = review.length > 0 && review.every((r) => toSave.has(r.path));
+  showSaveCut();
 }
+let toSave = new Set();   // Results rows ticked for Save to Facet (all solved ones after each solve)
+$("resAll").onchange = () => {
+  toSave = new Set($("resAll").checked ? review.map((r) => r.path) : []); drawResults();
+};
 $("saveFacet").onclick = async () => {
   $("saveFacet").disabled = true; $("saveinfo").textContent = "writing to Facet...";
   try {
-    const d = await api("api/save", {});
+    const d = await api("api/save", {min_confidence: saveCut(), paths: [...toSave]});
     const skip = d.annotations ? "" : " (sky labels skipped: this Facet cannot store them)";
     $("saveinfo").innerHTML = `Saved ${d.photos} photo(s): tags +${d.tags_added} -${d.tags_removed}, sky labels on ${d.sky_labels}${esc(skip)}` +
       (d.errors ? ` · <span class="err">${d.errors} error(s)</span>` : "");
-    $("st5").textContent = `${review.filter((r) => r.status !== "failed").length}/${review.length} solved · saved`;
+    $("st5").textContent = `${review.filter((r) => r.status !== "failed").length}/${review.length} solved · ${d.photos} saved`;
     $("saveFacet").textContent = "Save to Facet again";
+    if (d.photos) $("applyReview").disabled = false;
     if (bridge) bridge.refresh(d.reports.filter((r) => !r.error).map((r) => r.path));
     skyPhoto = undefined; if (lastCtx) skyContext(lastCtx.photo);   // the open photo may have sky labels now
   } catch (e) { $("saveinfo").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
-  finally { $("saveFacet").disabled = !state.can_write; }
+  finally { $("saveFacet").disabled = !state.can_write || !toSave.size; }
 };
 $("showSolved").onclick = () => { if (bridge) bridge.showPhotos(Object.keys(solved).filter((p) => solved[p])); };
 
@@ -761,10 +880,27 @@ $("applyReview").onclick = async () => {
   if (!cull) return;
   const flagged = $("reviewTag").checked ? Object.entries(cull.frames).filter(([, v]) => v.decision !== "keep").map(([p]) => p) : [];
   try { const d = await api("api/review-tags", {paths: flagged});
-        $("reviewinfo").textContent = `${flagged.length} frame(s) tagged, ${d.reports.length} photo(s) checked`;
+        $("reviewinfo").textContent = `${flagged.length - (d.skipped_unsaved || 0)} frame(s) tagged, ${d.reports.length} saved photo(s) checked` +
+          (d.skipped_unsaved ? ` · ${d.skipped_unsaved} not saved yet, left alone` : "");
         if (bridge) bridge.refresh(d.reports.filter((r) => !r.error).map((r) => r.path)); }
   catch (e) { $("reviewinfo").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 };
+/* ------------------------------------------------------------------ help --- */
+let helpScroll = 0;
+function showHelp(on, anchor) {
+  if (on && $("help").hidden) helpScroll = window.scrollY;
+  $("help").hidden = !on; document.querySelector("main").hidden = on;
+  $("helpBtn").setAttribute("aria-expanded", String(on)); $("helpBtn").textContent = on ? "Close help" : "Help";
+  if (on) { const t = anchor && $(anchor); if (t) t.scrollIntoView(); else window.scrollTo(0, 0); }
+  else window.scrollTo(0, helpScroll);
+}
+$("helpBtn").onclick = () => showHelp($("help").hidden);
+$("helpBack").onclick = $("helpBack2").onclick = () => showHelp(false);
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-help]");
+  if (t) { e.preventDefault(); showHelp(true, t.dataset.help); }
+});
+
 init().catch((e) => { $("facet").innerHTML = `<span class="err">${esc(e.message)}</span>`; });
 </script>
 </body>

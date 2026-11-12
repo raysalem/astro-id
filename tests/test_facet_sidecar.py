@@ -454,6 +454,10 @@ def test_serve_flow_load_gps_solve_recull_review_tag(ui, fake, monkeypatch):
     rv = {r["path"]: r for r in j["done"]["review"]}
     assert rv[P1]["status"] == "solved" and [o["name"] for o in rv[P1]["objects"]] == ["orion", "weak"]
     assert rv[P1]["objects"][0]["confidence"] == 90 and rv[P1]["objects"][0]["group"] == "constellation"
+    n0 = len(fake.writes())
+    with pytest.raises(urllib.error.HTTPError) as ei:              # culling's tag waits for a Save
+        _req(url + "api/review-tags", {"paths": [P2]})
+    assert ei.value.code == 400 and len(fake.writes()) == n0
     s1 = _req(url + "api/save", {})
     assert s1["photos"] == 2 and s1["errors"] == 0 and s1["sky_labels"] == 2 and s1["annotations"] == "api"
     assert "orion" in fake.photos[P2]["manual_tags"] and len(fake.annotations) == 2
@@ -462,6 +466,11 @@ def test_serve_flow_load_gps_solve_recull_review_tag(ui, fake, monkeypatch):
     n = len(fake.writes())
     s2 = _req(url + "api/save", {})                           # saving again: no new writes (ledger)
     assert len(fake.writes()) == n and s2["tags_added"] == 0 and s2["tags_removed"] == 0
+    # Step 5's own slider: a lower save cut, ticked photo P1 only -> "weak" (80) becomes a tag there, P2 untouched.
+    s3 = _req(url + "api/save", {"min_confidence": 75, "paths": [P1]})
+    assert s3["photos"] == 1 and s3["tags_added"] == 1 and "weak" in fake.photos[P1]["manual_tags"]
+    s4 = _req(url + "api/save", {"min_confidence": 85, "paths": [P1]})   # raised again: removed again
+    assert s4["tags_removed"] == 1 and "weak" not in fake.photos[P1]["manual_tags"]
     rc = _req(url + "api/recull", {"rule": {"enabled": True, "order": ["focus"], "thresholds": {}}})
     assert rc["frames"][P2]["decision"] == "review"          # defocus alone never rejects
     with pytest.raises(urllib.error.HTTPError):
