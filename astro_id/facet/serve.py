@@ -144,7 +144,8 @@ class App:
             c, d = None, {}
         return {"file": str(c).replace("\\", "/") if c else None, "clock_offset": d.get("clock_offset"),
                 "time_tolerance_min": d.get("time_tolerance_min"), "timezone": d.get("timezone"),
-                "solve_source": d.get("solve_source"), "site": d.get("site"), "cull": d.get("cull")}
+                "solve_source": d.get("solve_source"), "site": d.get("site"), "cull": d.get("cull"),
+                "overlay": d.get("overlay") if isinstance(d.get("overlay"), dict) else None}
 
     def photo_row(self, p: dict, fcfg: dict) -> dict:
         src = gps_source(p)
@@ -185,7 +186,9 @@ class App:
                               source=body.get("source") or None, tz=body.get("tz") or None,
                               site=body.get("site") or None, min_confidence=int(body.get("min_confidence") or 65),
                               hints=hints, cull=body.get("cull") or None, overlay_dir=body.get("overlay_dir") or None,
-                              no_overlay=bool(body.get("no_overlay")), include_results=False)
+                              no_overlay=bool(body.get("no_overlay")), include_results=False,
+                              overlay_scores=bool(body.get("overlay_scores")),
+                              overlay_lines=body.get("overlay_lines", True) is not False)
         opts.validate()
         return opts
 
@@ -373,7 +376,11 @@ class App:
 
         paths = list(b.get("paths") or [])
         opts = self.session_opts(b, paths)
-        return {"written": save_folder_config(sorted({str(Path(self.local(p)).parent) for p in paths}), opts)}
+        extra = {}
+        ov = b.get("overlay")
+        if isinstance(ov, dict):
+            extra["overlay"] = {k: bool(ov.get(k)) for k in ("on", "lines", "scores")}
+        return {"written": save_folder_config(sorted({str(Path(self.local(p)).parent) for p in paths}), opts, extra)}
 
     def solve(self, _q, b):
         paths = list(b.get("paths") or [])

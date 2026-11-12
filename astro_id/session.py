@@ -49,6 +49,7 @@ class SessionOptions:
     no_fallback: bool = False
     no_quality: bool = False
     overlay_scores: bool = False
+    overlay_lines: bool = True
     stack_mode: str | None = None
     stack_gap: float | None = None
     extra_flags: list = field(default_factory=list)   # further `astro-id solve` flags (tag policy...)
@@ -192,7 +193,7 @@ def time_preview(paths: list[str], opts: SessionOptions, emit: Callable[[dict], 
 
 # -------------------------------------------------------------- folder config ---
 
-def save_folder_config(folders: list[str], opts: SessionOptions) -> list[str]:
+def save_folder_config(folders: list[str], opts: SessionOptions, extra: dict | None = None) -> list[str]:
     """Write the session's offset / tolerance / timezone into each folder's own astro-id.json.
 
     An existing file in the folder is merged (other keys kept). A folder that only inherits a parent's file gets
@@ -210,6 +211,10 @@ def save_folder_config(folders: list[str], opts: SessionOptions) -> list[str]:
             new["time_tolerance_min"] = int(tol) if tol.is_integer() else tol
         if opts.tz:
             new["timezone"] = opts.tz
+        if opts.source in ("jpg", "raw", "auto"):
+            new["solve_source"] = opts.source
+        for k, v in (extra or {}).items():   # panel settings kept per folder (e.g. "overlay")
+            new[k] = v
         if new == cfgmod.load_config(target if target.is_file() else None) and target.is_file():
             continue
         tmp = target.with_name(target.name + ".tmp")
@@ -240,7 +245,8 @@ def _solve_args(target: Path, opts: SessionOptions, site: str | None, time_hint:
     if opts.overlay_dir:
         argv += ["--overlay-dir", opts.overlay_dir]
     for flag, on in (("--no-overlay", opts.no_overlay), ("--no-fallback", opts.no_fallback),
-                     ("--no-quality", opts.no_quality), ("--overlay-scores", opts.overlay_scores)):
+                     ("--no-quality", opts.no_quality), ("--overlay-scores", opts.overlay_scores),
+                     ("--no-overlay-lines", not opts.overlay_lines)):
         if on:
             argv.append(flag)
     if opts.stack_mode:

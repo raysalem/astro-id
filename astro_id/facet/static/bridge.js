@@ -66,8 +66,10 @@
   function scopeRequest(ctx, category) {
     if (!ctx || !ctx.scope) return null;
     const s = ctx.scope;
-    if (s.kind === "import") return {kind: "import", run_id: s.run_id, category: category || ""};
-    if (s.kind === "view") return {kind: "view", query: s.query == null ? "" : s.query};
+    if (s.kind === "import") return {kind: "import", run_id: s.run_id};
+    // A gallery "view" always carries default filters (sort, hides...), so it usually means the whole library.
+    // Astro works on folders: opened by hand, the user picks the folder in step 1.
+    if (s.kind === "view") return null;
     if (s.kind === "selection") {
       const paths = ctx.selection.length ? ctx.selection : (ctx.photo ? [ctx.photo] : []);
       return paths.length ? {kind: "selection", paths: paths.slice(0, MAX_SELECTION)} : null;

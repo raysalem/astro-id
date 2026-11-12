@@ -223,3 +223,25 @@ def test_timezone_flag_applies_to_exif_plus_offset(folder):
     assert resolve(folder, None, None, None).timezone == "America/Los_Angeles"
     fc = resolve(folder, None, None, None, tz_flag="America/Denver")
     assert fc.timezone == "America/Denver" and fc.time_override is None
+
+
+def test_save_folder_config_keeps_file_type_and_overlay(tmp_path):
+    """The panel saves the folder's file type and overlay choices with the time settings (one folder, set once)."""
+    d = tmp_path / "astro"
+    d.mkdir()
+    opts = SessionOptions(offset="+1h", tolerance_min=5, source="raw")
+    save_folder_config([str(d)], opts, {"overlay": {"on": True, "lines": False, "scores": True}})
+    saved = json.loads((d / "astro-id.json").read_text(encoding="utf-8"))
+    assert saved["solve_source"] == "raw"
+    assert saved["overlay"] == {"on": True, "lines": False, "scores": True}
+    assert saved["time_tolerance_min"] == 5
+
+
+def test_overlay_lines_flag_reaches_the_engine():
+    from astro_id.session import _solve_args
+    import inspect
+    assert "lines" in inspect.signature(__import__("astro_id.overlay", fromlist=["draw_overlay"]).draw_overlay).parameters
+    opts = SessionOptions(overlay_lines=False)
+    args = _solve_args(Path("x.jpg"), opts, None, None)   # parsed `astro-id solve` namespace
+    assert args.no_overlay_lines is True
+    assert _solve_args(Path("x.jpg"), SessionOptions(), None, None).no_overlay_lines is False

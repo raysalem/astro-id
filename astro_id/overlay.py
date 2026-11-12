@@ -28,7 +28,7 @@ def _font(size: int):
 
 
 def draw_overlay(src: Path, out: Path, width_full: int, objects, legend_lines: list[str], width: int = 3000,
-                 scores: bool = False) -> Path:
+                 scores: bool = False, lines: bool = True) -> Path:
     im = load_rgb_preview(src, width)
     s = im.size[0] / width_full
     d = ImageDraw.Draw(im, "RGBA")
@@ -44,7 +44,7 @@ def draw_overlay(src: Path, out: Path, width_full: int, objects, legend_lines: l
         if o.kind != "constellation" or o.confidence < 10:
             continue
         col = COLORS[o.tier]
-        for x1, y1, x2, y2 in o.figure:
+        for x1, y1, x2, y2 in (o.figure if lines else ()):
             d.line([(x1 * s, y1 * s), (x2 * s, y2 * s)], fill=LINE + (170,), width=lw)
         pts = [(x1 * s, y1 * s) for x1, y1, _, _ in o.figure] + [(x2 * s, y2 * s) for _, _, x2, y2 in o.figure]
         inside = [(px, py) for px, py in pts if 0 <= px < im.size[0] and 0 <= py < im.size[1]]
@@ -57,7 +57,7 @@ def draw_overlay(src: Path, out: Path, width_full: int, objects, legend_lines: l
     for o in objects:
         if getattr(o, "kind", None) != "asterism":
             continue
-        for x1, y1, x2, y2 in o.figure:
+        for x1, y1, x2, y2 in (o.figure if lines else ()):
             d.line([(x1 * s, y1 * s), (x2 * s, y2 * s)], fill=ASTERISM_LINE + (200,), width=lw)
         if o.x is not None:
             _label(d, (o.x * s, o.y * s + fs), lab(o), font, COLORS[o.tier], im.size)

@@ -12,6 +12,7 @@
             --keep:#5cc27a; --review:#f0a43a; --reject:#ff6b61; }
   }
   * { box-sizing: border-box; }
+  [hidden] { display:none !important; }
   html, body { margin:0; background:var(--bg); color:var(--fg); font:13px/1.45 system-ui, sans-serif; }
   header { padding:8px 10px; border-bottom:1px solid var(--line); }
   header h1 { font-size:15px; margin:0 0 2px; }
@@ -57,31 +58,33 @@
 </head>
 <body>
 <header>
-  <h1>Astro session</h1>
-  <div id="facet" class="muted small">connecting...</div>
-  <div id="warnings" class="note small"></div>
+  <h1>Astro</h1>
+  <div id="facet" class="err small"></div>
+  <details class="sub small" id="notesBox" hidden><summary id="notesSum">Notes</summary>
+    <div id="warnings" class="muted small"></div></details>
 </header>
 <main>
 
 <details class="step" id="s1" open>
-  <summary>1. Photos <span class="st" id="st1"></span></summary>
+  <summary>1. Folder <span class="st" id="st1"></span></summary>
   <div class="body">
-    <div id="scopeBox" hidden>
-      <div class="row"><span id="scopeinfo" class="muted"></span></div>
-      <div class="row" id="catRow" hidden><label>Category <input type="text" id="scopeCat" size="10" value="astro"></label>
-        <button id="reloadScope" class="secondary">Reload</button></div>
-      <div class="row" id="scopeChanged" hidden><span class="warn">Facet's view changed.</span>
-        <button id="useNewScope" class="secondary">Load the new photos</button></div>
-    </div>
-    <details class="sub" id="manualBox" open>
-      <summary>Load photos by folder, album or tag</summary>
-      <div class="row"><input type="text" id="prefix" class="grow" placeholder="Facet path prefix, e.g. //nas/Photos/2026/astro"></div>
-      <div class="row">
-        <label>Album <select id="album"><option value="">(any)</option></select></label>
-        <label>Tag <input type="text" id="tag" size="12"></label>
-        <label>Category <input type="text" id="category" size="8" value="astro"></label>
-        <button id="load">Load</button>
-      </div>
+    <div class="row"><span id="scopeinfo" class="muted">waiting for Facet...</span></div>
+    <div class="row" id="scopeChanged" hidden><span class="warn">Facet's view changed.</span>
+      <button id="useNewScope" class="secondary">Load the new photos</button></div>
+    <details class="sub" id="manualBox">
+      <summary id="manualSum">Use another folder</summary>
+      <div class="row"><input type="text" id="prefix" class="grow"
+        placeholder="paste the folder path, e.g. \\192.168.1.90\Photos and Videos\2026\trip\astro">
+        <button id="loadFolder">Load folder</button></div>
+    </details>
+    <div class="row"><span>Solve from:</span>
+      <label><input type="radio" name="src" value="jpg" checked> JPG</label>
+      <label><input type="radio" name="src" value="raw"> RAW</label>
+      <span id="rawinfo" class="muted small"></span></div>
+    <div class="row"><span id="folderinfo" class="small"></span></div>
+    <details class="sub" id="photosBox"><summary id="photosSum">Photos</summary>
+      <table id="loc"><thead><tr><th><input type="checkbox" id="all" checked title="select all"></th><th></th>
+        <th>Photo</th><th>Location</th></tr></thead><tbody></tbody></table>
     </details>
     <div class="row"><span id="loadinfo" class="muted"></span>
       <button id="showAll" class="secondary" hidden>Show in Facet</button></div>
@@ -91,47 +94,37 @@
 <details class="step" id="s2">
   <summary>2. Location <span class="st" id="st2"></span></summary>
   <div class="body">
-    <p class="muted small">Facet's GPS on the photo wins, else the folder's astro-id.json site. A location is set
-      for a whole folder or album, never photo by photo.</p>
-    <div class="locbox">
-      <div class="row">
-        <label>For <select id="locScope"></select></label>
-        <label><input type="checkbox" id="locOverwrite"> also replace camera GPS</label>
-      </div>
-      <div class="row">
-        <button class="secondary" id="openEarth" title="Pin the spot, then paste the page URL or the coordinates">Google Earth</button>
-        <button class="secondary" id="openMaps" title="Right-click the spot, copy the coordinates (or the page URL)">Google Maps</button>
-        <button class="secondary" id="lastSite" hidden></button>
-      </div>
-      <div class="row"><input type="text" class="grow" id="locText"
-        placeholder="paste lat, lon[, elev] · DMS · a Google Earth or Maps URL"><button id="locCheck">Check</button></div>
-      <div id="locConfirm" hidden>
-        <p id="locSummary"></p>
-        <div class="row"><label>Site name <input type="text" id="locName" size="18"></label>
-          <button id="locApply">Confirm</button> <button class="secondary" id="locCancel">Cancel</button></div>
-      </div>
-      <div><span id="locMsg" class="small"></span></div>
+    <div class="row"><span>For <b id="locScopeText"></b></span><select id="locScope" hidden></select></div>
+    <div class="row"><label><input type="checkbox" id="locOverwrite"> also replace GPS the camera recorded</label></div>
+    <div class="row">
+      <button class="secondary" id="lastSite" hidden></button>
+      <button class="secondary" id="openEarth" title="Pin the spot, then paste the page URL or the coordinates">Google Earth</button>
+      <button class="secondary" id="openMaps" title="Right-click the spot, copy the coordinates (or the page URL)">Google Maps</button>
     </div>
-    <table id="loc"><thead><tr><th><input type="checkbox" id="all" checked title="select all"></th><th></th>
-      <th>Photo</th><th>Location</th></tr></thead><tbody></tbody></table>
+    <div class="row"><input type="text" class="grow" id="locText"
+      placeholder="paste lat, lon[, elev] · DMS · a Google Earth or Maps URL"><button id="locCheck">Check</button></div>
+    <div id="locConfirm" hidden>
+      <p id="locSummary"></p>
+      <div class="row"><label>Site name <input type="text" id="locName" size="18"></label>
+        <button id="locApply">Confirm</button> <button class="secondary" id="locCancel">Cancel</button></div>
+    </div>
+    <div><span id="locMsg" class="small"></span></div>
   </div>
 </details>
 
 <details class="step" id="s3">
-  <summary>3. Time <span class="st" id="st3"></span></summary>
+  <summary>3. Time offset <span class="st" id="st3"></span></summary>
   <div class="body">
+    <p class="muted small">How far the camera clock was off. Example: the camera said 2019-11-06 21:03 when it was
+      really 2026-11-09 08:11, so the offset is <code>+2559d11h08m</code>. Leave it empty if the clock was right.</p>
     <div class="row">
-      <label>Clock offset <input type="text" id="offset" size="13" placeholder="+2559d11h08m"></label>
+      <label>Offset <input type="text" id="offset" size="13" placeholder="+2559d11h08m"></label>
       <label>&plusmn; <input type="number" id="tol" min="0" step="1"> min</label>
-    </div>
-    <div class="row">
       <label>Timezone <input type="text" id="tz" size="16" placeholder="America/Los_Angeles"></label>
-      <label>Source <select id="source"><option value="">(folder / jpg)</option><option>jpg</option>
-        <option>raw</option><option>auto</option></select></label>
     </div>
     <div class="row">
       <button id="preview" class="secondary">Preview times</button>
-      <button id="saveCfg" class="secondary" title="write offset, tolerance and timezone into each folder's astro-id.json">Save to folder astro-id.json</button>
+      <button id="saveCfg" class="secondary">Save for this folder</button>
     </div>
     <div class="row"><span id="previewinfo" class="muted"></span></div>
     <table id="times"><thead><tr><th>Photo</th><th>Corrected time</th><th class="wide">Window</th>
@@ -144,8 +137,9 @@
   <div class="body">
     <div class="row">
       <label>Min confidence <input type="number" id="minconf" value="65" min="0" max="100"></label>
-      <label><input type="checkbox" id="write" checked> write to Facet</label>
+      <label><input type="checkbox" id="write" checked> write tags to Facet</label>
     </div>
+    <p class="muted small">Starting the solve also saves this folder's settings (file type, time offset, overlay).</p>
     <div class="row"><button id="solve">Plate solve</button> <span id="solveinfo" class="muted"></span></div>
     <div id="log"></div>
   </div>
@@ -154,10 +148,10 @@
 <details class="step" id="s5">
   <summary>5. Culling <span class="st" id="st5"></span></summary>
   <div class="body">
-    <p class="muted small">Advisory only: Facet's reject and cull flags are never written. Defocused frames are at
-      most "review" (kept for stacking).</p>
+    <div class="row"><label><input type="checkbox" id="ruleEnabled" checked> cull after solving</label></div>
+    <p class="muted small">Advisory only: nothing is rejected in Facet. Out-of-focus frames are at most "review"
+      (kept for stacking).</p>
     <details class="sub"><summary>Rule</summary>
-      <div class="row"><label><input type="checkbox" id="ruleEnabled" checked> rule enabled</label></div>
       <table id="rule"><thead><tr><th></th><th>Check</th><th>On</th><th>Thresholds</th></tr></thead><tbody></tbody></table>
       <div class="row"><button id="recull" class="secondary">Re-cull (no re-solve)</button></div>
     </details>
@@ -174,6 +168,22 @@
       <button id="applyReview" class="secondary" disabled>Apply tag</button>
     </div>
     <div class="row"><span id="reviewinfo" class="muted"></span></div>
+  </div>
+</details>
+
+<details class="step" id="s6">
+  <summary>6. Overlay <span class="st" id="st6"></span></summary>
+  <div class="body">
+    <div class="row">
+      <label><input type="checkbox" id="ovOn" checked> make overlay images</label>
+      <label><input type="checkbox" id="ovLines" checked> constellation lines</label>
+      <label><input type="checkbox" id="ovScores"> confidence after each name</label>
+    </div>
+    <p class="muted small">Overlay images are written beside the folder, in "&lt;folder&gt;-annotated".
+      Changes apply to the next solve; <b>Redraw</b> re-runs it with these settings.</p>
+    <div class="row"><button id="ovRedraw" class="secondary" disabled>Redraw</button>
+      <button id="ovShow" class="secondary" hidden>Show solved photos in Facet</button>
+      <span id="ovinfo" class="muted small"></span></div>
   </div>
 </details>
 </main>
@@ -198,12 +208,16 @@ const THRESH = {focus: ["focus_ratio", "focus_px"], trailing: ["trailing_review"
 let rule = null;
 
 function openStep(n, only) {
-  for (let i = 1; i <= 5; i++) { const d = $("s" + i); if (i === n) d.open = true; else if (only && only.includes(i)) d.open = false; }
+  for (let i = 1; i <= 6; i++) { const d = $("s" + i); if (i === n) d.open = true; else if (only && only.includes(i)) d.open = false; }
 }
 function selected() { return photos.filter((p) => p._on).map((p) => p.path); }
+function srcValue() { const r = document.querySelector('input[name="src"]:checked'); return r ? r.value : "jpg"; }
+function overlay() { return {on: $("ovOn").checked, lines: $("ovLines").checked, scores: $("ovScores").checked}; }
 function opts() {
+  const ov = overlay();
   return {paths: selected(), offset: $("offset").value.trim(), tolerance_min: $("tol").value,
-          tz: $("tz").value.trim(), source: $("source").value, min_confidence: Number($("minconf").value || 65)};
+          tz: $("tz").value.trim(), source: srcValue(), min_confidence: Number($("minconf").value || 65),
+          overlay: ov, no_overlay: !ov.on, overlay_lines: ov.lines, overlay_scores: ov.scores};
 }
 function inFacet(path, label) {   // add-on: ask the host; standalone: a plain link (the page is not sandboxed)
   return bridge && bridge.active
@@ -236,45 +250,43 @@ async function init() {
   if (NONCE) {
     bridge = B.createBridge({win: window, parent: window.parent, nonce: NONCE,
                              onContext: (ctx) => { lastCtx = ctx; if (initDone) onContext(ctx); }});
-    $("scopeBox").hidden = false; $("manualBox").open = false;
-    $("scopeinfo").textContent = "waiting for Facet...";
     bridge.ready();   // first thing: the host sends nothing before a verified ready
   }
   state = await api("api/state");
-  $("facet").textContent = `Facet ${state.facet} (v${state.version}) · annotations: ${state.annotations || "skipped"}` +
-    (state.can_write ? "" : " · READ-ONLY (no credential)");
-  $("warnings").textContent = (state.warnings || []).join(" · ");
+  $("facet").textContent = state.can_write ? "" : "Read-only: Astro has no Facet credential, so nothing can be written.";
+  const notes = state.warnings || [];
+  $("notesBox").hidden = !notes.length; $("notesSum").textContent = `Notes (${notes.length})`;
+  $("warnings").innerHTML = notes.map((n) => `<div>${esc(n)}</div>`).join("");
+  if (!NONCE) { $("scopeinfo").textContent = "Paste a folder below."; $("manualBox").open = true; }
   $("rtname").textContent = state.review_tag;
   rule = JSON.parse(JSON.stringify(state.default_rule));
   drawRule();
-  try {
-    const a = await api("api/albums");
-    albums = a.albums || [];
-    for (const al of a.albums) { const o = document.createElement("option"); o.value = al.id; o.textContent = `${al.name} (${al.count ?? "?"})`; $("album").appendChild(o); }
-  } catch (e) { /* albums are optional */ }
   initDone = true;
   if (lastCtx) onContext(lastCtx);
 }
 
 function onContext(ctx) {
-  const req = B.scopeRequest(ctx, $("scopeCat").value.trim());
-  if (!req) { if (!loadedKey) $("scopeinfo").textContent = "Facet sent no photo scope: load photos below."; return; }
+  const req = B.scopeRequest(ctx);
+  if (!req) {
+    if (!loadedKey) { $("scopeinfo").textContent = "No folder yet. Paste one below, or open Astro from an import or from photos ticked in the Gallery."; $("manualBox").open = true; }
+    return;
+  }
   const key = B.scopeKey(req);
   if (key === loadedKey) return;
   if (!loadedKey) { loadScope(req); return; }
   pendingReq = req; $("scopeChanged").hidden = false;   // never wipe a session in progress
 }
 $("useNewScope").onclick = () => { if (pendingReq) loadScope(pendingReq); };
-$("reloadScope").onclick = () => { if (scopeReq) loadScope(Object.assign({}, scopeReq, {category: $("scopeCat").value.trim()})); };
 
 function scopeLabel(req, n) {
-  if (req.kind === "import") return `Import run ${req.run_id}: ${n} photo(s)` + (req.category ? ` in category "${req.category}"` : "");
-  if (req.kind === "view") return `Facet's current view: ${n} photo(s)`;
+  if (req.kind === "import") return `From import #${req.run_id}: ${n} photo(s)`;
+  if (req.kind === "view") return `From the Gallery filter: ${n} photo(s)`;
   return `Facet selection: ${n} photo(s)`;
 }
 async function loadScope(req) {
   scopeReq = req; pendingReq = null; $("scopeChanged").hidden = true;
-  $("catRow").hidden = req.kind !== "import";
+  loadedKey = B.scopeKey(req);          // set now, so a context sent while loading is not "a change"
+  loadedAlbum = null;
   $("scopeinfo").textContent = "loading...";
   try {
     const d = await api("api/scope", req);
@@ -284,26 +296,51 @@ async function loadScope(req) {
   } catch (e) { $("scopeinfo").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 }
 
-$("load").onclick = async () => {
+async function manualLoad(body, label, album) {
   $("loadinfo").textContent = "loading...";
   try {
-    const d = await api("api/photos", {path_prefix: $("prefix").value.trim(), album_id: $("album").value,
-                                       tag: $("tag").value.trim(), category: $("category").value.trim()});
-    loadedKey = "manual"; $("scopeChanged").hidden = true;
+    const d = await api("api/photos", body);
+    loadedKey = "manual"; $("scopeChanged").hidden = true; loadedAlbum = album;
+    $("scopeinfo").textContent = `${label}: ${d.photos.length} photo(s)`;
     loaded(d);
   } catch (e) { $("loadinfo").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+}
+$("loadFolder").onclick = () => {
+  // As pasted: Facet stores Windows paths with backslashes. Strip quotes and a trailing slash only.
+  const f = $("prefix").value.trim().replace(/^"|"$/g, "").replace(/[\\/]+$/, "");
+  if (!f) { $("loadinfo").innerHTML = `<span class="err">paste a folder path first</span>`; return; }
+  const sep = f.includes("\\") ? "\\" : "/";   // end with a separator so "astro" does not also match "astro-annotated"
+  manualLoad({path_prefix: f + sep}, `Folder ${f.split(/[\\/]/).filter(Boolean).pop()}`, null);
 };
+
 
 function loaded(d) {
   photos = d.photos.map((p) => ({...p, _on: true})); folders = d.folders;
-  $("loadinfo").textContent = `${photos.length} photo(s)` + (d.raw_companion_field ? "" : " · no raw_companion field in this Facet");
-  $("st1").textContent = `${photos.length} photo(s)`;
+  $("loadinfo").textContent = "";
+
   $("showAll").hidden = !(bridge && bridge.active && photos.length);
+  $("manualBox").open = !photos.length;
+  const nRaw = photos.filter((p) => p.raw_companion).length;
+  $("rawinfo").textContent = d.raw_companion_field ? `${nRaw} of ${photos.length} have a RAW` : "";
+  $("photosSum").textContent = `Photos (${photos.length})`;
   const f = Object.values(folders).find((c) => c && c.file);
+  const names = Object.keys(folders).map((k) => k.split("/").pop());
+  $("st1").textContent = `${names.length === 1 ? names[0] : names.length + " folders"} · ${photos.length} photo(s)`;
+  if (!f) $("folderinfo").innerHTML = `<span class="muted">Nothing saved for this folder yet.</span>`;
+  else {
+    const bits = [];
+    if (f.site) bits.push(`site ${esc(f.site.name || "")} ${Number(f.site.lat).toFixed(4)}, ${Number(f.site.lon).toFixed(4)}`);
+    if (f.clock_offset) bits.push(`offset ${esc(f.clock_offset)} ±${esc(f.time_tolerance_min ?? 15)} min`);
+    if (f.solve_source) bits.push(esc(String(f.solve_source).toUpperCase()));
+    $("folderinfo").innerHTML = `Saved for this folder: ${bits.join(" · ") || "(empty)"}`;
+  }
   if (f) {
-    if (f.clock_offset && !$("offset").value) $("offset").value = f.clock_offset;
-    if (f.time_tolerance_min != null && !$("tol").value) $("tol").value = f.time_tolerance_min;
-    if (f.timezone && !$("tz").value) $("tz").value = f.timezone;
+    $("offset").value = f.clock_offset || "";
+    if (f.time_tolerance_min != null) $("tol").value = f.time_tolerance_min;
+    if (f.timezone) $("tz").value = f.timezone;
+    if (f.solve_source === "raw" || f.solve_source === "jpg") document.querySelector(`input[name="src"][value="${f.solve_source}"]`).checked = true;
+    if (f.overlay) { $("ovOn").checked = f.overlay.on !== false; $("ovLines").checked = f.overlay.lines !== false; $("ovScores").checked = !!f.overlay.scores; }
+    if (f.clock_offset) $("st3").textContent = `${f.clock_offset} ±${f.time_tolerance_min ?? 15} min`;
     if (f.cull) { rule = Object.assign(JSON.parse(JSON.stringify(state.default_rule)), f.cull);
                   rule.thresholds = Object.assign({}, state.default_rule.thresholds, f.cull.thresholds || {}); drawRule(); }
   }
@@ -326,17 +363,19 @@ function drawLoc() {
       <td><img class="th" alt=""></td>
       <td><div class="name">${inFacet(p.path, p.filename)} ${raw}</div>
         <div class="muted small">${esc(p.date_taken)}${p.date_manually_set ? ' <span class="pill">corrected</span>' : ""}</div></td>
-      <td><div class="${p.gps_source === "none" ? "warn" : ""}">${esc(p.gps_source)}</div><div class="muted small">${esc(pos)}</div></td>`;
+      <td><div class="${p.gps_source === "none" ? "warn" : ""}">${esc(({"folder-config": "saved site", "none": "none", "facet-exif": "camera GPS", "facet-manual": "set in Facet"})[p.gps_source] || p.gps_source)}</div><div class="muted small">${esc(pos)}</div></td>`;
     tb.appendChild(tr);
     queueThumb(tr.querySelector("img.th"), p.path);
   });
-  $("st2").textContent = photos.length ? (missing ? `${missing} without location` : "all located") : "";
+  const noGps = photos.filter((p) => p.gps[0] == null).length;
+  $("st2").textContent = !photos.length ? "" : !noGps ? "all have GPS in Facet"
+    : `${noGps} without GPS in Facet` + (missing < noGps ? " (saved site used for solving)" : "");
   tb.querySelectorAll("input[type=checkbox]").forEach((c) => c.onchange = () => { photos[c.dataset.i]._on = c.checked; });
   drawLocScope();
 }
 
 /* Location for a folder or an album (R-LOC): parse, show what will change, one confirm. */
-let albums = [], locPending = null;
+let albums = [], locPending = null, loadedAlbum = null;
 function folderOf(path) { return String(path).replace(/\\/g, "/").split("/").slice(0, -1).join("/"); }
 function drawLocScope() {
   const sel = $("locScope"), keep = sel.value; sel.innerHTML = "";
@@ -344,17 +383,24 @@ function drawLocScope() {
   for (const p of photos) { const f = folderOf(p.path); counts[f] = (counts[f] || 0) + 1; }
   for (const [f, n] of Object.entries(counts)) {
     const o = document.createElement("option"); o.value = "folder:" + f;
-    o.textContent = `folder ${f.split("/").pop() || f} (${n} here)`; o.title = f; sel.appendChild(o);
+    o.textContent = `folder ${f.split("/").pop() || f} (${n} photos)`; o.title = f; sel.appendChild(o);
   }
-  for (const a of albums) {
-    const o = document.createElement("option"); o.value = "album:" + a.id;
-    o.textContent = `album ${a.name} (${a.count ?? "?"})`; sel.appendChild(o);
+  if (loadedAlbum) {   // loaded from an album: that album is the natural scope, and comes first
+    const o = document.createElement("option"); o.value = "album:" + loadedAlbum.id;
+    o.textContent = `album ${loadedAlbum.name} (${photos.length})`; sel.insertBefore(o, sel.firstChild);
   }
   if ([...sel.options].some((o) => o.value === keep)) sel.value = keep;
-  const last = state.last_site;
+  else if (sel.options.length) sel.value = sel.options[0].value;
+  // One choice: plain text. Several (photos from more than one folder): a dropdown.
+  sel.hidden = sel.options.length < 2;
+  $("locScopeText").textContent = !sel.options.length ? "load photos first (step 1)"
+    : sel.options.length < 2 ? sel.options[0].textContent : "";
+  // The folder's own saved site first, else the last site used anywhere.
+  const fsite = Object.values(folders).map((c) => c && c.site).find((x) => x && x.lat != null);
+  const last = fsite || state.last_site;
   $("lastSite").hidden = !last;
   if (last) {
-    $("lastSite").textContent = `Last site: ${last.name || ""} ${Number(last.lat).toFixed(4)}, ${Number(last.lon).toFixed(4)}`;
+    $("lastSite").textContent = `${fsite ? "Saved site" : "Last site"}: ${last.name || ""} ${Number(last.lat).toFixed(4)}, ${Number(last.lon).toFixed(4)}`;
     if (!$("locText").value) $("locText").value = siteText(last);
   }
 }
@@ -372,7 +418,10 @@ function openMap(site) {
 }
 $("openEarth").onclick = () => openMap("earth");
 $("openMaps").onclick = () => openMap("maps");
-$("lastSite").onclick = () => { if (state.last_site) $("locText").value = siteText(state.last_site); };
+$("lastSite").onclick = () => {
+  const s = Object.values(folders).map((c) => c && c.site).find((x) => x && x.lat != null) || state.last_site;
+  if (s) { $("locText").value = siteText(s); $("locCheck").onclick(); }
+};
 $("locCancel").onclick = () => { locPending = null; $("locConfirm").hidden = true; };
 $("locCheck").onclick = async () => {
   const scope = locScope();
@@ -386,7 +435,8 @@ $("locCheck").onclick = async () => {
     const elev = r.elev == null ? "elevation unknown" : `${Math.round(r.elev)} m`;
     $("locSummary").textContent = `${r.lat.toFixed(6)}, ${r.lon.toFixed(6)} · ${elev} · ${r.scope.kind} "${r.scope.name}" · ` +
       `${r.changed} of ${r.photos} photo(s) will get this location` + (r.skipped ? ` (${r.skipped} keep theirs)` : "");
-    if (!$("locName").value) $("locName").value = (state.last_site && state.last_site.name) || r.scope.name;
+    const fsite = Object.values(folders).map((c) => c && c.site).find((x) => x && x.lat != null);
+    if (!$("locName").value) $("locName").value = (fsite && fsite.name) || (state.last_site && state.last_site.name) || r.scope.name;
     $("locConfirm").hidden = false; $("locMsg").textContent = "";
   } catch (e) { $("locMsg").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 };
@@ -420,19 +470,17 @@ $("preview").onclick = async () => {
       tb.appendChild(tr);
     }
     $("previewinfo").textContent = `${d.preview.length} photo(s) · hover a row for the sources`;
-    $("st3").textContent = `±${$("tol").value || "?"} min`;
+    $("st3").textContent = ($("offset").value.trim() || "camera time") + ` ±${$("tol").value || 15} min`;
   } catch (e) { $("previewinfo").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 };
-// No modal dialog: the sandbox blocks them (no allow-modals). A second click within 5 s confirms.
-let saveArmed = null;
+async function saveFolder() {
+  const d = await api("api/save-config", opts());
+  $("st3").textContent = $("offset").value.trim() ? `${$("offset").value.trim()} ±${$("tol").value || 15} min` : "camera time";
+  return d;
+}
 $("saveCfg").onclick = async () => {
-  if (!saveArmed) {
-    $("saveCfg").textContent = "Click again to write astro-id.json";
-    saveArmed = setTimeout(() => { saveArmed = null; $("saveCfg").textContent = "Save to folder astro-id.json"; }, 5000);
-    return;
-  }
-  clearTimeout(saveArmed); saveArmed = null; $("saveCfg").textContent = "Save to folder astro-id.json";
-  try { const d = await api("api/save-config", opts()); $("previewinfo").textContent = `saved: ${d.written.join(", ") || "nothing changed"}`; }
+  if (!photos.length) { $("previewinfo").innerHTML = `<span class="err">choose a folder first (step 1)</span>`; return; }
+  try { const d = await saveFolder(); $("previewinfo").textContent = d.written.length ? "Saved for this folder." : "Already saved, nothing changed."; }
   catch (e) { $("previewinfo").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 };
 
@@ -440,9 +488,9 @@ $("saveCfg").onclick = async () => {
 let after = 0, timer = null;
 $("solve").onclick = async () => {
   const body = {...opts(), write: $("write").checked, cull: currentRule()};
-  if (!body.paths.length) { $("solveinfo").textContent = "select photos first"; return; }
+  if (!body.paths.length) { $("solveinfo").textContent = "choose a folder first (step 1)"; return; }
   $("log").textContent = ""; after = 0;
-  try { await api("api/solve", body); $("solve").disabled = true; $("solveinfo").textContent = "solving...";
+  try { await saveFolder(); await api("api/solve", body); $("ovRedraw").disabled = true; $("solve").disabled = true; $("solveinfo").textContent = "solving...";
         $("st4").textContent = "running"; openStep(4, [1, 2, 3]);
         timer = setInterval(poll, 1500); }
   catch (e) { $("solveinfo").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
@@ -469,8 +517,12 @@ async function poll() {
     }
     const written = (d.reports || []).filter((r) => !r.error && !r.dry_run).map((r) => r.path);
     if (written.length && bridge) bridge.refresh(written);
+    $("ovRedraw").disabled = false;
     if (d.done) { quality = d.done.quality || {}; solved = d.done.solved_by_path || {}; cull = d.done.cull; drawCull();
-                  $("applyReview").disabled = false; openStep(5, [4]); }
+                  $("applyReview").disabled = false; openStep(5, [4]);
+                  $("ovShow").hidden = !(bridge && bridge.active);
+                  $("st6").textContent = overlay().on ? "images made" : "off";
+                  $("ovinfo").textContent = overlay().on ? "Overlay images written to the -annotated folder." : ""; }
   }
 }
 
@@ -526,6 +578,9 @@ document.querySelectorAll("button[data-show]").forEach((b) => b.onclick = () => 
   if (!cull || !bridge) return;
   bridge.showPhotos(Object.entries(cull.frames).filter(([, v]) => v.decision === b.dataset.show).map(([p]) => p));
 });
+$("ovRedraw").onclick = () => $("solve").onclick();
+$("ovShow").onclick = () => { if (bridge) bridge.showPhotos(Object.keys(solved).filter((p) => solved[p])); };
+for (const id of ["ovOn", "ovLines", "ovScores"]) $(id).onchange = () => { $("ovinfo").textContent = $("ovRedraw").disabled ? "" : "Changed: click Redraw to apply."; };
 $("applyReview").onclick = async () => {
   if (!cull) return;
   const flagged = $("reviewTag").checked ? Object.entries(cull.frames).filter(([, v]) => v.decision !== "keep").map(([p]) => p) : [];

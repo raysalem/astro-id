@@ -67,9 +67,8 @@ test("context is sanitised: unknown fields dropped, selection capped at 500", ()
 test("scope maps to the step-1 request: import run, view query, selection paths", () => {
   const base = { route: "/", album_id: null, photo: null, selection: [] };
   assert.deepEqual(B.scopeRequest(Object.assign({}, base, { scope: { kind: "import", run_id: "7" } }), "astro"),
-                   { kind: "import", run_id: "7", category: "astro" });
-  assert.deepEqual(B.scopeRequest(Object.assign({}, base, { scope: { kind: "view", query: "?tag=moon" } })),
-                   { kind: "view", query: "?tag=moon" });
+                   { kind: "import", run_id: "7" });   // no category filter: the import's photos, all of them
+  assert.equal(B.scopeRequest(Object.assign({}, base, { scope: { kind: "view", query: "?tag=moon" } })), null);
   assert.deepEqual(B.scopeRequest(Object.assign({}, base, { selection: ["a", "b"], scope: { kind: "selection" } })),
                    { kind: "selection", paths: ["a", "b"] });
   // a selection scope with nothing selected falls back to the photo being viewed
@@ -78,6 +77,10 @@ test("scope maps to the step-1 request: import run, view query, selection paths"
   assert.equal(B.scopeRequest(Object.assign({}, base, { scope: { kind: "selection" } })), null);
   assert.equal(B.scopeRequest(Object.assign({}, base, { scope: null })), null);
   assert.equal(B.scopeRequest(null), null);
+  // an unfiltered view (the whole library, or a page like Add-ons) is never a session scope
+  assert.equal(B.scopeRequest(Object.assign({}, base, { scope: { kind: "view", query: "" } })), null);
+  assert.equal(B.scopeRequest(Object.assign({}, base, { scope: { kind: "view", query: "?" } })), null);
+  assert.equal(B.scopeRequest(Object.assign({}, base, { scope: { kind: "view", query: {} } })), null);
   const k1 = B.scopeKey({ kind: "import", run_id: "7" }), k2 = B.scopeKey({ kind: "import", run_id: "8" });
   assert.notEqual(k1, k2);
   assert.equal(B.scopeKey({ kind: "view", query: { a: 1 } }), B.scopeKey({ kind: "view", query: { a: 1 } }));

@@ -67,7 +67,8 @@ def process(path: Path, offset_flag, tol_flag, site_flag, overlay_dir: Path | No
             use_fallback: bool, time_flag: str | None = None,
             tz_flag: str | None = None, policy_flags: dict | None = None, min_confidence: int = 65,
             ctx: dict | None = None, overlay_scores: bool = False,
-            solve_source: str | None = None, quality: bool = True) -> tuple[dict, list[dict]]:
+            solve_source: str | None = None, quality: bool = True,
+            overlay_lines: bool = True) -> tuple[dict, list[dict]]:
     """Solve and identify one frame. ``ctx`` (if given) receives the solution and identification,
     so a stacking sequence can reuse them."""
     fr = empty_frame(path)
@@ -125,7 +126,7 @@ def process(path: Path, offset_flag, tol_flag, site_flag, overlay_dir: Path | No
             ]
             if fr["best_fit_time"]:
                 legend.append(f"best-fit time (Moon) {fr['best_fit_time']}" + (" OUTSIDE tolerance" if fr["time_flag"] else ""))
-            draw_overlay(path, out, sol.width, ident.objects, legend, scores=overlay_scores)
+            draw_overlay(path, out, sol.width, ident.objects, legend, scores=overlay_scores, lines=overlay_lines)
             fr["overlay"] = posix(out)
         for o in ident.objects:
             rows.append(_row(fr, o, sol))
@@ -180,7 +181,7 @@ def _frame_time(path: Path, fr: dict, offset_flag, tol_flag, site_flag, time_fla
 def process_copy(path: Path, rep_fr: dict, rep_sol, rep_ident: Identification, m, offset_flag, tol_flag, site_flag,
                  overlay_dir: Path | None, make_overlay: bool, tz_flag: str | None = None,
                  policy_flags: dict | None = None, overlay_scores: bool = False,
-                 quality: bool = True) -> tuple[dict, list[dict]]:
+                 quality: bool = True, overlay_lines: bool = True) -> tuple[dict, list[dict]]:
     """A stacking-sequence frame whose pointing matches the representative: reuse its objects."""
     from .stack import map_objects
 
@@ -208,7 +209,7 @@ def process_copy(path: Path, rep_fr: dict, rep_sol, rep_ident: Identification, m
             out = od / f"{path.stem}_astro.jpg"
             legend = [path.name, f"time {fr['true_time']} +/- {fr['time_tolerance_min']} min ({fr['time_source']})",
                       f"stack-copy of {Path(rep_fr['file']).name}: shift {m.offset_deg:.2f} deg, {m.pairs} stars matched"]
-            draw_overlay(path, out, rep_sol.width, objs, legend, scores=overlay_scores)
+            draw_overlay(path, out, rep_sol.width, objs, legend, scores=overlay_scores, lines=overlay_lines)
             fr["overlay"] = posix(out)
         for o in objs:
             rows.append(_row(fr, o, rep_sol))

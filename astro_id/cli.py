@@ -26,6 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--timezone", help="IANA zone of the camera-local time (EXIF + offset) and of a naive --time "
                                       "(default: astro-id.json timezone, else inferred from the site, else system)")
     s.add_argument("--overlay-dir", help="where overlays and the CSV report go (default: <folder>-annotated)")
+    s.add_argument("--no-overlay-lines", action="store_true", help="overlay JPG without constellation/asterism lines")
     s.add_argument("--overlay-scores", action="store_true",
                    help="print the confidence after each name on the overlay JPG (default: names only)")
     s.add_argument("--solve-source", choices=["jpg", "raw", "auto"],
@@ -106,6 +107,7 @@ def _add_session(sub) -> None:
     s.add_argument("--no-overlay", action="store_true")
     s.add_argument("--no-fallback", action="store_true")
     s.add_argument("--no-quality", action="store_true")
+    s.add_argument("--no-overlay-lines", action="store_true", help="overlay JPG without constellation/asterism lines")
     s.add_argument("--overlay-scores", action="store_true")
     s.add_argument("--stack-mode", choices=["representative", "all"])
     s.add_argument("--stack-gap", type=float)
@@ -151,7 +153,7 @@ def cmd_session(args) -> int:
                               site=args.site, tz=args.tz, min_confidence=args.min_confidence, hints=hints,
                               cull=_json_arg(args.cull_rule), overlay_dir=args.overlay_dir, no_overlay=args.no_overlay,
                               no_fallback=args.no_fallback, no_quality=args.no_quality,
-                              overlay_scores=args.overlay_scores, stack_mode=args.stack_mode,
+                              overlay_scores=args.overlay_scores, overlay_lines=not args.no_overlay_lines, stack_mode=args.stack_mode,
                               stack_gap=args.stack_gap, include_results=args.results)
         opts.validate()
     except (ValueError, OSError) as exc:
@@ -262,7 +264,8 @@ def solve_files(files: list[Path], args, stack_cfg, on_frame=None) -> list[dict]
     def run_one(f, ctx=None):
         fr, rows = process(f, args.offset, args.time_tolerance, args.site, overlay_dir, not args.no_overlay,
                            not args.no_fallback, args.time, args.timezone, pf, args.min_confidence, ctx,
-                           args.overlay_scores, args.solve_source, not getattr(args, "no_quality", False))
+                           args.overlay_scores, args.solve_source, not getattr(args, "no_quality", False),
+                           overlay_lines=not getattr(args, "no_overlay_lines", False))
         by_file[f], rows_by_file[f] = fr, rows
         if on_frame is not None:
             on_frame(fr)
@@ -335,7 +338,8 @@ def _run_sequence(group, run_one, by_file, rows_by_file, args, overlay_dir, pf, 
         by_file[f], rows_by_file[f] = process_copy(f, by_file[rep], ctx["sol"], ctx["ident"], m, args.offset,
                                                    args.time_tolerance, args.site, overlay_dir, not args.no_overlay,
                                                    args.timezone, pf, args.overlay_scores,
-                                                   not getattr(args, "no_quality", False))
+                                                   not getattr(args, "no_quality", False),
+                                                   overlay_lines=not getattr(args, "no_overlay_lines", False))
         if on_frame is not None:
             on_frame(by_file[f])
 
