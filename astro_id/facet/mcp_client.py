@@ -7,7 +7,8 @@ on ``/api`` except for the image bytes (``GET /thumbnail``). The tools it sees a
   ``list_albums``;
 - ``tags.write``: ``add_tags``, ``remove_tags`` (Facet records the add-on as ``created_by``);
 - ``gps.write``: ``set_gps``, for a whole folder or album, never one photo (R-LOC);
-- ``annotations.write``: nothing until Facet PR-1.
+- ``annotations.write``: ``get_annotations``, ``set_annotations``, ``clear_annotations`` (Facet PR-1; the
+  source is always the add-on id).
 
 :class:`McpFacetClient` has the same surface as the ``/api`` :class:`~astro_id.facet.client.FacetClient`, so the
 sync and session code does not care which one it holds. Each call opens one short MCP connection (``asyncio.run``):
@@ -209,7 +210,8 @@ class McpFacetClient:
         return r.content, ctype
 
     def annotations(self, path: str) -> list[dict]:
-        raise FacetError("annotations are not on Facet's MCP yet (Facet PR-1)", 404)
+        """Every source's overlay for one photo (``get_annotations``, Facet PR-1)."""
+        return (self.call("get_annotations", {"path": path}) or {}).get("annotations") or []
 
     # --------------------------------------------------------------- writes ---
     def batch_add_tag(self, tag: str, paths: list[str]) -> int:
@@ -234,10 +236,11 @@ class McpFacetClient:
         return self.call("set_gps", args) or {}
 
     def put_annotation(self, path: str, source: str, payload: dict) -> dict:
-        raise FacetError("annotations are not on Facet's MCP yet (Facet PR-1)", 404)
+        """Store this add-on's overlay (``set_annotations``); Facet forces the source to the add-on id."""
+        return self.call("set_annotations", {"path": path, "payload": payload}) or {}
 
     def delete_annotation(self, path: str, source: str) -> bool:
-        raise FacetError("annotations are not on Facet's MCP yet (Facet PR-1)", 404)
+        return bool((self.call("clear_annotations", {"path": path}) or {}).get("removed"))
 
     def photo_page_url(self, path: str) -> str:
         return f"{self.url}/photo?path={quote(path, safe='')}"

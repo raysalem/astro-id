@@ -452,6 +452,17 @@ def test_mcp_client_against_the_stub(fake):
     assert not connect(fake.url, token=TOKEN).features()["annotations_put"]
 
 
+def test_mcp_annotations_with_facet_pr1(tmp_path):
+    from tests.fake_facet_mcp import ANNOTATION_TOOLS, ASTRO_TOOLS
+    with FakeFacet(photos(), addon_token=TOKEN, mcp_tools=set(ASTRO_TOOLS | ANNOTATION_TOOLS)) as fake:
+        c = connect(fake.url, token=TOKEN)
+        assert c.features()["annotations_put"] is True
+        payload = {"version": 1, "image": {"width": 10, "height": 10}, "items": []}
+        assert c.put_annotation(P1, "astro-id", payload)["source"] == "astro-id"
+        assert c.annotations(P1) == [{"source": "astro-id", "payload": payload}]
+        assert c.delete_annotation(P1, "astro-id") is True and c.annotations(P1) == []
+
+
 def test_mcp_allowlist_narrows_what_the_addon_sees(tmp_path):
     with FakeFacet(photos(), addon_token=TOKEN, mcp_tools={"status", "search_photos", "get_photo"}) as fake:
         c = connect(fake.url, token=TOKEN)
@@ -533,3 +544,17 @@ def test_lifeline_watches_the_chain_through_uv_and_facet():
     # no uv in the chain (run by hand): just the parent
     assert ancestors_to_watch(10, {10: (9, "python.exe"), 9: (4, "cmd.exe"), 4: (0, "x")}) == [9]
     assert ancestors_to_watch(10, {10: (99, "python.exe")}) == []          # parent already gone
+
+
+def test_album_picker_lists_only_fixed_albums():
+    """A smart album is a saved filter: Facet's album_id scope sees only fixed members, so it is left out."""
+    from astro_id.facet.serve import App
+
+    class C:
+        def albums(self):
+            return [{"id": 4, "name": "Astro", "is_smart": 1, "photo_count": 0},
+                    {"id": 6, "name": "Astro test", "is_smart": 0, "photo_count": 18}]
+
+    app = App.__new__(App)
+    app.client = C()
+    assert App.albums(app, {}, {}) == {"albums": [{"id": 6, "name": "Astro test", "count": 18}], "smart_skipped": 1}

@@ -14,7 +14,9 @@ import time
 ASTRO_TOOLS = frozenset({"status", "search_photos", "get_photo", "filter_options", "list_albums",
                          "add_tags", "remove_tags", "set_gps"})
 # Every tool the stub knows; the allowlist picks from these. delete_photos exists only to be refused.
-KNOWN = ASTRO_TOOLS | {"delete_photos", "set_rating"}
+# Facet PR-1 annotation tools: off by default (a Facet without PR-1), on with mcp_tools=ASTRO_TOOLS | ANNOTATION_TOOLS.
+ANNOTATION_TOOLS = frozenset({"get_annotations", "set_annotations", "clear_annotations"})
+KNOWN = ASTRO_TOOLS | ANNOTATION_TOOLS | {"delete_photos", "set_rating"}
 FILTER_KEYS = {"path_prefix", "scan_run", "tag", "category", "date_from", "album_id", "hide_blinks", "hide_bursts",
                "hide_duplicates", "hide_brackets", "hide_panoramas", "hide_rejected"}
 COMPACT = ("path", "filename", "date_taken", "category")
@@ -154,6 +156,27 @@ def build_server(fake):
         return _env({"scope": scope, "latitude": latitude, "longitude": longitude, "overwrite": overwrite,
                      "changed": len(changed), "skipped": len(rows) - len(changed), "dry_run": dry_run})
 
+    # PR-1: the source is always the add-on id (Facet forces it), here "astro-id".
+    async def get_annotations(path: str) -> str:
+        if (refused := guard("get_annotations", {"path": path})) is not None:
+            return refused
+        return _env({"path": path, "annotations": [{"source": s, "payload": pl} for (pp, s), pl
+                                                   in sorted(fake.annotations.items()) if pp == path]})
+
+    async def set_annotations(path: str, payload: dict, source: str | None = None) -> str:
+        if (refused := guard("set_annotations", {"path": path, "source": source})) is not None:
+            return refused
+        if source not in (None, "astro-id"):
+            return _env(error="invalid_input", message="An add-on writes only its own overlay")
+        fake.annotations[(path, "astro-id")] = payload
+        return _env({"path": path, "source": "astro-id", "items": len(payload.get("items") or [])})
+
+    async def clear_annotations(path: str, source: str | None = None) -> str:
+        if (refused := guard("clear_annotations", {"path": path})) is not None:
+            return refused
+        removed = fake.annotations.pop((path, "astro-id"), None) is not None
+        return _env({"path": path, "source": "astro-id", "removed": removed})
+
     async def delete_photos(paths: list[str]) -> str:
         return guard("delete_photos", {"paths": paths}) or _env({"deleted": []})
 
@@ -161,7 +184,7 @@ def build_server(fake):
         return guard("set_rating", {"paths": paths}) or _env({"affected": 0})
 
     for fn in (status, search_photos, get_photo, filter_options, list_albums, add_tags, remove_tags, set_gps,
-               delete_photos, set_rating):
+               get_annotations, set_annotations, clear_annotations, delete_photos, set_rating):
         server.add_tool(fn, name=fn.__name__, structured_output=False)
     return server
 

@@ -66,17 +66,20 @@
 <main>
 
 <details class="step" id="s1" open>
-  <summary>1. Folder <span class="st" id="st1"></span></summary>
+  <summary>1. Photos <span class="st" id="st1"></span></summary>
   <div class="body">
     <div class="row"><span id="scopeinfo" class="muted">waiting for Facet...</span></div>
     <div class="row" id="scopeChanged" hidden><span class="warn">Facet's view changed.</span>
       <button id="useNewScope" class="secondary">Load the new photos</button></div>
-    <details class="sub" id="manualBox">
-      <summary id="manualSum">Use another folder</summary>
-      <div class="row"><input type="text" id="prefix" class="grow"
+    <div class="row"><span>Pick:</span>
+      <label><input type="radio" name="pick" value="folder" checked> Folder</label>
+      <label><input type="radio" name="pick" value="album"> Album</label></div>
+    <div class="row" id="pickFolder"><input type="text" id="prefix" class="grow"
         placeholder="paste the folder path, e.g. \\192.168.1.90\Photos and Videos\2026\trip\astro">
-        <button id="loadFolder">Load folder</button></div>
-    </details>
+      <button id="loadFolder">Load folder</button></div>
+    <div class="row" id="pickAlbum" hidden><select id="albumSel" class="grow"></select>
+      <button id="loadAlbum">Load album</button></div>
+    <div class="row"><span id="albumNote" class="muted small"></span></div>
     <div class="row"><span>Solve from:</span>
       <label><input type="radio" name="src" value="jpg" checked> JPG</label>
       <label><input type="radio" name="src" value="raw"> RAW</label>
@@ -257,7 +260,7 @@ async function init() {
   const notes = state.warnings || [];
   $("notesBox").hidden = !notes.length; $("notesSum").textContent = `Notes (${notes.length})`;
   $("warnings").innerHTML = notes.map((n) => `<div>${esc(n)}</div>`).join("");
-  if (!NONCE) { $("scopeinfo").textContent = "Paste a folder below."; $("manualBox").open = true; }
+  if (!NONCE) $("scopeinfo").textContent = "Pick a folder or an album below.";
   $("rtname").textContent = state.review_tag;
   rule = JSON.parse(JSON.stringify(state.default_rule));
   drawRule();
@@ -268,7 +271,7 @@ async function init() {
 function onContext(ctx) {
   const req = B.scopeRequest(ctx);
   if (!req) {
-    if (!loadedKey) { $("scopeinfo").textContent = "No folder yet. Paste one below, or open Astro from an import or from photos ticked in the Gallery."; $("manualBox").open = true; }
+    if (!loadedKey) $("scopeinfo").textContent = "Nothing loaded yet. Pick a folder or an album below (or open Astro from an import or from photos ticked in the Gallery).";
     return;
   }
   const key = B.scopeKey(req);
@@ -284,7 +287,7 @@ function scopeLabel(req, n) {
   return `Facet selection: ${n} photo(s)`;
 }
 async function loadScope(req) {
-  scopeReq = req; pendingReq = null; $("scopeChanged").hidden = true;
+  scopeReq = req; pendingReq = null; lastManual = null; $("scopeChanged").hidden = true;
   loadedKey = B.scopeKey(req);          // set now, so a context sent while loading is not "a change"
   loadedAlbum = null;
   $("scopeinfo").textContent = "loading...";
@@ -296,7 +299,9 @@ async function loadScope(req) {
   } catch (e) { $("scopeinfo").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 }
 
+let lastManual = null;   // the folder or album load, so a location confirm can re-read it from Facet
 async function manualLoad(body, label, album) {
+  lastManual = [body, label, album]; scopeReq = null;
   $("loadinfo").textContent = "loading...";
   try {
     const d = await api("api/photos", body);
@@ -312,6 +317,31 @@ $("loadFolder").onclick = () => {
   const sep = f.includes("\\") ? "\\" : "/";   // end with a separator so "astro" does not also match "astro-annotated"
   manualLoad({path_prefix: f + sep}, `Folder ${f.split(/[\\/]/).filter(Boolean).pop()}`, null);
 };
+function pickMode() { return document.querySelector('input[name="pick"]:checked').value; }
+async function fillAlbums() {
+  if (albums.length) return;
+  const sel = $("albumSel"); sel.innerHTML = `<option value="">loading albums...</option>`;
+  try {
+    const d = await api("api/albums");
+    albums = d.albums || [];
+    sel.innerHTML = albums.length ? "" : `<option value="">${esc(d.error || "no regular albums in Facet")}</option>`;
+    $("albumNote").textContent = d.smart_skipped ? `${d.smart_skipped} smart album(s) not listed: they are saved filters, so pick their folder instead.` : "";
+    for (const a of albums) {
+      const o = document.createElement("option"); o.value = a.id;
+      o.textContent = `${a.name}${a.count != null ? ` (${a.count})` : ""}`; sel.appendChild(o);
+    }
+  } catch (e) { sel.innerHTML = `<option value="">${esc(e.message)}</option>`; }
+}
+document.querySelectorAll('input[name="pick"]').forEach((r) => r.onchange = () => {
+  const album = pickMode() === "album";
+  $("pickFolder").hidden = album; $("pickAlbum").hidden = !album;
+  if (album) fillAlbums();
+});
+$("loadAlbum").onclick = () => {
+  const a = albums.find((x) => String(x.id) === $("albumSel").value);
+  if (!a) { $("loadinfo").innerHTML = `<span class="err">pick an album first</span>`; return; }
+  manualLoad({album_id: a.id}, `Album ${a.name}`, {id: a.id, name: a.name});
+};
 
 
 function loaded(d) {
@@ -319,7 +349,6 @@ function loaded(d) {
   $("loadinfo").textContent = "";
 
   $("showAll").hidden = !(bridge && bridge.active && photos.length);
-  $("manualBox").open = !photos.length;
   const nRaw = photos.filter((p) => p.raw_companion).length;
   $("rawinfo").textContent = d.raw_companion_field ? `${nRaw} of ${photos.length} have a RAW` : "";
   $("photosSum").textContent = `Photos (${photos.length})`;
@@ -449,8 +478,8 @@ $("locApply").onclick = async () => {
     state.last_site = {name: $("locName").value.trim() || r.scope.name, lat: r.lat, lon: r.lon, elev_m: r.elev};
     $("locMsg").textContent = `${r.changed} photo(s) located, ${r.skipped} kept their own` +
       (r.saved && r.saved.length ? ` · site saved to ${r.saved.length} astro-id.json` : "");
-    if (scopeReq) { await loadScope(scopeReq); } else drawLoc();
-    if (bridge && r.scope.kind === "folder") bridge.refresh(photos.filter((p) => folderOf(p.path) === r.scope.folder).map((p) => p.path));
+    if (scopeReq) await loadScope(scopeReq); else if (lastManual) await manualLoad(...lastManual); else drawLoc();
+    if (bridge) bridge.refresh((r.scope.kind === "folder" ? photos.filter((p) => folderOf(p.path) === r.scope.folder) : photos).map((p) => p.path));
   } catch (e) { $("locMsg").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 };
 $("all").onchange = () => { photos.forEach((p) => p._on = $("all").checked); drawLoc(); };

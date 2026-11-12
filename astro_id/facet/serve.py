@@ -202,8 +202,12 @@ class App:
 
     def albums(self, _q, _b):
         try:
-            return {"albums": [{"id": a.get("id"), "name": a.get("name"), "count": a.get("photo_count")}
-                               for a in self.client.albums()]}
+            rows = self.client.albums()
+            # A smart album is a saved filter the gallery applies client-side: Facet's album_id scope (and set_gps by
+            # album) only sees fixed members, so a smart album would always load 0 photos. Listed as a count only.
+            fixed = [a for a in rows if not a.get("is_smart")]
+            return {"albums": [{"id": a.get("id"), "name": a.get("name"), "count": a.get("photo_count")} for a in fixed],
+                    "smart_skipped": len(rows) - len(fixed)}
         except FacetError as exc:
             return {"albums": [], "error": str(exc)}
 
