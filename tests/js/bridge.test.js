@@ -201,3 +201,34 @@ test("annotationView is inert without a nonce (standalone page)", () => {
   assert.equal(br.annotationView({ visible: true }), false);
   assert.equal(parent.sent.length, 0);
 });
+
+test("facetTarget: what Facet shows, as one thing to load (selection > album > open photo's folder > import > folder filter)", () => {
+  const base = { route: "/", album_id: null, photo: null, selection: [], scope: null };
+  const ctx = (o) => Object.assign({}, base, o);
+  // the open photo's folder, Facet's own separator kept, ending in one
+  const w = B.facetTarget(ctx({ route: "/photo", photo: "\\\\nas\\Photos\\2026\\astro\\DSC07612.JPG" }));
+  assert.deepEqual(w, { kind: "folder", key: "folder:\\\\nas\\Photos\\2026\\astro\\", prefix: "\\\\nas\\Photos\\2026\\astro\\", name: "astro" });
+  assert.equal(B.facetTarget(ctx({ photo: "/p/night/A1.JPG" })).prefix, "/p/night/");
+  // the album being viewed wins over an open-photo-less view
+  assert.deepEqual(B.facetTarget(ctx({ route: "/album/6", album_id: 6, scope: { kind: "view", query: "" } })),
+                   { kind: "album", key: "album:6", album_id: 6 });
+  // ticked photos win
+  const sel = B.facetTarget(ctx({ album_id: 6, selection: ["a", "b"], scope: { kind: "selection" } }));
+  assert.equal(sel.kind, "selection"); assert.deepEqual(sel.paths, ["a", "b"]);
+  // the import the panel was opened from
+  assert.deepEqual(B.facetTarget(ctx({ scope: { kind: "import", run_id: "7" } })), { kind: "import", key: "import:7", run_id: "7" });
+  // a gallery opened on a folder filter (query string or object, or the scope's own path_prefix)
+  assert.equal(B.facetTarget(ctx({ scope: { kind: "view", query: "path_prefix=%2Fp%2Fnight&sort=date" } })).prefix, "/p/night/");
+  assert.equal(B.facetTarget(ctx({ scope: { kind: "view", query: { path_prefix: "C:\\x\\astro" } } })).prefix, "C:\\x\\astro\\");
+  assert.equal(B.facetTarget(ctx({ scope: { kind: "view", path_prefix: "/q/" } })).name, "q");
+  // nothing specific: the whole library is never offered
+  assert.equal(B.facetTarget(ctx({ scope: { kind: "view", query: "sort=date" } })), null);
+  assert.equal(B.facetTarget(ctx({})), null);
+  assert.equal(B.facetTarget(null), null);
+  assert.equal(B.folderOfPath("noslash.jpg"), null);
+});
+
+test("sanitizeContext keeps a scope's path_prefix string only", () => {
+  assert.equal(B.sanitizeContext({ scope: { kind: "view", query: "", path_prefix: "/p/" } }).scope.path_prefix, "/p/");
+  assert.equal("path_prefix" in B.sanitizeContext({ scope: { kind: "import", run_id: "1", path_prefix: 5 } }).scope, false);
+});

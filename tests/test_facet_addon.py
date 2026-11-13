@@ -648,26 +648,39 @@ def test_bridge_js_under_node():
     assert m and int(m.group(1)) >= 8, r.stdout
 
 
-def test_page_two_sections_terms_and_script_parses(tmp_path):
-    """Panel restructure (Ray's review 2026-11-12): A. Setup / B. Run, one term each, min confidence only as a
-    sky-label display setting, Save to Facet after the review, culling last and low priority. Then (same day) the
-    save cut as its own slider in step 5, a Help page, and a tick box per result."""
+def test_page_priority_layout_terms_and_script_parses(tmp_path):
+    """Panel redesign (Ray 2026-11-12, "rank, show the top, fold the rest"): one load bar at the top (load what Facet
+    shows · Album · Import a new folder), then Location -> Time (with Auto) -> Plate solve (one button, a counter) ->
+    Results and tags -> Sky labels -> Export (options chosen at export time) -> Culling, folded. No Save setup."""
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     text = re.sub(r"<script>.*?</script>", "", html, flags=re.S)
-    for want in ("A. Setup for this folder or album", "B. Run", "Save setup", "Save to Facet", "Sky labels",
-                 "Labeled copies", "Show sky labels", "Culling (low priority)", "<b>tags</b>",
-                 # Ray 2026-11-12: two sliders (save vs show), a Help page, a tick box per result
-                 'id="saveScore"', "Save names at confidence", "Show names at confidence", 'id="help"',
-                 'id="helpBtn"', "The two confidence sliders", 'id="resAll"'):
+    for want in ('id="loadFacet"', 'id="albumSel"', "Import a new folder", "1. Location", "2. Time", "Auto",
+                 "3. Plate solve", "4. Results and tags", "Save to Facet", "5. Sky labels", "Show sky labels",
+                 "6. Export labeled copies", "Draw constellation stick figures", "Show confidence numbers",
+                 "Culling (low priority)", "<b>tags</b>", 'id="saveScore"', "Save names at confidence",
+                 "Show names at confidence", 'id="help"', 'id="helpBtn"', "The two confidence sliders", 'id="resAll"',
+                 'id="prog"', 'id="autoApply"'):
         assert want in text, want
-    text = text[text.index("<main>"):]          # the panel itself (the help page above uses the same words)
-    assert text.index('id="saveScore"') < text.index('id="saveFacet"') < text.index('id="skyScore"')
-    assert text.index("A. Setup") < text.index("Plate solve") < text.index("Save to Facet") < text.index("Culling")
-    for gone in ("Overlay", "overlay images", "write tags to Facet", 'id="minconf"', 'id="write"'):
-        assert gone not in text, gone
-    solve_step = text[text.index('id="s4"'):text.index('id="s5"')]
-    assert "confidence" not in solve_step.replace("confidence after each name", "")   # min confidence left the solve
-    assert "bridge.annotationView(" in html and '"api/save"' in html and "api/annotations?path=" in html
+    panel = text[text.index("<main>"):]          # the panel itself (the help page above uses the same words)
+    order = ['id="loadFacet"', 'id="albumSel"', 'id="importBtn"', 'id="s1"', 'id="s2"', 'id="s3"', 'id="saveScore"',
+             'id="saveFacet"', 'id="s5"', 'id="skyScore"', 'id="s6"', 'id="exportBtn"', 'id="s7"']
+    assert [panel.index(x) for x in order] == sorted(panel.index(x) for x in order)
+    # nothing is open by default except by the script's priority rule; culling is the low, folded one
+    assert not re.search(r'<details class="step[^"]*" id="s\d" open', panel)
+    assert '<details class="step low" id="s7">' in panel
+    # gone: the Save setup button and the solve-time burn options ("constellation lines"), the old A/B sections
+    for gone in ("Save setup", 'id="saveSetup"', "constellation lines", 'id="lcOn"', "A. Setup", "B. Run",
+                 "Overlay", "overlay images", 'id="minconf"', 'id="write"', 'id="scopeChanged"'):
+        assert gone not in panel, gone
+    solve_step = panel[panel.index('id="s3"'):panel.index('id="s4"')]
+    assert solve_step.count("<button") == 1 and "<input" not in solve_step       # one button, no options
+    script = re.findall(r"<script>(.*?)</script>", html.replace("<!--ASTRO_BRIDGE-->", ""), flags=re.S)[-1]
+    for want in ("bridge.annotationView(", '"api/save"', "api/annotations?path=", '"api/save-config"',
+                 '"api/export"', '"api/count"', "B.facetTarget(", "time_fit", "Solving "):
+        assert want in script, want
+    # every element the script reaches by id exists
+    ids = set(re.findall(r'\bid="([^"]+)"', text))
+    assert not set(re.findall(r'\$\("([A-Za-z0-9_]+)"\)', script)) - ids
     if NODE:
         script = re.findall(r"<script>(.*?)</script>", html.replace("<!--ASTRO_BRIDGE-->", ""), flags=re.S)[-1]
         f = tmp_path / "page.js"

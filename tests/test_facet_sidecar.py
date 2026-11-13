@@ -613,3 +613,150 @@ def test_annotation_failure_still_records_the_tags_in_the_ledger(fake, ledger, m
     rep = S.apply_results(ctx, {P1: frame(objs=[obj("orion")])})
     assert rep[0]["annotation"].startswith("error") and fake.photos[P1]["manual_tags"] == ["orion", "plate-solved"]
     assert ledger.tags(ctx.library, P1) == ["orion", "plate-solved"]
+
+
+# ----------------------------------------------- panel redesign: count, auto time, export ---
+
+def test_count_names_the_load_button_and_says_if_setup_is_saved(ui, fake, tmp_path):
+    url, app = ui
+    c = _req(url + "api/count", {"path_prefix": ROOT + "/"})
+    assert c == {"count": 3, "setup": False}
+    a = _req(url + "api/count", {"album_id": 1})
+    assert (a["count"], a["name"], a["setup"], a["smart"]) == (2, "Night", False, False)
+    app.save_album_config(1, {"clock_offset": "+1h"})
+    assert _req(url + "api/count", {"album_id": 1})["setup"] is True
+    for bad in ({}, {"album_id": "x"}, {"album_id": 99}):
+        with pytest.raises(urllib.error.HTTPError) as ei:
+            _req(url + "api/count", bad)
+        assert ei.value.code == 400
+
+
+def test_time_fit_suggests_only_from_frames_that_pin_the_time():
+    from astro_id.facet.serve import time_fit
+
+    none = time_fit({P1: {"solved": True, "best_fit_delta_min": None}, P2: {"solved": False}}, "+2559d11h08m")
+    assert none["frames"] == 0 and none["offset"] is None and none["tolerance_min"] is None
+    tf = time_fit({P1: {"solved": True, "best_fit_delta_min": -2.4}, P2: {"solved": True, "best_fit_delta_min": -1.6},
+                   P3: {"solved": True, "solver": "stack-copy", "best_fit_delta_min": 40}}, "+2559d11h08m")
+    # median -2.0 min -> the offset moves 2 min earlier, whole minutes only; tolerance = spread 0.4 + 2 -> 3
+    assert (tf["frames"], tf["offset"], tf["delta_min"], tf["tolerance_min"]) == (2, "+2559d11h06m", -2.0, 3)
+    assert tf["files"] == ["A1.JPG", "A2.JPG"] and tf["pinned_by"] == "the Moon"
+    assert time_fit({P1: {"solved": True, "best_fit_delta_min": 3}}, "")["offset"] == "+03m"
+    assert time_fit({P1: {"solved": True, "best_fit_delta_min": 3}}, "nonsense")["offset"] is None
+
+
+def test_done_carries_time_fit_and_setup_keeps_export_options(ui, fake, monkeypatch, tmp_path):
+    url, app = ui
+    _req(url + "api/photos", {"path_prefix": ROOT})
+    _run_job(url, monkeypatch, lambda p: {**frame(objs=[obj("moon", 95, 2)]), "best_fit_delta_min": 1.0})
+    _req(url + "api/solve", {"paths": [P1, P2], "offset": "+1h"})
+    tf = _wait(url)["done"]["time_fit"]
+    assert tf["frames"] == 2 and tf["offset"] == "+1h01m"
+    assert _req(url + "api/state")["sky_vocab"]["groups"][0]["id"] == "constellation"
+    # Export's options are part of the setup (saved automatically by the panel) and come back with the folder
+    from astro_id.facet.serve import export_options
+    assert export_options({"lines": False, "scores": True, "legend": "yes", "evil": 1}) == {"lines": False, "scores": True}
+    d = tmp_path / "night"
+    d.mkdir()
+    monkeypatch.setattr(app, "local", lambda p: str(d / p.rsplit("/", 1)[-1]))
+    _req(url + "api/save-config", {"paths": [P1], "export": {"lines": False, "scores": True, "legend": True}})
+    assert json.loads((d / "astro-id.json").read_text())["export"] == {"lines": False, "scores": True, "legend": True}
+    assert app.folder_config(P1)["export"] == {"lines": False, "scores": True, "legend": True}
+
+
+PAYLOAD = {"version": 1, "source": "astro-id", "image": {"width": 400, "height": 300}, "legend": "2026-11-09 08:11 PST",
+           "groups": [{"id": "constellation", "default": True}, {"id": "planet", "default": True},
+                      {"id": "asterism", "default": True}, {"id": "star", "default": False}],
+           "metrics": [{"key": "mag", "min": -5, "max": 8, "default": 6, "direction": "max"}],
+           "score": {"min": 0, "max": 100, "default": 65},
+           "items": [{"id": "orion", "label": "Orion", "group": "constellation", "score": 90, "shape": "lines",
+                      "segments": [[[10, 10], [200, 150]]], "label_at": [100, 80]},
+                     {"id": "jupiter", "label": "Jupiter", "group": "planet", "score": 70, "shape": "point",
+                      "x": 300, "y": 100, "r": 18, "values": {"mag": -2.5}},
+                     {"id": "weak", "label": "Weak", "group": "planet", "score": 40, "shape": "point", "x": 50, "y": 250},
+                     {"id": "rigel", "label": "Rigel", "group": "star", "score": 95, "shape": "point", "x": 120,
+                      "y": 200, "values": {"mag": 0.1}},
+                     {"id": "faint", "label": "Faint", "group": "star", "score": 95, "shape": "point", "x": 130,
+                      "y": 210, "values": {"mag": 5.5}},
+                     {"id": "belt", "label": "Orion's Belt", "group": "asterism", "score": 90, "shape": "lines",
+                      "segments": [[[150, 150], [170, 160]]]},
+                     {"id": "alnitak", "label": "Alnitak", "group": "star", "score": 95, "shape": "point", "x": 160,
+                      "y": 155, "member_of": "belt", "values": {"mag": 1.7}}]}
+
+
+def test_export_shows_exactly_what_the_sky_label_view_shows():
+    """Same filter as Facet's photo layer (annotations.ts settingsFromView + filterAnnotationItems)."""
+    from astro_id.export import settings, visible_items
+
+    ids = lambda view: [i["id"] for i in visible_items(PAYLOAD, settings(PAYLOAD, view))]
+    assert ids({}) == ["orion", "jupiter", "belt"]                         # defaults: stars off, score >= 65
+    assert ids({"score": 30}) == ["orion", "jupiter", "weak", "belt"]
+    assert ids({"score": None}) == ["orion", "jupiter", "weak", "belt"]    # null turns the score filter off
+    assert ids({"groups": {"star": True}}) == ["orion", "jupiter", "rigel", "faint", "belt"]   # Alnitak: its belt shows
+    assert ids({"groups": {"star": True, "asterism": False}}) == ["orion", "jupiter", "rigel", "faint", "alnitak"]
+    assert ids({"groups": {"star": True}, "metrics": {"mag": 2}}) == ["orion", "jupiter", "rigel", "belt"]
+    assert ids({"groups": {"star": True}, "show_members": True})[-1] == "alnitak"
+    assert ids({"score": 500}) == []                                        # clamped to the payload's max (100)
+    assert settings(PAYLOAD, {"visible": False})["score"] == 65             # visible is not a filter for export
+
+
+def _jpg(path, size=(800, 600)):
+    from PIL import Image
+
+    Image.new("RGB", size, (5, 5, 20)).save(path, "JPEG")
+    return path
+
+
+def test_export_route_renders_from_the_last_solve_without_solving_again(ui, fake, monkeypatch, tmp_path):
+    from astro_id import export as EX
+
+    url, app = ui
+    _req(url + "api/photos", {"path_prefix": ROOT})
+    night = tmp_path / "night"
+    night.mkdir()
+    src = _jpg(night / "A1.JPG")
+    _run_job(url, monkeypatch, lambda p: {**frame(), "file": str(src), "annotations": PAYLOAD} if p == P1
+             else frame(solved=False))
+    _req(url + "api/solve", {"paths": [P1, P2]})
+    _wait(url)
+    calls = []
+    real = EX.render
+    monkeypatch.setattr(EX, "render", lambda *a, **kw: calls.append((a, kw)) or real(*a, **kw))
+    import astro_id.session as session
+    monkeypatch.setattr(session, "run_session", lambda *a, **kw: pytest.fail("export must not solve"))
+    r = _req(url + "api/export", {"paths": [P1, P2], "view": {"score": 30, "groups": {"star": True}},
+                                  "options": {"lines": False, "scores": True, "legend": True}})
+    assert r == {"started": 2}
+    for _ in range(200):
+        st = _req(url + "api/export")
+        if not st["running"]:
+            break
+        threading.Event().wait(0.05)
+    out = tmp_path / "night-annotated" / "A1_astro.jpg"
+    assert out.is_file() and st["done"] == 2 and [w["path"] for w in st["written"]] == [P1]
+    assert st["written"][0]["items"] == 6 and st["folders"] == [str(tmp_path / "night-annotated").replace("\\", "/")]
+    assert [e["path"] for e in st["errors"]] == [P2] and "sky labels" in st["errors"][0]["error"]
+    (a, kw), = calls
+    assert a[3] == {"score": 30, "groups": {"star": True}} and kw == {"lines": False, "scores": True, "legend": True}
+    from PIL import Image
+    with Image.open(out) as im:
+        assert im.size == (800, 600)
+    assert fake.writes() == []                                             # exporting writes nothing to Facet
+    with pytest.raises(urllib.error.HTTPError) as ei:
+        _req(url + "api/export", {"paths": []})
+    assert ei.value.code == 400
+
+
+def test_export_uses_the_sky_labels_stored_in_facet_after_a_reload(ui, fake, monkeypatch, tmp_path):
+    url, app = ui
+    _req(url + "api/photos", {"path_prefix": ROOT})
+    src = _jpg(tmp_path / "A2.JPG", (400, 300))
+    monkeypatch.setattr(app, "local", lambda p: str(src))
+    fake.annotations[(P2, "astro-id")] = PAYLOAD                          # saved in an earlier session
+    payload, path = app._export_source(P2)
+    assert payload["items"] and path == str(src)
+    with pytest.raises(ValueError, match="Save to Facet"):
+        app._export_source(P1)                                             # nothing stored for P1
+    from astro_id.export import render
+    r = render(src, tmp_path / "out" / "A2_astro.jpg", payload, {}, lines=True, scores=False, legend=False)
+    assert r["items"] == 3 and (tmp_path / "out" / "A2_astro.jpg").is_file()

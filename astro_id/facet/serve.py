@@ -56,6 +56,46 @@ STATIC = Path(__file__).with_name("static")
 LAST_SITE = "last_site"
 ALBUM_SETUP = "album_setup:"          # ledger meta key prefix: one album's saved setup (JSON), per Facet library
 COPY_KEYS = ("on", "lines", "scores")
+EXPORT_KEYS = ("lines", "scores", "legend")   # Export's plain-language options (panel step 6)
+
+
+def export_options(v) -> dict | None:
+    """Saved Export options ({lines, scores, legend} booleans), or None."""
+    return {k: v[k] for k in EXPORT_KEYS if isinstance(v.get(k), bool)} if isinstance(v, dict) else None
+
+
+def _base(p) -> str:
+    return str(p).replace(chr(92), "/").rsplit("/", 1)[-1]
+
+
+def time_fit(results: dict, offset) -> dict:
+    """Auto time: what the sky says about the camera clock, from the frames whose result pins the time
+    (``best_fit_delta_min``; today only the Moon does). The median shift is added to the offset the solve used and
+    rounded to whole minutes; the tolerance covers the spread between those frames plus 2 min. Nothing is
+    suggested when no frame pins the time."""
+    import math
+    from datetime import timedelta
+    from statistics import median
+
+    from ..timeutil import format_offset, parse_offset
+
+    pins = sorted((_base(p), float(fr["best_fit_delta_min"])) for p, fr in (results or {}).items()
+                  if isinstance(fr, dict) and fr.get("solved") and fr.get("solver") != "stack-copy"
+                  and isinstance(fr.get("best_fit_delta_min"), (int, float)))
+    out = {"frames": len(pins), "pinned_by": "the Moon", "files": [f for f, _ in pins][:20], "offset": None,
+           "delta_min": None, "spread_min": None, "tolerance_min": None}
+    if not pins:
+        return out
+    try:
+        base = parse_offset(offset if offset not in (None, "") else None)
+    except ValueError:
+        return out
+    ds = [d for _, d in pins]
+    med = median(ds)
+    spread = max(abs(d - med) for d in ds)
+    out.update(delta_min=round(med, 1), spread_min=round(spread, 1),
+               offset=format_offset(base + timedelta(minutes=round(med))), tolerance_min=int(math.ceil(spread + 2)))
+    return out
 
 
 def labeled_copies(d: dict) -> dict | None:
@@ -203,6 +243,7 @@ class App:
         self.job = Job()
         self.photos: dict[str, dict] = {}   # last listing, by Facet path
         self.elevation = _elevation         # (lat, lon) -> metres or None; replaced in tests
+        self.export_job: dict = {}          # the last Export run (progress for the panel)
 
     # ------------------------------------------------------------ helpers ---
     def local(self, path: str) -> str:
@@ -218,7 +259,7 @@ class App:
                 "time_tolerance_min": d.get("time_tolerance_min"), "timezone": d.get("timezone"),
                 "solve_source": d.get("solve_source"), "site": d.get("site"), "cull": d.get("cull"),
                 "labeled_copies": labeled_copies(d), "sky_labels": sky_view(d.get("sky_labels")),
-                "min_confidence": _confidence(d.get("min_confidence"))}
+                "min_confidence": _confidence(d.get("min_confidence")), "export": export_options(d.get("export"))}
 
     def photo_row(self, p: dict, fcfg: dict) -> dict:
         src = gps_source(p)
@@ -275,7 +316,15 @@ class App:
                 "warnings": self.ctx.warnings + self.notes, "can_write": self.client.can_login,
                 "ledger": str(self.ledger.path), "default_rule": DEFAULT_RULE, "review_tag": TAG_REVIEW,
                 "addon": self.addon_id, "mount": self.mount, "tags_via": self.ctx.tags_via,
-                "transport": getattr(self.client, "mode", "api"), "last_site": self.last_site()}
+                "transport": getattr(self.client, "mode", "api"), "last_site": self.last_site(),
+                "sky_vocab": self.sky_vocab()}
+
+    @staticmethod
+    def sky_vocab() -> dict:
+        """The sky-label vocabulary (groups, metrics, score) the panel names in Export before any photo is open."""
+        from ..annotations import GROUPS, METRICS, SCORE
+
+        return {"groups": GROUPS, "metrics": METRICS, "score": SCORE}
 
     def albums(self, _q, _b):
         try:
@@ -498,6 +547,9 @@ class App:
         cut = _confidence(b.get("min_confidence"))
         if cut is not None:
             extra["min_confidence"] = cut            # "Save names at confidence >=" (step 5)
+        exp = export_options(b.get("export"))
+        if exp is not None:
+            extra["export"] = exp                    # Export's options (panel step 6)
         out = {"written": save_folder_config(sorted({str(Path(self.local(p)).parent) for p in paths}), opts, extra),
                "album": None}
         if b.get("album_id") not in (None, ""):
@@ -509,7 +561,7 @@ class App:
                      "time_tolerance_min": (int(tol) if float(tol).is_integer() else tol) if tol is not None else None,
                      "timezone": opts.tz, "solve_source": opts.source if opts.source in ("jpg", "raw", "auto") else None,
                      "labeled_copies": extra.get("labeled_copies"), "sky_labels": extra.get("sky_labels"),
-                     "min_confidence": cut}
+                     "min_confidence": cut, "export": extra.get("export")}
             out["album"] = {"album_id": int(b["album_id"]), "changed": self.save_album_config(b["album_id"], setup)}
         return out
 
@@ -539,6 +591,7 @@ class App:
             job.done["quality"] = {fp: fr.get("quality") for fp, fr in job.results.items()}
             job.done["solved_by_path"] = {fp: bool(fr.get("solved")) for fp, fr in job.results.items()}
             job.done["review"] = review_rows(paths, job.results)
+            job.done["time_fit"] = time_fit(job.results, opts.offset)
         except Exception as exc:   # surfaced to the page
             log.exception("solve job failed")
             job.error = f"{type(exc).__name__}: {exc}"
@@ -601,6 +654,93 @@ class App:
         return {"path": path, "payload": {k: mine.get(k) for k in ("version", "groups", "metrics", "score")},
                 "items": len(mine.get("items") or [])}
 
+    # ------------------------------------------------------------ count / export ---
+    def count(self, _q, b):
+        """How many photos Facet has under a folder (``path_prefix``) or in an album, and whether that folder or
+        album has a saved setup: the label of the panel's "Load what Facet shows" button."""
+        if b.get("album_id") not in (None, ""):
+            self._album_key(b["album_id"])            # a number, or ValueError
+            aid = int(b["album_id"])
+            a = next((a for a in self.client.albums() if a.get("id") is not None and int(a["id"]) == aid), None)
+            if a is None:
+                raise ValueError("no such album")
+            return {"count": a.get("photo_count"), "name": a.get("name"), "smart": bool(a.get("is_smart")),
+                    "setup": self.album_config(aid) is not None}
+        prefix = b.get("path_prefix")
+        if not isinstance(prefix, str) or not prefix.strip():
+            raise ValueError("path_prefix or album_id required")
+        photos = self.client.list_photos(path_prefix=prefix, limit=MAX_SCOPE_PHOTOS)
+        setup = bool(photos) and bool(self.folder_config(photos[0]["path"]).get("file"))
+        return {"count": len(photos), "setup": setup}
+
+    def _export_source(self, path: str):
+        """(payload, local image) for one photo: the last solve's result when it has the photo, else the sky labels
+        stored in Facet. Raises ValueError with a plain reason when there is nothing to draw."""
+        fr = self.job.results.get(path) if not self.job.running else None
+        if isinstance(fr, dict) and fr.get("solved") and isinstance(fr.get("annotations"), dict):
+            return fr["annotations"], fr.get("file") or self.local(path)
+        if not self.client.features().get("annotations_read"):
+            raise ValueError("no sky labels: plate solve it in this session first")
+        try:
+            rows = self.client.annotations(path)
+        except FacetError as exc:
+            if exc.status != 404:
+                raise
+            rows = []
+        mine = next((r.get("payload") for r in rows if r.get("source") in (ANNOTATION_SOURCE, self.addon_id)
+                     and isinstance(r.get("payload"), dict)), None)
+        if not mine or not mine.get("items"):
+            raise ValueError("no sky labels: plate solve it, then Save to Facet")
+        return mine, self.local(path)
+
+    def export(self, _q, b):
+        """Export: burn what the sky-label ``view`` shows into JPG copies in "<folder>-annotated", from the stored
+        results (no re-solve). ``{paths, view, options: {lines, scores, legend}}``; runs in the background, progress
+        on ``GET api/export``."""
+        paths = [p for p in (b.get("paths") or []) if isinstance(p, str) and p]
+        if not paths:
+            raise ValueError("no photos to export")
+        if self.export_job.get("running"):
+            raise ValueError("an export is already running")
+        if self.job.running:
+            raise ValueError("the solve is still running")
+        o = export_options(b.get("options")) or {}
+        opts = {"lines": o.get("lines", True), "scores": o.get("scores", False), "legend": o.get("legend", True)}
+        view = b.get("view") if isinstance(b.get("view"), dict) else {}
+        job = {"running": True, "total": len(paths), "done": 0, "current": None, "written": [], "errors": [],
+               "folders": []}
+        self.export_job = job
+        threading.Thread(target=self._export_run, args=(job, paths, view, opts), name="astro-export",
+                         daemon=True).start()
+        return {"started": len(paths)}
+
+    def _export_run(self, job: dict, paths: list[str], view: dict, opts: dict) -> None:
+        from ..export import render
+        from ..pipeline import default_overlay_dir
+
+        try:
+            for p in paths:
+                job["current"] = _base(p)
+                try:
+                    payload, src = self._export_source(p)
+                    src = Path(src)
+                    od = default_overlay_dir(src.parent)
+                    r = render(src, od / f"{src.stem}_astro.jpg", payload, view, **opts)
+                    job["written"].append({"path": p, "out": r["out"], "items": r["items"]})
+                    f = str(od).replace(chr(92), "/")
+                    if f not in job["folders"]:
+                        job["folders"].append(f)
+                except Exception as exc:   # one photo never stops the export
+                    job["errors"].append({"path": p, "error": str(exc) if isinstance(exc, ValueError)
+                                          else f"{type(exc).__name__}: {exc}"})
+                job["done"] += 1
+        finally:
+            job["current"] = None
+            job["running"] = False
+
+    def export_state(self, _q, _b):
+        return dict(self.export_job) if self.export_job else {"running": False, "total": 0, "done": 0}
+
     def recull(self, _q, b):
         from ..session import recull
 
@@ -633,7 +773,8 @@ class App:
               ("POST", "api/preview"): "preview", ("POST", "api/save-config"): "save_config",
               ("POST", "api/solve"): "solve", ("POST", "api/recull"): "recull",
               ("POST", "api/review-tags"): "review_tags", ("POST", "api/save"): "save",
-              ("GET", "api/annotations"): "annotations"}
+              ("GET", "api/annotations"): "annotations", ("POST", "api/count"): "count",
+              ("POST", "api/export"): "export", ("GET", "api/export"): "export_state"}
     BINARY = {("GET", "api/thumb"): "thumb"}
 
 

@@ -53,6 +53,10 @@
     } else if (s.kind === "selection") {
       scope = {kind: "selection"};
     }
+    // Facet's PanelScope may name the folder the panel was opened on (optional, spec v0.3).
+    if (scope && typeof s.path_prefix === "string" && s.path_prefix && s.path_prefix.length <= 4096) {
+      scope.path_prefix = s.path_prefix;
+    }
     return {
       route: typeof d.route === "string" ? d.route : null,
       album_id: d.album_id == null ? null : d.album_id,
@@ -83,6 +87,50 @@
     if (req.kind === "import") return "import:" + req.run_id;
     if (req.kind === "view") return "view:" + (typeof req.query === "string" ? req.query : JSON.stringify(req.query));
     return "selection:" + req.paths.join("\n");
+  }
+
+  /* The folder of a Facet photo path, as Facet stores it (its own separator kept), ending in a separator so
+   * "astro" never also matches "astro-annotated". {prefix, name} or null. */
+  function folderOfPath(p) {
+    if (typeof p !== "string" || !p) return null;
+    const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+    if (i <= 0) return null;
+    const dir = p.slice(0, i);
+    const name = dir.split(/[\\/]/).filter(Boolean).pop() || dir;
+    return {prefix: dir + p.charAt(i), name: name};
+  }
+
+  /* What Facet is showing, as a thing the panel can load with one click (the top "Load ..." button), or null.
+   * Order: photos ticked in the Gallery > the album being viewed (/album/<id>) > the open photo's folder
+   * (/photo?path=) > the import the panel was opened from > the folder filter the panel was opened on.
+   * The live context carries the route, the album id and the open photo, not the folder being browsed: Facet strips
+   * the query (?path_prefix=, ?prefix=) from `route`, so a browsed folder is known only from the open photo's path or
+   * from the scope the panel was opened with. */
+  function facetTarget(ctx) {
+    if (!ctx) return null;
+    const s = ctx.scope || {};
+    if (s.kind === "selection" && ctx.selection && ctx.selection.length) {
+      return {kind: "selection", key: "selection:" + ctx.selection.join("\n"), paths: ctx.selection.slice(0, MAX_SELECTION)};
+    }
+    if (ctx.album_id != null && /^\d+$/.test(String(ctx.album_id))) {
+      return {kind: "album", key: "album:" + Number(ctx.album_id), album_id: Number(ctx.album_id)};
+    }
+    const f = folderOfPath(ctx.photo);
+    if (f) return {kind: "folder", key: "folder:" + f.prefix, prefix: f.prefix, name: f.name};
+    if (s.kind === "import") return {kind: "import", key: "import:" + s.run_id, run_id: s.run_id};
+    let pre = s.path_prefix || null;
+    if (!pre && s.kind === "view" && typeof s.query === "string") {
+      try { pre = new URLSearchParams(s.query.replace(/^\?/, "")).get("path_prefix"); } catch (e) { pre = null; }
+    } else if (!pre && s.kind === "view" && s.query && typeof s.query === "object" && typeof s.query.path_prefix === "string") {
+      pre = s.query.path_prefix;
+    }
+    if (pre) {
+      const sep = pre.indexOf("\\") >= 0 ? "\\" : "/";
+      const p = /[\\/]$/.test(pre) ? pre : pre + sep;
+      const name = p.split(/[\\/]/).filter(Boolean).pop() || p;
+      return {kind: "folder", key: "folder:" + p, prefix: p, name: name};
+    }
+    return null;
   }
 
   /* annotation_view (PLUGIN_BOUNDARY.md §6c): how Facet draws this add-on's sky labels. Only the contract's keys,
@@ -190,5 +238,5 @@
 
   return {V: V, MAP_SITES: MAP_SITES, readNonce: readNonce, constEq: constEq, sanitizeContext: sanitizeContext,
           scopeRequest: scopeRequest, scopeKey: scopeKey, createBridge: createBridge, makeApi: makeApi,
-          sanitizeView: sanitizeView};
+          sanitizeView: sanitizeView, folderOfPath: folderOfPath, facetTarget: facetTarget};
 });
