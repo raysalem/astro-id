@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import os
+from contextlib import contextmanager
 from urllib.parse import quote
 
 import requests
@@ -154,8 +155,16 @@ class FacetClient:
         f["annotations_read"] = r in ok_read
         r = self._probe("POST", "/api/photos/plugin_tags", json={})
         f["plugin_tags"] = r in ok_write
+        # Model D (plugin summary tags, indexed detections, batch overlays) is an add-on token's MCP contract;
+        # this password path keeps per-object tags.
+        f["model_d"] = False
         self._features = f
         return f
+
+    @contextmanager
+    def job(self):
+        """Same surface as the MCP client's one-session-per-job block; plain HTTP needs nothing held."""
+        yield self
 
     def _probe(self, method: str, path: str, **kw) -> int:
         if self.token is None and self.can_login:
@@ -239,6 +248,10 @@ class FacetClient:
     def delete_tag(self, path: str, tag: str) -> bool:
         r = self.request("DELETE", "/api/photo/manual_tags", json={"path": path, "tag": tag})
         return bool(r.json().get("removed"))
+
+    def batch_remove_tag(self, tag: str, paths: list[str]) -> dict:
+        """Remove one tag from ``paths`` (one call per photo on this path): ``{affected, skipped_foreign}``."""
+        return {"affected": sum(1 for p in paths if self.delete_tag(p, tag)), "skipped_foreign": 0}
 
     def set_location(self, lat: float, lon: float, *, path_prefix: str | None = None, album_id: int | None = None,
                      overwrite: bool = False, dry_run: bool = False) -> dict:

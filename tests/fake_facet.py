@@ -26,7 +26,7 @@ CAP = 50
 class FakeFacet:
     def __init__(self, photos: list[dict], *, password="pw", annotations_put=True, annotations_read=True,
                  version="1.29.0", addon_token=None, addon_denied=(), plugin_tags=False, mcp_tools=None,
-                 addon_id="astro-id", album_names=None):
+                 addon_id="astro-id", album_names=None, model_d=False):
         self.photos = {p["path"]: {"manual_tags": [], "tags": "", **p} for p in photos}
         self.password = password
         self.annotations_put = annotations_put
@@ -44,6 +44,9 @@ class FakeFacet:
 
         self.mcp_tools = set(ASTRO_TOOLS if mcp_tools is None else mcp_tools)
         self.mcp_calls: list[tuple] = []
+        self.mcp_inits = 0                 # MCP initialize requests (one per session)
+        self.model_d = model_d             # Facet fix/review-all add-on contract (fake_facet_mcp.py)
+        self.detections: dict = {}         # model D: path -> [{label, grp, score}]
         self.addon_id = addon_id
         self.album_names = dict(album_names or {1: "Night"})
         self.mcp = None
@@ -73,6 +76,7 @@ class FakeFacet:
         v["manual_tags"] = sorted(r["manual_tags"])
         v["tags_list"] = [t.strip() for t in (r.get("tags") or "").split(",") if t.strip()]
         v.pop("tag_created_by", None)
+        v.pop("plugin_rows", None)
         v.pop("albums", None)
         return v
 
@@ -114,6 +118,12 @@ class FakeFacet:
                 raw = self.rfile.read(n) if n else b""
                 tok = (self.headers.get("Authorization") or "").removeprefix("Bearer ")
                 fake.calls.append((method, "/mcp", {}, {}))
+                try:
+                    msg = json.loads(raw) if raw else None
+                except ValueError:
+                    msg = None
+                if isinstance(msg, dict) and msg.get("method") == "initialize":
+                    fake.mcp_inits += 1
                 if fake.mcp is None or tok != fake.addon_token:
                     return self._out(401, {"detail": "A valid agent token is required"})
                 status, hdrs, data = forward(fake.mcp_port, method, "/mcp", self.headers, raw)

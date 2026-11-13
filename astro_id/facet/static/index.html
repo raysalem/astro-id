@@ -67,6 +67,7 @@
   fieldset { border:1px solid var(--line); border-radius:5px; margin:6px 0; padding:4px 8px; min-width:0; }
   legend { color:var(--muted); font-size:12px; padding:0 4px; }
   @media (max-width: 560px) { .wide { display:none; } }
+  body.names-search .w-tags, body:not(.names-search) .w-search { display:none; }
   section.help { max-width:760px; margin:0 auto; padding:4px 12px 32px; }
   section.help h2 { font-size:14px; margin:16px 0 4px; }
   section.help p, section.help li, section.help dd { margin-top:2px; }
@@ -99,8 +100,9 @@
     <li><b>Location</b> (1), once per folder or album.</li>
     <li><b>Time</b> (2): how far the camera clock was off. After a solve, <b>Auto</b> may offer a correction.</li>
     <li><b>Plate solve</b> (3): one button. This only reads the photos; nothing in Facet changes.</li>
-    <li><b>Results and tags</b> (4): what was found in each photo. Untick photos you do not want, then <b>Save to
-      Facet</b> writes the tags and the sky labels.</li>
+    <li><b>Results</b> (4): what was found in each photo. Untick photos you do not want, then <b>Save to
+      Facet</b> writes the <span class="w-tags">tags</span><span class="w-search">searchable names, a
+      <i>plate-solved</i> tag</span> and the sky labels.</li>
     <li><b>Sky labels</b> (5): open a photo in Facet and choose what is drawn over it.</li>
     <li><b>Export</b> (6), optional: JPG copies with exactly those labels burned in, for sharing outside Facet.</li>
   </ol>
@@ -109,8 +111,13 @@
 
   <h2 id="h-terms">Words used here</h2>
   <dl>
-    <dt>Tag</dt><dd>A searchable word on a photo in Facet, e.g. <i>cygnus</i> or <i>jupiter</i>. You filter the
-      gallery by tags. Written by <b>Save to Facet</b>.</dd>
+    <dt>Tag</dt><dd class="w-tags">A searchable word on a photo in Facet, e.g. <i>cygnus</i> or <i>jupiter</i>. You
+      filter the gallery by tags. Written by <b>Save to Facet</b>.</dd>
+      <dd class="w-search">A word on a photo in Facet that you filter the gallery by. Astro writes only
+      <i>plate-solved</i> or <i>plate-solve failed</i> (and <i>astro-review</i> if you ask); your own tags are yours.</dd>
+    <dt class="w-search">Searchable name</dt><dd class="w-search">A name Astro found, e.g. <i>cygnus</i> or
+      <i>jupiter</i>, that Facet's search finds. Saved by <b>Save to Facet</b> for the names at or above the step 4
+      slider. It is not a tag, so it never fills up your tag list.</dd>
     <dt>Sky labels</dt><dd>The names Facet draws on top of the photo, each with a small circle at the object. Stored
       with the photo by <b>Save to Facet</b>, but drawn only while this panel is open and <b>Show sky labels</b> is
       on. They never change the photo file.</dd>
@@ -129,14 +136,17 @@
   <h2 id="h-sliders">The two confidence sliders</h2>
   <p>They do different jobs:</p>
   <ul>
-    <li><b>Save names at confidence &ge;</b> (step 4, default 65) decides what is <b>saved</b>. Names at or above it
-      become tags. Raising it and saving again removes the tags that are now below it; lowering it adds them.</li>
+    <li class="w-tags"><b>Save names at confidence &ge;</b> (step 4, default 65) decides what is <b>saved</b>. Names
+      at or above it become tags. Raising it and saving again removes the tags that are now below it; lowering it
+      adds them.</li>
+    <li class="w-search"><b>Make names searchable at confidence &ge;</b> (step 4, default 65) decides which names
+      Facet's search finds. Raising it and saving again drops the names now below it; lowering it adds them.</li>
     <li><b>Show names at confidence &ge;</b> (step 5) decides what is <b>shown</b> on the photo, and what
-      <b>Export</b> burns into the copies. It is display only: moving it never changes tags. Every name found is
-      stored as a sky label, so you can show more (or fewer) names than you tagged.</li>
+      <b>Export</b> burns into the copies. It is display only: moving it never changes what is saved. Every name
+      found is stored as a sky label, so you can show more (or fewer) names than you saved.</li>
   </ul>
-  <p class="muted">A star that belongs to a tagged constellation is not tagged on its own (the constellation tag
-    covers it). It still appears as a sky label.</p>
+  <p class="muted">A star that belongs to a saved constellation, cluster or asterism is not saved on its own (the
+    group's name covers it). It still appears as a sky label.</p>
 
   <h2 id="h-setup">Setup details</h2>
   <dl>
@@ -180,7 +190,8 @@
 
   <h2 id="h-safe">Is it safe to repeat?</h2>
   <p>Yes. Solving and exporting write nothing to Facet. Saving again writes only what changed, and Astro only ever
-    changes its own tags and sky labels, never the ones you or other tools added.</p>
+    changes its own tags, names and sky labels, never the ones you or other tools added.<span class="w-search"> The
+    first save also removes the per-name tags an older Astro wrote (it keeps a list); the names stay searchable.</span></p>
   <div class="row"><button id="helpBack2">&larr; Back to the panel</button></div>
 </section>
 <main>
@@ -268,21 +279,24 @@
 </details>
 
 <details class="step" id="s4">
-  <summary>4. Results and tags <span class="st" id="st4"></span></summary>
+  <summary>4. Results <span class="st" id="st4"></span></summary>
   <div class="body">
     <div class="row"><span id="resinfo" class="muted">Plate solve first (step 3).</span></div>
     <table id="results"><thead><tr><th><input type="checkbox" id="resAll" checked title="tick all to save"></th>
       <th></th><th>Photo</th><th>Solved</th><th class="wide">Grade</th>
       <th>Names</th></tr></thead><tbody></tbody></table>
-    <div class="row"><label>Save names at confidence&nbsp;&ge; <input type="range" id="saveScore" min="0" max="100"
+    <div class="row"><label><span class="w-tags">Save names</span><span class="w-search">Make names searchable</span>
+        at confidence&nbsp;&ge; <input type="range" id="saveScore" min="0" max="100"
         step="5" value="65"> <span id="saveScoreV" class="n">65</span></label>
       <span id="saveCount" class="muted small"></span></div>
     <div class="row">
       <button id="saveFacet" disabled>Save to Facet</button>
       <button id="showSolved" class="secondary" hidden>Show solved photos in Facet</button>
     </div>
-    <p class="muted small" style="margin:2px 0">Names at or above the slider become <b>tags</b> (searchable words on
-      each photo in Facet); every name found is stored as a <b>sky label</b>. Safe to repeat.
+    <p class="muted small" style="margin:2px 0"><span class="w-tags">Names at or above the slider become <b>tags</b>
+      (searchable words on each photo in Facet)</span><span class="w-search">Facet's search finds the names at or above
+      the slider; each photo gets a <i>plate-solved</i> tag</span>; every name found is stored as a <b>sky label</b>.
+      Safe to repeat.
       <button class="link" data-help="h-sliders">More</button></p>
     <div class="row"><span id="saveinfo" class="small"></span></div>
   </div>
@@ -298,7 +312,7 @@
       <div class="row"><label>Show names at confidence&nbsp;&ge; <input type="range" id="skyScore"> <span id="skyScoreV" class="n"></span></label></div>
       <div id="skyMetrics"></div>
       <div class="row"><label><input type="checkbox" id="skyScores"> show scores</label></div>
-      <p class="muted small" style="margin:2px 0">Display only: Facet redraws as you change these; no tags change.
+      <p class="muted small" style="margin:2px 0">Display only: Facet redraws as you change these; nothing saved changes.
         Export burns what is shown here. <button class="link" data-help="h-sliders">More</button></p>
     </div>
   </div>
@@ -414,6 +428,7 @@ async function init() {
     bridge.ready();   // first thing: the host sends nothing before a verified ready
   }
   state = await api("api/state");
+  document.body.classList.toggle("names-search", state.names_as === "searchable");
   $("facet").textContent = state.can_write ? "" : "Read-only: Astro has no Facet credential, so nothing can be written.";
   const notes = state.warnings || [];
   $("notesBox").hidden = !notes.length; $("notesSum").textContent = `Notes (${notes.length})`;
@@ -840,12 +855,13 @@ async function poll() {
 const GROUP_LABEL = {constellation: "constellation", planet: "planet / Moon", catalog: "Messier / NGC / IC",
                      asterism: "asterism", star: "star"};
 function saveCut() { return Number($("saveScore").value); }
-const saved = (o) => o.tag && (o.confidence || 0) >= saveCut();   // becomes a tag at the current cut
+const saved = (o) => o.tag && (o.confidence || 0) >= saveCut();   // saved (tag or searchable name) at the current cut
+const searchMode = () => !!(state && state.names_as === "searchable");
 function showSaveCut() {
   $("saveScoreV").textContent = saveCut();
   const rows = review.filter((r) => toSave.has(r.path));
   const n = rows.reduce((a, r) => a + r.objects.filter(saved).length, 0);
-  $("saveCount").textContent = review.length ? `${n} tag(s) on ${rows.length} ticked photo(s)` : "";
+  $("saveCount").textContent = review.length ? `${n} ${searchMode() ? "searchable name(s)" : "tag(s)"} on ${rows.length} ticked photo(s)` : "";
   if (review.length) $("saveFacet").disabled = !state.can_write || !rows.length;
 }
 $("saveScore").oninput = () => { showSaveCut(); if (review.length) drawResults(); };
@@ -861,8 +877,8 @@ function drawResults() {
     const one = (o) => `<span title="${esc(GROUP_LABEL[o.group] || o.group || "")}">${esc(o.name)} <span class="muted">${esc(o.confidence)}</span></span>`;
     const keep = r.objects.filter(saved), low = r.objects.filter((o) => o.tag && !saved(o)), grouped = r.objects.filter((o) => !o.tag);
     const list = (title, objs, cls) => objs.length ? `<div class="${cls}"><b>${title} (${objs.length}):</b> ${objs.map(one).join(" · ")}</div>` : "";
-    const names = list("Saved as tags", keep, "") + list("Below the save cut", low, "muted")
-      + list("Covered by their constellation, cluster or asterism tag", grouped, "muted");
+    const names = list(searchMode() ? "Searchable" : "Saved as tags", keep, "") + list("Below the slider", low, "muted")
+      + list("Covered by their constellation, cluster or asterism", grouped, "muted");
     const cls = r.status === "failed" ? "reject" : "keep";
     const isOpen = openNames.has(r.path);
     // Ticked = written by Save to Facet. A failed solve stays tickable: saving it clears earlier astro-id tags.
@@ -902,7 +918,10 @@ $("saveFacet").onclick = async () => {
   try {
     const d = await api("api/save", {min_confidence: saveCut(), paths: [...toSave]});
     const skip = d.annotations ? "" : " (sky labels skipped: this Facet cannot store them)";
-    $("saveinfo").innerHTML = `<span class="ok">Saved ${d.photos} photo(s)</span>: tags +${d.tags_added} -${d.tags_removed}, sky labels on ${d.sky_labels}${esc(skip)}` +
+    const what = d.names_as === "searchable"
+      ? `${d.searchable} searchable name(s), sky labels on ${d.sky_labels}` + (d.old_tags_removed ? `, ${d.old_tags_removed} old per-name tag(s) removed` : "")
+      : `tags +${d.tags_added} -${d.tags_removed}, sky labels on ${d.sky_labels}`;
+    $("saveinfo").innerHTML = `<span class="ok">Saved ${d.photos} photo(s)</span>: ${esc(what)}${esc(skip)}` +
       (d.errors ? ` · <span class="err">${d.errors} error(s)</span>` : "") + ". Open a photo in Facet to see its sky labels (5).";
     $("st4").textContent = `${review.filter((r) => r.status !== "failed").length}/${review.length} solved · ${d.photos} saved`;
     $("saveFacet").textContent = "Save to Facet again";
@@ -930,7 +949,7 @@ async function skyContext(photo) {
     const d = await api("api/annotations?path=" + encodeURIComponent(photo));
     if (seq !== skySeq) return;   // another photo was opened meanwhile
     skyPayload = d.payload;
-    $("skyinfo").textContent = skyPayload ? `${base(photo)}: ${d.items} sky label(s)`
+    $("skyinfo").textContent = skyPayload ? `${base(photo)}: ${d.items} sky label(s)` + (d.searchable != null ? `, ${d.searchable} searchable` : "")
       : `${base(photo)} has no sky labels yet: plate solve it, then Save to Facet.` + (d.note ? ` (${d.note})` : "");
     if (skyPayload && !$("solve").disabled) $("s5").open = true;   // a photo with sky labels is open: "see it" is the priority
   } catch (e) { if (seq === skySeq) $("skyinfo").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
