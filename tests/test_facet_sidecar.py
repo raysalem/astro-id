@@ -769,3 +769,47 @@ def test_export_uses_the_sky_labels_stored_in_facet_after_a_reload(ui, fake, mon
     from astro_id.export import render
     r = render(src, tmp_path / "out" / "A2_astro.jpg", payload, {}, lines=True, scores=False, legend=False)
     assert r["items"] == 3 and (tmp_path / "out" / "A2_astro.jpg").is_file()
+
+
+def test_f9_two_export_clicks_start_one_export(ui, monkeypatch, tmp_path):
+    import time as _t
+    from astro_id import export as EX
+    from astro_id.facet import serve as SVV
+
+    url, app = ui
+    release = threading.Event()
+    monkeypatch.setattr(app, "_export_source", lambda p: ({"version": 1, "items": []}, str(tmp_path / "n" / "A.JPG")))
+    monkeypatch.setattr(EX, "render", lambda *a, **kw: (release.wait(5), {"out": str(a[1]), "items": 0})[1])
+    real = SVV.export_options
+    monkeypatch.setattr(SVV, "export_options", lambda v: (_t.sleep(0.2), real(v))[1])   # widens the race window
+    out = []
+
+    def click():
+        try:
+            app.export(None, {"paths": [P1]})
+            out.append("started")
+        except ValueError as exc:
+            out.append(str(exc))
+    ts = [threading.Thread(target=click) for _ in range(2)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    release.set()
+    assert sorted(out) == ["an export is already running", "started"]
+
+
+def test_f9_a_raw_and_its_jpg_export_to_different_files(ui, monkeypatch, tmp_path):
+    from astro_id import export as EX
+
+    url, app = ui
+    d = tmp_path / "night"
+    d.mkdir()
+    for n in ("IMG_1.CR2", "IMG_1.JPG", "IMG_1.xmp", "IMG_2.JPG", "IMG_2.xmp"):
+        (d / n).write_bytes(b"x")
+    monkeypatch.setattr(app, "_export_source", lambda p: ({"version": 1, "items": []}, str(d / p)))
+    outs = []
+    monkeypatch.setattr(EX, "render", lambda src, out, *a, **kw: outs.append(out.name) or {"out": str(out), "items": 0})
+    job = {"running": True, "total": 3, "done": 0, "current": None, "written": [], "errors": [], "folders": []}
+    app._export_run(job, ["IMG_1.CR2", "IMG_1.JPG", "IMG_2.JPG"], {}, {})
+    assert outs == ["IMG_1_cr2_astro.jpg", "IMG_1_jpg_astro.jpg", "IMG_2_astro.jpg"] and not job["errors"]

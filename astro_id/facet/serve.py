@@ -248,6 +248,7 @@ class App:
         self.photos: dict[str, dict] = {}   # last listing, by Facet path
         self.elevation = _elevation         # (lat, lon) -> metres or None; replaced in tests
         self.export_job: dict = {}          # the last Export run (progress for the panel)
+        self._export_lock = threading.Lock()  # one export at a time: the check and the start are one step
 
     # ------------------------------------------------------------ helpers ---
     def local(self, path: str) -> str:
@@ -735,19 +736,34 @@ class App:
         paths = [p for p in (b.get("paths") or []) if isinstance(p, str) and p]
         if not paths:
             raise ValueError("no photos to export")
-        if self.export_job.get("running"):
-            raise ValueError("an export is already running")
-        if self.job.running:
-            raise ValueError("the solve is still running")
-        o = export_options(b.get("options")) or {}
-        opts = {"lines": o.get("lines", True), "scores": o.get("scores", False), "legend": o.get("legend", True)}
-        view = b.get("view") if isinstance(b.get("view"), dict) else {}
-        job = {"running": True, "total": len(paths), "done": 0, "current": None, "written": [], "errors": [],
-               "folders": []}
-        self.export_job = job
-        threading.Thread(target=self._export_run, args=(job, paths, view, opts), name="astro-export",
-                         daemon=True).start()
+        with self._export_lock:             # a double click must not start two writers on the same files
+            if self.export_job.get("running"):
+                raise ValueError("an export is already running")
+            if self.job.running:
+                raise ValueError("the solve is still running")
+            o = export_options(b.get("options")) or {}
+            opts = {"lines": o.get("lines", True), "scores": o.get("scores", False), "legend": o.get("legend", True)}
+            view = b.get("view") if isinstance(b.get("view"), dict) else {}
+            job = {"running": True, "total": len(paths), "done": 0, "current": None, "written": [], "errors": [],
+                   "folders": []}
+            self.export_job = job
+            threading.Thread(target=self._export_run, args=(job, paths, view, opts), name="astro-export",
+                             daemon=True).start()
         return {"started": len(paths)}
+
+    @staticmethod
+    def _export_name(src: Path) -> str:
+        """``<stem>_astro.jpg``; ``<stem>_<ext>_astro.jpg`` when another file with the same stem sits in the folder
+        (IMG_1.CR2 + IMG_1.JPG), so a RAW and its JPG never write the same copy."""
+        try:
+            from ..imageio import DIRECT_EXT, RAW_EXT
+
+            images = DIRECT_EXT | RAW_EXT          # an .xmp sidecar is not a twin
+            twin = any(f.stem == src.stem and f.suffix.lower() != src.suffix.lower() and f.suffix.lower() in images
+                       for f in src.parent.iterdir())
+        except OSError:
+            twin = False
+        return f"{src.stem}_{src.suffix.lstrip('.').lower()}_astro.jpg" if twin else f"{src.stem}_astro.jpg"
 
     def _export_run(self, job: dict, paths: list[str], view: dict, opts: dict) -> None:
         from ..export import render
@@ -760,7 +776,7 @@ class App:
                     payload, src = self._export_source(p)
                     src = Path(src)
                     od = default_overlay_dir(src.parent)
-                    r = render(src, od / f"{src.stem}_astro.jpg", payload, view, **opts)
+                    r = render(src, od / self._export_name(src), payload, view, **opts)
                     job["written"].append({"path": p, "out": r["out"], "items": r["items"]})
                     f = str(od).replace(chr(92), "/")
                     if f not in job["folders"]:
