@@ -625,6 +625,15 @@ def test_count_names_the_load_button_and_says_if_setup_is_saved(ui, fake, tmp_pa
     assert (a["count"], a["name"], a["setup"], a["smart"]) == (2, "Night", False, False)
     app.save_album_config(1, {"clock_offset": "+1h"})
     assert _req(url + "api/count", {"album_id": 1})["setup"] is True
+    # a photo opened from an album: is it in the album the user viewed last?
+    members = {1: [{"path": P2}]}                                   # the fake's listing ignores album_id
+    real = app.client.list_photos
+    app.client.list_photos = lambda **kw: members[kw["album_id"]] if kw.get("album_id") else real(**kw)
+    assert "contains" not in a and _req(url + "api/count", {"album_id": 1, "path": P1})["contains"] is False
+    assert _req(url + "api/count", {"album_id": 1, "path": P2})["contains"] is True
+    # the page checks this to tell a stale add-on process from a broken one
+    from astro_id.facet.serve import PAGE_VERSION
+    assert _req(url + "api/state")["page_version"] == PAGE_VERSION
     for bad in ({}, {"album_id": "x"}, {"album_id": 99}):
         with pytest.raises(urllib.error.HTTPError) as ei:
             _req(url + "api/count", bad)

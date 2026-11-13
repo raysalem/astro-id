@@ -6,10 +6,11 @@
 <title>Astro session</title>
 <style>
   :root { --bg:#fff; --fg:#1b1d21; --muted:#5d6470; --line:#d9dce1; --card:#f6f7f9; --accent:#2b59c3;
-          --keep:#1f7a3a; --review:#a66300; --reject:#b3261e; }
+          --on-accent:#fff; --keep:#1f7a3a; --review:#a66300; --reject:#b3261e; }
   @media (prefers-color-scheme: dark) {
+    /* white on the pale dark-mode blue read as "disabled": dark text on it instead */
     :root { --bg:#14161a; --fg:#e6e8eb; --muted:#9aa1ab; --line:#2c3038; --card:#1c1f25; --accent:#7aa2ff;
-            --keep:#5cc27a; --review:#f0a43a; --reject:#ff6b61; }
+            --on-accent:#0b1020; --keep:#5cc27a; --review:#f0a43a; --reject:#ff6b61; }
   }
   * { box-sizing: border-box; }
   [hidden] { display:none !important; }
@@ -20,7 +21,8 @@
   .loadbar { border:1px solid var(--line); border-radius:6px; padding:8px 10px; margin:8px 0; background:var(--card); }
   .loaded { padding:4px 2px; margin:4px 0 2px; }
   button.big { width:100%; padding:8px 10px; font-weight:600; text-align:left; overflow:hidden; text-overflow:ellipsis;
-               white-space:nowrap; }
+               white-space:nowrap; opacity:1; }
+  button.big:not(.secondary) { box-shadow:0 1px 2px rgba(0,0,0,.25); }
   details.step { border:1px solid var(--line); border-radius:6px; margin:8px 0; background:var(--card); }
   details.step > summary { cursor:pointer; padding:7px 10px; font-weight:600; list-style:none; display:flex;
                            gap:6px; align-items:baseline; }
@@ -38,7 +40,7 @@
   input[type=number] { width:5em; }
   input[type=range] { width:140px; max-width:100%; }
   input.grow, select.grow { flex:1 1 140px; width:100%; }
-  button { background:var(--accent); color:#fff; border:0; border-radius:4px; padding:5px 10px; font:inherit;
+  button { background:var(--accent); color:var(--on-accent); border:0; border-radius:4px; padding:5px 10px; font:inherit;
            cursor:pointer; max-width:100%; }
   button.secondary { background:transparent; color:var(--accent); border:1px solid var(--accent); }
   button.link { background:none; border:0; color:var(--accent); padding:0; text-decoration:underline; }
@@ -358,7 +360,22 @@ const plural = (n, one, many) => `${n} ${n === 1 ? one : (many || one + "s")}`;
 // Nonce: from the document URL once, then memory only (no storage exists in an opaque origin).
 const NONCE = B.readNonce(location.search);
 const API = B.makeApi((u, o) => fetch(u, o), NONCE);
-const api = API.call;
+// Must equal serve.py PAGE_VERSION. Facet reads this page from disk on every load but keeps the add-on process
+// running, so after an update the page can be newer than its server: say so instead of "HTTP 404".
+const PAGE_VERSION = "2026-11-12.4";
+const STALE_SERVER = "Astro was updated: stop and reopen it from Facet's Add-ons page.";
+let serverStale = false;
+async function api(path, body) {
+  try { return await API.call(path, body); }
+  catch (e) {   // an api route the running server does not know = an older server than this page
+    if (/^(HTTP 404|not found)$/i.test(e.message)) { markStale(); throw new Error(STALE_SERVER); }
+    throw e;
+  }
+}
+function markStale() {
+  serverStale = true;
+  $("facet").innerHTML = `<b>${esc(STALE_SERVER)}</b> <span class="muted small">(this panel is newer than the running add-on)</span>`;
+}
 let bridge = null, scopeReq = null, loadedKey = "", initDone = false, lastCtx = null;
 
 let state = {}, photos = [], folders = {}, cull = null, quality = {}, solved = {}, review = [], timeFit = null;
@@ -415,6 +432,7 @@ async function init() {
   }
   state = await api("api/state");
   $("facet").textContent = state.can_write ? "" : "Read-only: Astro has no Facet credential, so nothing can be written.";
+  if (state.page_version !== PAGE_VERSION) markStale();
   const notes = state.warnings || [];
   $("notesBox").hidden = !notes.length; $("notesSum").textContent = `Notes (${notes.length})`;
   $("warnings").innerHTML = notes.map((n) => `<div>${esc(n)}</div>`).join("");
@@ -438,10 +456,31 @@ function onContext(ctx) {
 }
 
 /* --------------------------------------------- top: load what Facet shows --- */
-let facetTarget = null, targetSeq = 0;
+let facetTarget = null, targetSeq = 0, lastAlbumId = null;
 const counts = new Map();   // target key -> {count, setup, name, smart}
+const inAlbum = new Map();  // "album id\nphoto" -> is the photo in that album (api/count {album_id, path})
 async function drawFacetTarget(ctx) {
-  const t = B.facetTarget(ctx), seq = ++targetSeq, btn = $("loadFacet");
+  const seq = ++targetSeq, btn = $("loadFacet");
+  const aid = B.albumOf(ctx);
+  if (aid != null) lastAlbumId = aid;
+  let t = B.facetTarget(ctx, lastAlbumId), note = "";
+  if (t && t.kind === "album" && t.photo) {
+    // A photo opened from an album: Facet passes the photo, not the album. Offer the album you viewed last (setups
+    // are kept per album) only when the photo is in it; otherwise the photo's folder.
+    const k = t.album_id + "\n" + t.photo;
+    if (!inAlbum.has(k)) {
+      try { inAlbum.set(k, !!(await api("api/count", {album_id: t.album_id, path: t.photo})).contains); }
+      catch (e) { inAlbum.set(k, false); }
+      if (seq !== targetSeq) return;
+    }
+    if (inAlbum.get(k)) {
+      const a = albums.find((x) => Number(x.id) === t.album_id);
+      note = `Facet does not say which album a photo was opened from; this photo is in album ${a ? a.name : "#" + t.album_id}, viewed last. Its folder: ${t.folder.name}.`;
+    } else t = t.folder;
+  }
+  if (t && t.kind === "folder" && ctx && ctx.photo && lastAlbumId == null) {
+    note = "Opened from an album? Facet does not pass the album with a photo: pick it in the Album list.";
+  }
   facetTarget = t;
   if (!t) {
     btn.hidden = true;
@@ -449,7 +488,7 @@ async function drawFacetTarget(ctx) {
     $("facetHint").textContent = "Open a photo or an album in Facet and it is offered here. Or pick an album, or import a folder.";
     return;
   }
-  $("facetHint").hidden = true; btn.hidden = false;
+  $("facetHint").hidden = !note; $("facetHint").textContent = note; btn.hidden = false; btn.disabled = false;
   let what;
   if (t.kind === "album") {
     const a = albums.find((x) => Number(x.id) === t.album_id);
@@ -780,23 +819,27 @@ $("preview").onclick = async () => {
 };
 
 /* --------------------------------------------------------------- step 3 --- */
-let after = 0, timer = null, nTotal = 0, nDone = 0;
+let after = 0, timer = null, nTotal = 0, nDone = 0, solveOrder = [], finished = new Set();
 $("solve").onclick = async () => {
   const body = {...opts(), cull: currentRule()};
   if (!body.paths.length) { $("solveinfo").textContent = "load photos first (top of the panel)"; return; }
   $("log").textContent = ""; after = 0; nDone = 0; nTotal = body.paths.length;
+  solveOrder = body.paths.slice(); finished = new Set();
   clearTimeout(saveTimer);
   try { await saveSetup(); $("autosaved").textContent = "· setup saved";
         await api("api/solve", body);
         $("solve").disabled = true; $("saveFacet").disabled = true; $("exportBtn").disabled = true;
         $("solveinfo").textContent = ""; $("saveinfo").textContent = ""; $("saveFacet").textContent = "Save to Facet";
-        $("progBox").hidden = false; showProgress(""); $("st3").textContent = "solving"; openOnly(3);
+        $("progBox").hidden = false; showProgress(); $("st3").textContent = "solving"; openOnly(3);
         timer = setInterval(poll, 1500); }
   catch (e) { $("solveinfo").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 };
-function showProgress(last) {
+/* The engine reports finished frames only; the one being solved now is the first of the paths sent, in order,
+ * that has not finished (the engine works through them in that order, folder by folder). */
+function showProgress() {
   $("prog").max = nTotal || 1; $("prog").value = nDone;
-  $("solveNow").textContent = `Solving ${Math.min(nDone + (nDone < nTotal ? 1 : 0), nTotal)} / ${nTotal}` + (last ? ` · ${last}` : "");
+  const next = solveOrder.find((p) => !finished.has(p));
+  $("solveNow").textContent = next ? `Solving ${Math.min(nDone + 1, nTotal)} / ${nTotal} · ${base(next)}` : `Finishing ${nTotal} / ${nTotal}...`;
   $("st3").textContent = `${nDone} / ${nTotal}`;
 }
 async function poll() {
@@ -807,17 +850,20 @@ async function poll() {
     $("solveinfo").innerHTML = `<span class="err">${esc(e.message)}</span>`; return;
   }
   after = d.next;
-  let last = "";
   for (const ev of d.events) {
     let line = ev.event;
     if (ev.event === "photo") {
-      nDone++; last = `${base(ev.path)} ${ev.status === "failed" ? "not solved" : "solved"}`;
+      nDone++;   // events carry the engine's local path: match it to the Facet path sent (same path, else same name)
+      const norm = (p) => String(p).replace(/\\/g, "/").toLowerCase();
+      const hit = solveOrder.find((p) => !finished.has(p) && norm(p) === norm(ev.path))
+        || solveOrder.find((p) => !finished.has(p) && base(p).toLowerCase() === base(ev.path).toLowerCase());
+      if (hit) finished.add(hit);
       line = `[${ev.index}] ${ev.status} ${base(ev.path)} · ${ev.objects} obj · grade ${ev.grade ?? "-"}${ev.error ? " · " + ev.error : ""}`;
     } else if (ev.event === "done") line = `done: ${ev.solved} solved, ${ev.stack_copies} stack copies, ${ev.failed} failed in ${ev.elapsed_s} s`;
     else if (ev.event === "start") { nTotal = ev.total || nTotal; line = `start: ${ev.total} photo(s)`; }
     $("log").textContent += line + "\n";
   }
-  if (d.events.length) showProgress(last);
+  if (d.events.length) showProgress();
   $("log").scrollTop = 1e9;
   if (!d.running) {
     clearInterval(timer); $("solve").disabled = false; $("progBox").hidden = true;

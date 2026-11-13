@@ -106,16 +106,32 @@
    * The live context carries the route, the album id and the open photo, not the folder being browsed: Facet strips
    * the query (?path_prefix=, ?prefix=) from `route`, so a browsed folder is known only from the open photo's path or
    * from the scope the panel was opened with. */
-  function facetTarget(ctx) {
+  /* The album id of a context: its album_id, else an /album/<id> route (also with an auxiliary outlet such as
+   * "/album/42(aux:photo)", which Facet's own albumIdOf does not read). */
+  function albumOf(ctx) {
+    if (!ctx) return null;
+    if (ctx.album_id != null && /^\d+$/.test(String(ctx.album_id))) return Number(ctx.album_id);
+    const m = /^\/album\/(\d+)(?:[\/(]|$)/.exec(typeof ctx.route === "string" ? ctx.route : "");
+    return m ? Number(m[1]) : null;
+  }
+
+  /* lastAlbumId: the album the user viewed last. A photo opened from an album arrives as /photo?path= with no
+   * album (Facet does not pass it), so the panel offers that album for the photo (setups are kept per album) once
+   * it has checked the photo is in it; the returned target then carries `photo` and `folder` for that check and
+   * for the fallback. */
+  function facetTarget(ctx, lastAlbumId) {
     if (!ctx) return null;
     const s = ctx.scope || {};
     if (s.kind === "selection" && ctx.selection && ctx.selection.length) {
       return {kind: "selection", key: "selection:" + ctx.selection.join("\n"), paths: ctx.selection.slice(0, MAX_SELECTION)};
     }
-    if (ctx.album_id != null && /^\d+$/.test(String(ctx.album_id))) {
-      return {kind: "album", key: "album:" + Number(ctx.album_id), album_id: Number(ctx.album_id)};
-    }
+    const aid = albumOf(ctx);
+    if (aid != null) return {kind: "album", key: "album:" + aid, album_id: aid};
     const f = folderOfPath(ctx.photo);
+    if (f && lastAlbumId != null && /^\d+$/.test(String(lastAlbumId))) {
+      return {kind: "album", key: "album:" + Number(lastAlbumId), album_id: Number(lastAlbumId), photo: ctx.photo,
+              folder: {kind: "folder", key: "folder:" + f.prefix, prefix: f.prefix, name: f.name}};
+    }
     if (f) return {kind: "folder", key: "folder:" + f.prefix, prefix: f.prefix, name: f.name};
     if (s.kind === "import") return {kind: "import", key: "import:" + s.run_id, run_id: s.run_id};
     let pre = s.path_prefix || null;
@@ -238,5 +254,5 @@
 
   return {V: V, MAP_SITES: MAP_SITES, readNonce: readNonce, constEq: constEq, sanitizeContext: sanitizeContext,
           scopeRequest: scopeRequest, scopeKey: scopeKey, createBridge: createBridge, makeApi: makeApi,
-          sanitizeView: sanitizeView, folderOfPath: folderOfPath, facetTarget: facetTarget};
+          sanitizeView: sanitizeView, folderOfPath: folderOfPath, facetTarget: facetTarget, albumOf: albumOf};
 });

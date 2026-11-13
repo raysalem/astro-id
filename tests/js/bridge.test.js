@@ -228,6 +228,19 @@ test("facetTarget: what Facet shows, as one thing to load (selection > album > o
   assert.equal(B.folderOfPath("noslash.jpg"), null);
 });
 
+test("a photo opened from an album: the album viewed last is offered, with the folder as the fallback", () => {
+  const ctx = { route: "/photo", album_id: null, photo: "/p/night/A1.JPG", selection: [], scope: null };
+  const t = B.facetTarget(ctx, 6);
+  assert.equal(t.kind, "album"); assert.equal(t.album_id, 6); assert.equal(t.photo, "/p/night/A1.JPG");
+  assert.deepEqual(t.folder, { kind: "folder", key: "folder:/p/night/", prefix: "/p/night/", name: "night" });
+  assert.equal(B.facetTarget(ctx, null).kind, "folder");                 // no album viewed: the folder
+  // an album route with an auxiliary outlet still names the album (Facet's albumIdOf misses it)
+  assert.equal(B.albumOf({ route: "/album/42(aux:photo)", album_id: null }), 42);
+  assert.equal(B.albumOf({ route: "/album/7", album_id: 7 }), 7);
+  assert.equal(B.albumOf({ route: "/photo", album_id: null }), null);
+  assert.equal(B.facetTarget({ route: "/album/42(aux:photo)", album_id: null, photo: null, selection: [], scope: null }).album_id, 42);
+});
+
 test("sanitizeContext keeps a scope's path_prefix string only", () => {
   assert.equal(B.sanitizeContext({ scope: { kind: "view", query: "", path_prefix: "/p/" } }).scope.path_prefix, "/p/");
   assert.equal("path_prefix" in B.sanitizeContext({ scope: { kind: "import", run_id: "1", path_prefix: 5 } }).scope, false);

@@ -57,6 +57,10 @@ LAST_SITE = "last_site"
 ALBUM_SETUP = "album_setup:"          # ledger meta key prefix: one album's saved setup (JSON), per Facet library
 COPY_KEYS = ("on", "lines", "scores")
 EXPORT_KEYS = ("lines", "scores", "legend")   # Export's plain-language options (panel step 6)
+# The page/server contract version. index.html embeds the same string (const PAGE_VERSION); Facet's supervisor keeps
+# an add-on process running while the page is read from disk on every load, so a page newer than its server shows
+# "Astro was updated: stop and reopen it" instead of failing on routes the old server lacks. Bump both together.
+PAGE_VERSION = "2026-11-12.4"
 
 
 def export_options(v) -> dict | None:
@@ -317,7 +321,7 @@ class App:
                 "ledger": str(self.ledger.path), "default_rule": DEFAULT_RULE, "review_tag": TAG_REVIEW,
                 "addon": self.addon_id, "mount": self.mount, "tags_via": self.ctx.tags_via,
                 "transport": getattr(self.client, "mode", "api"), "last_site": self.last_site(),
-                "sky_vocab": self.sky_vocab()}
+                "sky_vocab": self.sky_vocab(), "page_version": PAGE_VERSION}
 
     @staticmethod
     def sky_vocab() -> dict:
@@ -664,8 +668,14 @@ class App:
             a = next((a for a in self.client.albums() if a.get("id") is not None and int(a["id"]) == aid), None)
             if a is None:
                 raise ValueError("no such album")
-            return {"count": a.get("photo_count"), "name": a.get("name"), "smart": bool(a.get("is_smart")),
-                    "setup": self.album_config(aid) is not None}
+            out = {"count": a.get("photo_count"), "name": a.get("name"), "smart": bool(a.get("is_smart")),
+                   "setup": self.album_config(aid) is not None}
+            path = b.get("path")
+            if isinstance(path, str) and path and not out["smart"]:
+                # a photo opened from an album: Facet's context names the photo, not the album; is it in this one?
+                members = self.client.list_photos(album_id=aid, limit=MAX_SCOPE_PHOTOS)
+                out["contains"] = any(p.get("path") == path for p in members)
+            return out
         prefix = b.get("path_prefix")
         if not isinstance(prefix, str) or not prefix.strip():
             raise ValueError("path_prefix or album_id required")
