@@ -142,13 +142,15 @@ test("api wrapper: X-Addon-Nonce on every request, no credentials, relative URLs
 
 test("makeApi: Facet or the add-on restarted under the panel -> a plain 'reopen the panel' message", async () => {
   // add-on gone: Facet 404s the CORS preflight and fetch rejects with a bare TypeError
+  // (one failed fetch is a hiccup, two in a row mean it is gone)
   const gone = B.makeApi(async () => { throw new TypeError("Failed to fetch"); }, NONCE);
-  await assert.rejects(gone.call("api/save-config", {}), /restarted.*reopen the Astro panel/i);
+  await assert.rejects(gone.call("api/save-config", {}), (e) => e.transient === true && !e.stale);
+  await assert.rejects(gone.call("api/save-config", {}), (e) => e.stale === true && /restarted.*reopen the Astro panel/i.test(e.message));
   await assert.rejects(gone.blob("api/thumb?path=x"), /restarted/);
   // add-on back with a new panel table: this panel's nonce is stale (Facet's refusal says "detail")
   const stale = B.makeApi(async () => ({ ok: false, status: 403,
                                          json: async () => ({ detail: "Missing or stale panel nonce" }) }), NONCE);
-  await assert.rejects(stale.call("api/job?after=0"), /restarted.*reopen the Astro panel/i);
+  await assert.rejects(stale.call("api/job?after=0"), (e) => e.stale === true && /restarted.*reopen the Astro panel/i.test(e.message));
   // any other Facet refusal still shows its own detail
   const other = B.makeApi(async () => ({ ok: false, status: 400, json: async () => ({ detail: "Invalid path" }) }), NONCE);
   await assert.rejects(other.call("api/state"), /Invalid path/);
@@ -244,4 +246,41 @@ test("a photo opened from an album: the album viewed last is offered, with the f
 test("sanitizeContext keeps a scope's path_prefix string only", () => {
   assert.equal(B.sanitizeContext({ scope: { kind: "view", query: "", path_prefix: "/p/" } }).scope.path_prefix, "/p/");
   assert.equal("path_prefix" in B.sanitizeContext({ scope: { kind: "import", run_id: "1", path_prefix: 5 } }).scope, false);
+});
+
+test("makeApi: a transient network error is not 'restarted'; the next good answer resets the count", async () => {
+  let n = 0;
+  const flaky = B.makeApi(async () => {
+    n += 1;
+    if (n === 1 || n === 3) throw new TypeError("Failed to fetch");
+    return { ok: true, status: 200, json: async () => ({ ok: n }) };
+  }, NONCE);
+  await assert.rejects(flaky.call("api/job?after=0"), (e) => e.transient === true && /trying again/i.test(e.message));
+  assert.deepEqual(await flaky.call("api/job?after=0"), { ok: 2 });
+  await assert.rejects(flaky.call("api/job?after=0"), (e) => e.transient === true);   // not two in a row
+});
+
+test("compareVersions orders the page/server contract versions", () => {
+  assert.equal(B.compareVersions("2026-11-12.5", "2026-11-12.5"), 0);
+  assert.equal(B.compareVersions("2026-11-12.6", "2026-11-12.5"), 1);
+  assert.equal(B.compareVersions("2026-11-12.5", "2026-11-13"), -1);
+  assert.equal(B.compareVersions("2026-11-12.10", "2026-11-12.9"), 1);
+  assert.equal(B.compareVersions(undefined, "2026-11-12.5"), 0);
+});
+
+test("makePoller never runs two polls at once, and stops when fn returns false", async () => {
+  let inflight = 0, maxInflight = 0, calls = 0;
+  const p = B.makePoller(async () => {
+    inflight += 1; maxInflight = Math.max(maxInflight, inflight); calls += 1;
+    await new Promise((r) => setTimeout(r, 15));   // a poll slower than the interval
+    inflight -= 1;
+    return calls < 4;
+  }, 2);
+  assert.equal(p.start(), true);
+  assert.equal(p.start(), false);                  // already running
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(calls, 4); assert.equal(maxInflight, 1); assert.equal(p.running, false);
+  const q = B.makePoller(async () => { throw new Error("boom"); }, 2);   // a throwing fn keeps the loop alive
+  q.start(); await new Promise((r) => setTimeout(r, 30)); assert.equal(q.running, true); q.stop();
+  assert.equal(q.running, false);
 });

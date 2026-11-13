@@ -652,6 +652,13 @@ def test_bridge_js_under_node():
     assert m and int(m.group(1)) >= 8, r.stdout
 
 
+@pytest.mark.skipif(NODE is None, reason="node not installed")
+def test_panel_logic_under_node():
+    r = subprocess.run([NODE, "--test", "--test-reporter=tap", str(REPO / "tests" / "js" / "panel.test.js")], capture_output=True,
+                       text=True, timeout=120)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
 def test_page_priority_layout_terms_and_script_parses(tmp_path):
     """Panel redesign (Ray 2026-11-12, "rank, show the top, fold the rest"): one load bar at the top (load what Facet
     shows · Album · Import a new folder), then Location -> Time (with Auto) -> Plate solve (one button, a counter) ->

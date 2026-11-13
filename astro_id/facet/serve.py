@@ -60,7 +60,7 @@ EXPORT_KEYS = ("lines", "scores", "legend")   # Export's plain-language options 
 # The page/server contract version. index.html embeds the same string (const PAGE_VERSION); Facet's supervisor keeps
 # an add-on process running while the page is read from disk on every load, so a page newer than its server shows
 # "Astro was updated: stop and reopen it" instead of failing on routes the old server lacks. Bump both together.
-PAGE_VERSION = "2026-11-12.5"
+PAGE_VERSION = "2026-11-12.6"
 
 
 def export_options(v) -> dict | None:
@@ -135,12 +135,20 @@ def review_rows(paths: list[str], results: dict) -> list[dict]:
     """The panel's results review: per photo solved?, grade, and the objects found (name, confidence, group),
     best first. Compact: no geometry."""
     from ..annotations import LEVEL_GROUP
+    from .sync import normalize_tag
 
     rows = []
     for p in paths:
         fr = results.get(p) or {}
+        # "items": how many sky-label items of this photo carry the name. Facet can only index a name that has one
+        # (and accepts it as a tag-like word), so the panel counts searchable names from this, not from the objects.
+        labels: dict[str, int] = {}
+        for it in (fr.get("annotations") or {}).get("items") or []:
+            if isinstance(it, dict) and isinstance(it.get("label"), str) and normalize_tag(it["label"]):
+                labels[it["label"]] = labels.get(it["label"], 0) + 1
         objs = [{"name": o.get("name") or o.get("tag"), "confidence": o.get("confidence"),
-                 "group": LEVEL_GROUP.get(o.get("level")), "tag": o.get("taggable", True) is not False}
+                 "group": LEVEL_GROUP.get(o.get("level")), "tag": o.get("taggable", True) is not False,
+                 "items": labels.get(o.get("name") or o.get("tag"), 0)}
                 for o in fr.get("objects") or [] if isinstance(o, dict)]
         objs.sort(key=lambda o: (-(o["confidence"] or 0), str(o["name"])))
         status = "stack-copy" if fr.get("solver") == "stack-copy" else ("solved" if fr.get("solved") else "failed")

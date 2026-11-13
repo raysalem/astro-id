@@ -472,3 +472,13 @@ def test_f7_put_annotations_batch_reports_per_chunk():
     ok = [p for p, r in out.items() if r["ok"]]
     assert sent == [200, 200, 50] and len(ok) == 400 and len(out) == 450
     assert all("rate_limited" in r["message"] for r in out.values() if not r["ok"])
+
+
+def test_f8_review_rows_count_the_sky_label_items_that_can_be_indexed():
+    fr = frame()
+    fr["annotations"]["items"].append({"id": "x", "label": "has, comma", "group": "star", "score": 99, "shape": "point"})
+    fr["objects"].append({"name": "has, comma", "tag": "has, comma", "confidence": 99, "level": 5, "taggable": True})
+    fr["objects"].append({"name": "Faint", "tag": "faint", "confidence": 99, "level": 5, "taggable": True})
+    rows = SV.review_rows([P1], {P1: fr})
+    items = {o["name"]: o["items"] for o in rows[0]["objects"]}
+    assert items == {"Orion": 1, "M42": 1, "Betelgeuse": 1, "has, comma": 0, "Faint": 0}

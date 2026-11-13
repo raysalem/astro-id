@@ -221,6 +221,39 @@
   const STALE = "astro-id is not answering: Facet or the add-on restarted, so this panel is out of date and a " +
                 "running solve was lost. Close and reopen the Astro panel, then solve again.";
 
+  const HICCUP = "Astro did not answer just now (network hiccup). Trying again.";
+
+  /* Two versions of the "YYYY-MM-DD.n" form (a missing part counts as 0): -1, 0 or 1. */
+  function compareVersions(a, b) {
+    const parts = function (v) {
+      const m = /^(\d{4})-(\d{2})-(\d{2})(?:\.(\d+))?$/.exec(String(v || ""));
+      return m ? [+m[1], +m[2], +m[3], +(m[4] || 0)] : null;
+    };
+    const x = parts(a), y = parts(b);
+    if (!x || !y) return 0;
+    for (let i = 0; i < 4; i++) if (x[i] !== y[i]) return x[i] < y[i] ? -1 : 1;
+    return 0;
+  }
+
+  /* A poll loop that never overlaps itself: the next call is scheduled only after the previous one finished
+   * (setTimeout chain, not setInterval). fn returns false to stop the loop. timers: {set, clear} (tests). */
+  function makePoller(fn, ms, timers) {
+    const T = timers || {set: function (f, d) { return setTimeout(f, d); }, clear: function (t) { clearTimeout(t); }};
+    let running = false, handle = null;
+    async function tick() {
+      handle = null;
+      if (!running) return;
+      let again = true;
+      try { again = (await fn()) !== false; } catch (e) { again = true; }
+      if (running && again) handle = T.set(tick, ms); else running = false;
+    }
+    return {
+      start: function () { if (running) return false; running = true; handle = T.set(tick, ms); return true; },
+      stop: function () { running = false; if (handle !== null) T.clear(handle); handle = null; },
+      get running() { return running; },
+    };
+  }
+
   /* fetch wrapper: relative URLs only, X-Addon-Nonce on every request, JSON in and out; no credentials. */
   function makeApi(fetchFn, nonce) {
     function headers(extra) {
@@ -228,9 +261,18 @@
       if (nonce) h["X-Addon-Nonce"] = nonce;
       return h;
     }
+    // A fetch that rejects once is a hiccup (e.transient: poll again); two in a row, or a stale nonce, means the
+    // add-on or Facet restarted (e.stale: the panel is dead).
+    let fails = 0;
     async function send(path, opt) {
       if (/^[a-z]+:|^\/\//i.test(path) || path.charAt(0) === "/") throw new Error("relative URLs only");
-      try { return await fetchFn(path, opt); } catch (e) { throw new Error(STALE); }
+      try { const r = await fetchFn(path, opt); fails = 0; return r; }
+      catch (e) {
+        fails += 1;
+        const err = new Error(fails >= 2 ? STALE : HICCUP);
+        if (fails >= 2) err.stale = true; else err.transient = true;
+        throw err;
+      }
     }
     // Facet's own refusals carry {"detail": ...}; the add-on's carry {"error": ...}.
     function stale(r, doc) { return r.status === 403 && /stale panel nonce/i.test((doc && (doc.detail || doc.error)) || ""); }
@@ -241,7 +283,11 @@
            credentials: "omit"};
       const r = await send(path, opt);
       const doc = await r.json().catch(function () { return {error: "HTTP " + r.status}; });
-      if (!r.ok) throw new Error(stale(r, doc) ? STALE : (doc.error || doc.detail || ("HTTP " + r.status)));
+      if (!r.ok) {
+        const err = new Error(stale(r, doc) ? STALE : (doc.error || doc.detail || ("HTTP " + r.status)));
+        if (stale(r, doc)) err.stale = true;
+        throw err;
+      }
       return doc;
     }
     async function blob(path) {
@@ -254,5 +300,5 @@
 
   return {V: V, MAP_SITES: MAP_SITES, readNonce: readNonce, constEq: constEq, sanitizeContext: sanitizeContext,
           scopeRequest: scopeRequest, scopeKey: scopeKey, createBridge: createBridge, makeApi: makeApi,
-          sanitizeView: sanitizeView, folderOfPath: folderOfPath, facetTarget: facetTarget, albumOf: albumOf};
+          sanitizeView: sanitizeView, compareVersions: compareVersions, makePoller: makePoller, STALE: STALE, folderOfPath: folderOfPath, facetTarget: facetTarget, albumOf: albumOf};
 });
