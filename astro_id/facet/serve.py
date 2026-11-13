@@ -60,7 +60,7 @@ EXPORT_KEYS = ("lines", "scores", "legend")   # Export's plain-language options 
 # The page/server contract version. index.html embeds the same string (const PAGE_VERSION); Facet's supervisor keeps
 # an add-on process running while the page is read from disk on every load, so a page newer than its server shows
 # "Astro was updated: stop and reopen it" instead of failing on routes the old server lacks. Bump both together.
-PAGE_VERSION = "2026-11-12.4"
+PAGE_VERSION = "2026-11-12.5"
 
 
 def export_options(v) -> dict | None:

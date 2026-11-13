@@ -376,7 +376,7 @@ const NONCE = B.readNonce(location.search);
 const API = B.makeApi((u, o) => fetch(u, o), NONCE);
 // Must equal serve.py PAGE_VERSION. Facet reads this page from disk on every load but keeps the add-on process
 // running, so after an update the page can be newer than its server: say so instead of "HTTP 404".
-const PAGE_VERSION = "2026-11-12.4";
+const PAGE_VERSION = "2026-11-12.5";
 const STALE_SERVER = "Astro was updated: stop and reopen it from Facet's Add-ons page.";
 let serverStale = false;
 async function api(path, body) {
