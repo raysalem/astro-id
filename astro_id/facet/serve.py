@@ -316,6 +316,7 @@ class App:
 
     # ----------------------------------------------------------- handlers ---
     def state(self, _q, _b):
+        self.ctx.refresh()
         return {"facet": self.client.url, "version": self.ctx.version, "annotations": self.ctx.mode,
                 "warnings": self.ctx.warnings + self.notes, "can_write": self.client.can_login,
                 "ledger": str(self.ledger.path), "default_rule": DEFAULT_RULE, "review_tag": TAG_REVIEW,
@@ -608,7 +609,7 @@ class App:
         """The writer with the session's own tag cut (the page's "Min confidence")."""
         from dataclasses import replace
 
-        return replace(self.ctx, min_confidence=int(job.min_confidence))
+        return replace(self.ctx.refresh(), min_confidence=int(job.min_confidence))
 
     def job_state(self, q, _b):
         return self.job.snapshot(int((q.get("after") or ["0"])[0]))
@@ -641,7 +642,9 @@ class App:
                 # model D: names Facet made searchable (stored now) or that were already (unchanged payloads)
                 "searchable": sum(r.get("searchable", len(r.get("names") or [])
                                         if r.get("annotation") in ("stored", "unchanged") else 0) for r in ok),
-                "old_tags_removed": sum(len(r.get("migrated") or []) for r in ok)}
+                "old_tags_removed": sum(len(r.get("migrated") or []) for r in ok),
+                # model D: per-name tags written through the user path stay (Facet only lets an add-on remove its own)
+                "old_tags_yours": sum(len(r.get("legacy") or []) for r in ok)}
 
     def annotations(self, q, _b):
         """The astro-id sky labels stored on one photo (the photo open in Facet), for the sky-label controls:

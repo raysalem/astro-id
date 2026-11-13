@@ -279,3 +279,196 @@ def test_panel_save_and_sky_controls_on_model_d(new_fake, addon_d, monkeypatch):
     assert st == 200 and a["items"] == 3 and a["searchable"] == 1
     assert [g["id"] for g in a["payload"]["groups"]] == ["constellation", "catalog", "star"]
     assert calls(new_fake, "get_annotations")[-1]["summary"] is True
+
+
+# ------------------------------------------------- review findings 1-4, 6, 7 ---
+
+def _as_mcp_status_failing(client, state):
+    """Make the client's ``status`` tool fail while ``state['down']`` is true."""
+    real = client.call
+
+    def call(tool, args=None):
+        if tool == "status" and state["down"]:
+            raise FacetError("status: rate_limited: slow down", 429, code="rate_limited")
+        return real(tool, args)
+    client.call = call
+
+
+def test_f1_model_d_without_annotations_keeps_per_object_tags(new_fake, tmp_path):
+    """Sky labels off: names cannot be stored as searchable detections, so no summary mode and no tag removal."""
+    ctx = ctx_for(new_fake, tmp_path, annotations=False)
+    assert not ctx.model_d and ctx.mode is None
+    p = new_fake.photos[P1]
+    p["manual_tags"] = sorted(["orion", "plate-solved"])
+    p["tag_created_by"] = {"orion": "astro-id", "plate-solved": "astro-id"}
+    ctx.ledger.record(ctx.library, P1, tags=["orion", "plate-solved"], payload_hash=None, annotation_via=None,
+                      status="solved", facet_version="x")
+    S.apply_results(ctx, {P1: frame()})
+    assert p["manual_tags"] == ["orion", "plate-solved"]
+    assert not calls(new_fake, "remove_tags") and not any("plugin" in a for a in calls(new_fake, "add_tags"))
+    assert any("per-object" in w for w in ctx.warnings)
+
+
+def test_f1_model_d_token_without_annotation_write_keeps_per_object_tags(tmp_path):
+    tools = set(ASTRO_TOOLS)              # no annotations.write: no set_annotations
+    with FakeFacet(photos(), addon_token=TOKEN, mcp_tools=tools, model_d=True) as fake:
+        ctx = ctx_for(fake, tmp_path)
+        assert not ctx.model_d
+        S.apply_results(ctx, {P1: frame()})
+        assert fake.photos[P1]["manual_tags"] == ["orion", "plate-solved"]
+        assert not any("plugin" in a for a in calls(fake, "add_tags"))
+
+
+def test_f2_a_failure_mid_save_still_records_the_ledger(new_fake, tmp_path):
+    ctx = ctx_for(new_fake, tmp_path)
+    real = ctx.client.batch_add_tag
+
+    def add_then_die(tag, paths, plugin=False):
+        real(tag, paths, plugin=plugin)
+        raise ConnectionError("Facet restarted")
+    ctx.client.batch_add_tag = add_then_die
+    with pytest.raises(ConnectionError):
+        S.apply_results(ctx, {P1: frame()})
+    assert new_fake.photos[P1]["manual_tags"] == ["plate-solved"]
+    row = ctx.ledger.get(ctx.library, P1)
+    assert row and row["tags"] == ["plate-solved"] and row["tag_kind"] == "plugin"
+
+
+def test_f2_model_d_adopts_summary_tags_facet_says_are_ours(new_fake, tmp_path):
+    ctx = ctx_for(new_fake, tmp_path)
+    S.apply_results(ctx, {P2: frame(solved=False)})
+    assert "plate-solve failed" in new_fake.photos[P2]["manual_tags"]
+    ctx.ledger.forget(ctx.library, P2)               # the record of that save was lost
+    S.apply_results(ctx, {P2: frame()})
+    assert new_fake.photos[P2]["manual_tags"] == ["night", "plate-solved"]
+    assert ctx.ledger.get(ctx.library, P2)["tags"] == ["plate-solved"]
+
+
+def _seed_cli_tags(fake, ctx, path=P1, tags=("orion", "m42")):
+    p = fake.photos[path]
+    p["manual_tags"] = sorted(set(p["manual_tags"]) | set(tags) | {"plate-solved"})
+    p["tag_created_by"] = {t: "user" for t in tags} | {"plate-solved": "astro-id"}
+    ctx.ledger.record(ctx.library, path, tags=list(tags) + ["plate-solved"], payload_hash="old",
+                      annotation_via="api", status="solved", facet_version="old")
+
+
+def test_f3_user_path_tags_stay_in_the_ledger_as_legacy(new_fake, tmp_path):
+    ctx = ctx_for(new_fake, tmp_path)
+    _seed_cli_tags(new_fake, ctx)
+    rep = S.apply_results(ctx, {P1: frame()})[0]
+    assert rep["legacy"] == ["m42", "orion"] and rep["not_removed"] == ["m42", "orion"]
+    row = ctx.ledger.get(ctx.library, P1)
+    assert row["legacy_tags"] == ["m42", "orion"] and row["tags"] == ["plate-solved"]
+    assert "orion" in new_fake.photos[P1]["manual_tags"]       # the user's rows are untouched
+    rep = S.apply_results(ctx, {P1: frame()})[0]               # a second save still reports them
+    assert rep["legacy"] == ["m42", "orion"]
+    new_fake.photos[P1]["manual_tags"].remove("m42")           # the user deleted one: no longer listed
+    assert S.apply_results(ctx, {P1: frame()})[0]["legacy"] == ["orion"]
+
+
+def test_f3_panel_save_reports_old_tags_that_are_the_users(new_fake, addon_d, monkeypatch):
+    from astro_id import session
+
+    req, app = addon_d
+    _seed_cli_tags(new_fake, app.ctx)
+
+    def fake_run(paths, opts, emit):
+        done = {"event": "done", "solved": len(paths), "elapsed_s": 0.1, "time": {},
+                "cull": {"reference": {}, "rule": {}, "frames": {p: {"decision": "keep", "reasons": []}
+                                                                  for p in paths}}}
+        emit(done)
+        return {**done, "results": {p: frame() for p in paths}}
+    monkeypatch.setattr(session, "run_session", fake_run)
+    req("POST", "/ui/api/scope", {"kind": "import", "run_id": "7", "category": "astro"})
+    req("POST", "/ui/api/solve", {"paths": [P1], "tolerance_min": "5"})
+    for _ in range(200):
+        if not req("GET", "/ui/api/job?after=0")[1]["running"]:
+            break
+        time.sleep(0.02)
+    st, s = req("POST", "/ui/api/save", {"min_confidence": 65})
+    assert st == 200 and s["old_tags_yours"] == 2
+
+
+def test_f4_failed_status_is_not_remembered(new_fake):
+    c = connect(new_fake.url, token=TOKEN)
+    c.status_retry_s = 0
+    state = {"down": True}
+    _as_mcp_status_failing(c, state)
+    assert c.status() == {}
+    state["down"] = False
+    assert c.status().get("server_version") and c.features()["model_d"]
+
+
+def test_f4_model_d_is_read_from_tools_list_when_status_fails(new_fake):
+    new_fake.mcp_tools = set(NEW_TOOLS) - {"status"}        # status refused: forbidden_level
+    f = connect(new_fake.url, token=TOKEN).features()
+    assert f["model_d"] and f["plugin_tags"] and f["annotations_batch"] and "uncertain" not in f
+
+
+def test_f4_status_down_at_start_is_asked_again_before_the_first_save(new_fake, tmp_path):
+    client = connect(new_fake.url, token=TOKEN)
+    client.status_retry_s = 0
+    state = {"down": True}
+    _as_mcp_status_failing(client, state)
+    real_tools = client.tools
+
+    def tools_without_plugin():      # tools/list shows no `plugin` parameter: status was the only evidence
+        out = real_tools()
+        client._tool_defs["add_tags"] = {"properties": {"tags": {}, "paths": {}}}
+        return out
+    client.tools = tools_without_plugin
+    ctx = S.SyncContext(client=client, ledger=Ledger(tmp_path / "l.sqlite"), addon=True).prepare()
+    assert not ctx.model_d and ctx.uncertain
+    state["down"] = False
+    S.apply_results(ctx, {P1: frame()})
+    assert ctx.model_d and not ctx.uncertain
+    assert new_fake.photos[P1]["plugin_rows"] == {"plate-solved"}
+
+
+def test_f6_old_facet_ignores_plugin_and_the_writer_never_sends_it(old_fake, tmp_path):
+    c = connect(old_fake.url, token=TOKEN)
+    assert not c.features()["model_d"] and "plugin" not in c._tool_defs["add_tags"].get("properties", {})
+    c.batch_add_tag("zz", [P1], plugin=True)             # what a misdetection would do: a silent plain row
+    assert "zz" in old_fake.photos[P1]["manual_tags"] and not old_fake.photos[P1]["plugin_rows"]
+    ctx = ctx_for(old_fake, tmp_path)
+    S.apply_results(ctx, {P1: frame(), P2: frame(solved=False)})
+    sent = [a for a in calls(old_fake, "add_tags") if a["tags"] != ["zz"]]
+    assert sent and not any("plugin" in a for a in sent)
+
+
+def test_f7_failed_later_chunk_keeps_the_stored_ones(new_fake, tmp_path, monkeypatch):
+    from astro_id.facet import mcp_client
+
+    monkeypatch.setattr(mcp_client, "ANN_BATCH", 1)
+    ctx = ctx_for(new_fake, tmp_path)
+    real = ctx.client.call
+    n = {"batch": 0}
+
+    def call(tool, args=None):
+        if tool == "set_annotations_batch":
+            n["batch"] += 1
+            if n["batch"] == 2:
+                raise FacetError("set_annotations_batch: rate_limited: slow down", 429, code="rate_limited")
+        return real(tool, args)
+    ctx.client.call = call
+    reps = {r["path"]: r for r in S.apply_results(ctx, {P1: frame(), P2: frame()})}
+    assert reps[P1]["annotation"] == "stored" and reps[P2]["annotation"].startswith("error")
+    assert ctx.ledger.get(ctx.library, P1)["payload_hash"] and not ctx.ledger.get(ctx.library, P2)["payload_hash"]
+    again = S.apply_results(ctx, {P1: frame(), P2: frame()})
+    assert {r["path"]: r["annotation"] for r in again} == {P1: "unchanged", P2: "stored"}
+
+
+def test_f7_put_annotations_batch_reports_per_chunk():
+    c = McpFacetClient("http://127.0.0.1:9", token=TOKEN)
+    sent = []
+
+    def call(tool, args):
+        sent.append(len(args["payloads"]))
+        if len(sent) == 3:
+            raise FacetError("set_annotations_batch: rate_limited: slow down", 429, code="rate_limited")
+        return {"results": [{"path": p, "ok": True, "indexed": 1, "index_skipped": 0} for p in args["payloads"]]}
+    c.call = call
+    out = c.put_annotations_batch({f"{ROOT}/{i}.jpg": {"version": 1, "items": []} for i in range(450)})
+    ok = [p for p, r in out.items() if r["ok"]]
+    assert sent == [200, 200, 50] and len(ok) == 400 and len(out) == 450
+    assert all("rate_limited" in r["message"] for r in out.values() if not r["ok"])

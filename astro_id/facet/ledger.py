@@ -6,7 +6,8 @@ the Facet side says astro-id wrote them. The ledger is that record, kept on the 
 - ``photos``: one row per (Facet URL, photo path): the tags astro-id added, the hash of the annotation payload it
   stored and how (``api`` / ``legacy-db`` / none), the Facet version, the last solve status, when, and
   ``tag_kind``: how those tags were written (``plugin`` = model D summary tags; NULL = plain manual tags, the
-  per-object tags of an older Facet, which the next model D save removes).
+  per-object tags of an older Facet, which the next model D save removes) and ``legacy_tags``: plain rows that a
+  model D Facet would not let the add-on remove (written through the user/password path, so the user owns them).
 - ``meta``: per Facet URL key/value pairs (the ``--since last`` watermark).
 
 Location: ``--ledger`` > ``$ASTRO_ID_LEDGER`` > ``%LOCALAPPDATA%\\astro-id\\facet-ledger.sqlite`` (Windows) or
@@ -23,7 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 LEDGER_NAME = "facet-ledger.sqlite"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def data_dir() -> Path:
@@ -89,6 +90,8 @@ class Ledger:
         cols = {r[1] for r in self.conn.execute("PRAGMA table_info(photos)")}
         if "tag_kind" not in cols:            # schema 1 -> 2: every earlier row holds plain manual tags
             self.conn.execute("ALTER TABLE photos ADD COLUMN tag_kind TEXT")
+        if "legacy_tags" not in cols:         # schema 2 -> 3: tags astro-id once wrote that the user now owns
+            self.conn.execute("ALTER TABLE photos ADD COLUMN legacy_tags TEXT NOT NULL DEFAULT '[]'")
         self.conn.execute("PRAGMA user_version = %d" % SCHEMA_VERSION)
         self.conn.commit()
 
@@ -105,12 +108,14 @@ class Ledger:
     @_locked
     def get(self, library: str, path: str) -> dict | None:
         row = self.conn.execute(
-            "SELECT tags, payload_hash, annotation_via, status, facet_version, updated_at, tag_kind FROM photos "
+            "SELECT tags, payload_hash, annotation_via, status, facet_version, updated_at, tag_kind, legacy_tags "
+            "FROM photos "
             "WHERE library = ? AND path = ?", (library, path)).fetchone()
         if row is None:
             return None
         return {"path": path, "tags": json.loads(row[0] or "[]"), "payload_hash": row[1], "annotation_via": row[2],
-                "status": row[3], "facet_version": row[4], "updated_at": row[5], "tag_kind": row[6]}
+                "status": row[3], "facet_version": row[4], "updated_at": row[5], "tag_kind": row[6],
+                "legacy_tags": json.loads(row[7] or "[]")}
 
     def tags(self, library: str, path: str) -> list[str]:
         r = self.get(library, path)
@@ -123,14 +128,18 @@ class Ledger:
     @_locked
     def record(self, library: str, path: str, *, tags: list[str], payload_hash: str | None,
                annotation_via: str | None, status: str | None, facet_version: str | None,
-               tag_kind: str | None = None) -> None:
+               tag_kind: str | None = None, legacy_tags: list[str] | None = None) -> None:
+        """``legacy_tags=None`` keeps the stored list; a list replaces it."""
+        legacy = json.dumps(sorted(set(legacy_tags or []))) if legacy_tags is not None else None
         self.conn.execute(
             "INSERT INTO photos (library, path, tags, payload_hash, annotation_via, status, facet_version, updated_at, "
-            "tag_kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(library, path) DO UPDATE SET tags = excluded.tags, "
+            "tag_kind, legacy_tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, '[]')) "
+            "ON CONFLICT(library, path) DO UPDATE SET tags = excluded.tags, "
             "payload_hash = excluded.payload_hash, annotation_via = excluded.annotation_via, status = excluded.status, "
-            "facet_version = excluded.facet_version, updated_at = excluded.updated_at, tag_kind = excluded.tag_kind",
+            "facet_version = excluded.facet_version, updated_at = excluded.updated_at, tag_kind = excluded.tag_kind, "
+            "legacy_tags = COALESCE(?, photos.legacy_tags)",
             (library, path, json.dumps(sorted(set(tags))), payload_hash, annotation_via, status, facet_version, _now(),
-             tag_kind))
+             tag_kind, legacy, legacy))
         self.conn.commit()
 
     @_locked

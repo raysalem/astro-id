@@ -44,6 +44,7 @@ TAG_FAILED = "plate-solve failed"
 TAG_REVIEW = "astro-review"
 MAX_PLUGIN_TAGS = 3          # model D: summary tags per photo per add-on (db/manual_tags.MAX_PLUGIN_TAGS_PER_PHOTO)
 TAG_KIND_PLUGIN = "plugin"
+TAG_KIND_LEGACY = "legacy-foreign"   # per-object tags written through the user path: not ours to remove
 MAX_TAGS_PER_PHOTO = 50      # Facet's per-photo manual tag cap (db/manual_tags.py), shared with user tags
 MAX_TAG_LENGTH = 64
 _UNSET = object()
@@ -281,6 +282,7 @@ class SyncContext:
     tags_via: str = "manual+ledger"      # 'manual+ledger'; model D: plugin summary tags + ledger
     model_d: bool = False                # summary plugin tags + indexed detections (see the module docstring)
     annotations_batch: bool = False      # set_annotations_batch available (model D)
+    uncertain: bool = False              # the client could not tell old from model D yet: asked again on use
     _legacy: object = None
 
     def prepare(self) -> "SyncContext":
@@ -288,14 +290,7 @@ class SyncContext:
         if getattr(self.client, "mode", None) == "mcp":
             self.tags_via = "mcp add_tags (created_by = add-on)+ledger"
         self.version = self.client.server_version()
-        feats = self.client.features()
-        self.model_d = bool(feats.get("model_d") and feats.get("plugin_tags"))
-        self.annotations_batch = bool(self.model_d and feats.get("annotations_batch"))
-        if self.model_d:
-            self.tags_via = "plugin summary tags+ledger; names as searchable detections"
-            if not (self.annotations and feats.get("annotations_put")):
-                self.warnings.append("Names are not searchable: sky labels are off or this add-on cannot store "
-                                     "them; only the plate-solved / plate-solve failed tags are written")
+        feats = self._detect()
         if not self.annotations:
             self.mode = None
             return self
@@ -320,6 +315,33 @@ class SyncContext:
                                  "(use --legacy-db PATH on a local stack until it does)")
         for w in self.warnings:
             log.warning("%s", w)
+        return self
+
+    def _detect(self) -> dict:
+        feats = self.client.features()
+        self.uncertain = bool(feats.get("uncertain"))
+        # Model D tag mode (summary tags, no per-object tags) only when the names can be stored as searchable
+        # detections: otherwise removing the old per-object tags would leave the names unfindable.
+        can_index = bool(self.annotations and feats.get("annotations_put"))
+        was = self.model_d
+        self.model_d = bool(feats.get("model_d") and feats.get("plugin_tags") and can_index)
+        self.annotations_batch = bool(self.model_d and feats.get("annotations_batch"))
+        if self.model_d:
+            self.tags_via = "plugin summary tags+ledger; names as searchable detections"
+        elif feats.get("model_d") and feats.get("plugin_tags") and not was:
+            w = ("Names stay per-object tags: sky labels are off or this add-on cannot store them, "
+                 "so Facet cannot make the names searchable")
+            if w not in self.warnings:
+                self.warnings.append(w)
+        return feats
+
+    def refresh(self) -> "SyncContext":
+        """Ask the Facet again when the first look was a guess (its ``status`` call had failed)."""
+        if self.uncertain:
+            was = self.model_d
+            self._detect()
+            if self.model_d != was:
+                log.info("Facet features now known: model D %s", self.model_d)
         return self
 
     def close(self):
@@ -383,8 +405,16 @@ def apply_results(ctx: SyncContext, results: dict[str, dict], extra_tags: dict[s
     stale astro-id tags and adds new ones (one call per tag, all its photos); phase 3 stores the annotation payloads
     (model D: one ``set_annotations_batch`` per 200 photos); phase 4 re-reads each photo and records in the ledger
     the planned tags that are actually present (a cap race or a refusal never ends up in the ledger)."""
+    ctx.refresh()
     with _job(ctx.client):
         return _apply_results(ctx, results, extra_tags or {}, emit or (lambda ev: None), tags)
+
+
+def _adopt(photo: dict) -> set[str]:
+    """Model D: the summary tags Facet itself says this add-on wrote (``plugin_tags`` with ``source`` astro-id), so a
+    row whose ledger record was lost (a failure in the middle of an earlier save) is ours again."""
+    return {t["tag"] for t in photo.get("plugin_tags") or []
+            if isinstance(t, dict) and t.get("tag") and t.get("source") == ANNOTATION_SOURCE}
 
 
 def _apply_results(ctx, results, extra_tags, emit, tags) -> list[dict]:
@@ -396,45 +426,77 @@ def _apply_results(ctx, results, extra_tags, emit, tags) -> list[dict]:
         if photo is None:
             reports.append({"path": path, "error": "not in Facet (or not visible)"})
             continue
-        mine = set(prev["tags"]) if prev else set()
+        ledger_tags = set(prev["tags"]) if prev else set()
         present = manual_tags(photo)
+        mine = set(ledger_tags)
+        if ctx.model_d:
+            mine |= _adopt(photo) & present
         if not tags:
             plan = {"keep": sorted(mine & present), "add": [], "remove": [], "skipped": [], "dropped": []}
         elif ctx.model_d:
-            migrate = bool(mine & present) and (prev or {}).get("tag_kind") != TAG_KIND_PLUGIN
+            migrate = bool(ledger_tags & present) and (prev or {}).get("tag_kind") != TAG_KIND_PLUGIN
             plan = plan_photo(summary_tags(fr, extra_tags.get(path, ())), present, ai_tags(photo), mine,
                               cap=MAX_PLUGIN_TAGS, plugin=True, migrate=migrate)
-            plan["migrated"] = sorted(mine & present) if migrate else []
+            plan["migrated"] = sorted(ledger_tags & present) if migrate else []
         else:
             plan = plan_photo(desired_tags(fr, ctx.min_confidence, extra_tags.get(path, ())), present,
                               ai_tags(photo), mine)
         plans[path] = {"plan": plan, "prev": prev, "result": fr}
-    if not ctx.dry_run:
-        by_tag: dict[str, list[str]] = {}
+    # What a photo's annotation is worth if its write never happens: the ledger's own previous state.
+    ann: dict[str, tuple] = {}
+    info: dict[str, dict] = {p: {} for p in plans}
+    for path, p in plans.items():
+        prev = p["prev"] or {}
+        ann[path] = ("not written", prev.get("payload_hash"), prev.get("annotation_via"))
+    try:
+        _write_all(ctx, plans, ann, info)
+    finally:
+        # Even when a write above failed half way, record per photo what Facet now holds (one bad read does not
+        # drop the others); a model D save re-adopts whatever could not be recorded (``_adopt``).
         for path, p in plans.items():
-            for t in p["plan"]["remove"]:
-                by_tag.setdefault(t, []).append(path)
-        for t, paths in sorted(by_tag.items()):
-            done = ctx.client.batch_remove_tag(t, paths) or {}
-            if done.get("skipped_foreign"):
-                log.warning("%r: Facet left %d row(s) another writer owns", t, done["skipped_foreign"])
-        by_tag = {}
+            try:
+                rep = _record_photo(ctx, tags, path, p, ann[path], info[path])
+            except Exception as exc:
+                log.error("%s: could not record the save: %s", path, exc)
+                rep = {"path": path, "error": f"could not record the save: {exc}"}
+            reports.append(rep)
+            if not rep.get("error"):
+                emit({"event": "written", **rep})
+    return reports
+
+
+def _write_all(ctx, plans, ann, info) -> None:
+    if ctx.dry_run:
         for path, p in plans.items():
-            for t in p["plan"]["add"]:
-                by_tag.setdefault(t, []).append(path)
-        for t, paths in sorted(by_tag.items()):
-            if ctx.model_d:
-                ctx.client.batch_add_tag(t, paths, plugin=True)
-            else:
-                ctx.client.batch_add_tag(t, paths)
+            ann[path] = write_annotation(ctx, path, p["result"], p["prev"], None, info[path])
+        return
+    by_tag: dict[str, list[str]] = {}
+    for path, p in plans.items():
+        for t in p["plan"]["remove"]:
+            by_tag.setdefault(t, []).append(path)
+    for t, paths in sorted(by_tag.items()):
+        done = ctx.client.batch_remove_tag(t, paths) or {}
+        if done.get("skipped_foreign"):
+            log.warning("%r: Facet left %d row(s) another writer owns", t, done["skipped_foreign"])
+    by_tag = {}
+    for path, p in plans.items():
+        for t in p["plan"]["add"]:
+            by_tag.setdefault(t, []).append(path)
+    for t, paths in sorted(by_tag.items()):
+        if ctx.model_d:
+            ctx.client.batch_add_tag(t, paths, plugin=True)
+        else:
+            ctx.client.batch_add_tag(t, paths)
     # Annotations: single writes now; on model D the stores are collected for set_annotations_batch.
     batch: dict | None = {} if ctx.annotations_batch else None
-    ann: dict[str, tuple] = {}
-    info: dict[str, dict] = {}
+    pending: dict[str, tuple] = {}
     for path, p in plans.items():
-        info[path] = {}
         try:
-            ann[path] = write_annotation(ctx, path, p["result"], p["prev"], batch, info[path])
+            what, h, via = write_annotation(ctx, path, p["result"], p["prev"], batch, info[path])
+            if what == "pending":
+                pending[path] = (h, via)      # becomes "stored" only when its chunk is stored
+            else:
+                ann[path] = (what, h, via)
         except Exception as exc:   # never lose the ledger record of tags already written above
             prev = p["prev"] or {}
             ann[path] = (f"error: {exc}", prev.get("payload_hash"), prev.get("annotation_via"))
@@ -448,7 +510,7 @@ def _apply_results(ctx, results, extra_tags, emit, tags) -> list[dict]:
             r = answers.get(path) or {}
             prev = plans[path]["prev"] or {}
             if r.get("ok"):
-                ann[path] = ("stored",) + tuple(ann[path][1:])
+                ann[path] = ("stored",) + pending[path]
                 if isinstance(r.get("indexed"), int):
                     info[path]["searchable"] = r["indexed"]
                 if r.get("index_skipped"):
@@ -457,38 +519,45 @@ def _apply_results(ctx, results, extra_tags, emit, tags) -> list[dict]:
                 ann[path] = (f"error: {r.get('error') or ''} {r.get('message') or ''}".strip(),
                              prev.get("payload_hash"), prev.get("annotation_via"))
                 log.error("%s: annotation not stored: %s", path, ann[path][0])
-    for path, p in plans.items():
-        plan, prev, fr = p["plan"], p["prev"], p["result"]
-        rep = {"path": path, "status": "solved" if fr.get("solved") else "failed", "add": plan["add"],
-               "remove": plan["remove"], "kept": plan["keep"], "skipped": plan["skipped"],
-               "dropped": plan["dropped"], "dry_run": ctx.dry_run}
-        if plan.get("migrated"):
-            rep["migrated"] = plan["migrated"]
-        if ctx.model_d:
-            rep["names"] = sorted({o["name"] for o in fr.get("objects") or []
-                                   if isinstance(o.get("name"), str) and searchable(o, ctx.min_confidence)})
-        rep["annotation"], h, via = ann[path]
-        rep.update(info[path])
-        if not ctx.dry_run:
-            after = ctx.client.photo(path) or {}
-            present = manual_tags(after)
-            owned = [t for t in plan["keep"] if t in present]
-            missing = [t for t in plan["keep"] if t not in present]
-            if missing:
-                rep["not_written"] = missing
-                log.warning("%s: Facet did not store %s", path, missing)
-            left = [t for t in plan["remove"] if t in present and t not in plan["keep"]]
-            if left:
-                rep["not_removed"] = left        # another writer owns that row now: no longer ours to track
-            if not tags:
-                kind = (prev or {}).get("tag_kind")
-            else:
-                kind = TAG_KIND_PLUGIN if ctx.model_d else None
-            ctx.ledger.record(ctx.library, path, tags=owned, payload_hash=h, annotation_via=via,
-                              status=rep["status"], facet_version=ctx.version, tag_kind=kind)
-        reports.append(rep)
-        emit({"event": "written", **rep})
-    return reports
+
+
+def _record_photo(ctx, tags, path, p, annotation, info) -> dict:
+    plan, prev, fr = p["plan"], p["prev"], p["result"]
+    rep = {"path": path, "status": "solved" if fr.get("solved") else "failed", "add": plan["add"],
+           "remove": plan["remove"], "kept": plan["keep"], "skipped": plan["skipped"],
+           "dropped": plan["dropped"], "dry_run": ctx.dry_run}
+    if plan.get("migrated"):
+        rep["migrated"] = plan["migrated"]
+    if ctx.model_d:
+        rep["names"] = sorted({o["name"] for o in fr.get("objects") or []
+                               if isinstance(o.get("name"), str) and searchable(o, ctx.min_confidence)})
+    rep["annotation"], h, via = annotation
+    rep.update(info)
+    if ctx.dry_run:
+        return rep
+    after = ctx.client.photo(path) or {}
+    present = manual_tags(after)
+    owned = [t for t in plan["keep"] if t in present]
+    missing = [t for t in plan["keep"] if t not in present]
+    if missing:
+        rep["not_written"] = missing
+        log.warning("%s: Facet did not store %s", path, missing)
+    left = [t for t in plan["remove"] if t in present and t not in plan["keep"]]
+    legacy = None
+    if ctx.model_d:
+        # Rows the add-on may not remove (written through the user/password path, so the user owns them) stay in
+        # the ledger under their own kind and are counted for the panel, never dropped silently.
+        old_legacy = (prev or {}).get("legacy_tags") or []
+        legacy = sorted({t for t in [*old_legacy, *left] if t in present and t not in owned})
+        rep["legacy"] = legacy
+        if left:
+            rep["not_removed"] = left
+    elif left:
+        rep["not_removed"] = left        # another writer owns that row now: no longer ours to track
+    kind = (prev or {}).get("tag_kind") if not tags else (TAG_KIND_PLUGIN if ctx.model_d else None)
+    ctx.ledger.record(ctx.library, path, tags=owned, payload_hash=h, annotation_via=via,
+                      status=rep["status"], facet_version=ctx.version, tag_kind=kind, legacy_tags=legacy)
+    return rep
 
 
 def remove_all(ctx: SyncContext, paths: list[str] | None = None) -> list[dict]:

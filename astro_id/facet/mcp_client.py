@@ -131,6 +131,9 @@ class McpFacetClient:
         self.http.trust_env = False
         self._transport = transport or (lambda: _http_transport(self.url + MCP_PATH, token, timeout))
         self._tools: set[str] | None = None
+        self._tool_defs: dict[str, dict] = {}
+        self._status_failed_at: float | None = None
+        self.status_retry_s = 30.0        # a failed status call is asked again after this long (never cached)
         self._features: dict | None = None
         self._status: dict | None = None
         self.version: str | None = None
@@ -215,8 +218,16 @@ class McpFacetClient:
         if self._tools is None:
             async def op(c):
                 return await c.list_tools()
-            self._tools = {t.name for t in self._session(op).tools}
+            listed = self._session(op).tools
+            self._tool_defs = {t.name: (getattr(t, "input_schema", None) or getattr(t, "inputSchema", None) or {}) for t in listed}
+            self._tools = set(self._tool_defs)
         return self._tools
+
+    def _tools_say_model_d(self) -> bool:
+        """Model D from ``tools/list``: ``add_tags`` takes ``plugin`` and ``set_annotations_batch`` exists."""
+        t = self.tools()
+        props = (self._tool_defs.get("add_tags") or {}).get("properties") or {}
+        return "set_annotations_batch" in t and "plugin" in props
 
     # ---------------------------------------------------------------- auth ---
     @property
@@ -232,19 +243,28 @@ class McpFacetClient:
 
     # ------------------------------------------------------------ discovery ---
     def status(self) -> dict:
-        """The ``status`` tool's answer (``photos.read``), cached; ``{}`` when it is refused."""
+        """The ``status`` tool's answer (``photos.read``), cached once it answered. A failed call is NOT cached:
+        ``{}`` is returned for now and the next call asks again (after :attr:`status_retry_s`)."""
         if self._status is None:
+            if (self._status_failed_at is not None
+                    and time.monotonic() - self._status_failed_at < self.status_retry_s):
+                return {}
             try:
                 self._status = dict(self.call("status") or {})
+                self._status_failed_at = None
             except FacetError as exc:
                 log.warning("Facet status unknown (%s)", exc)
-                self._status = {}
+                self._status_failed_at = time.monotonic()
+                return {}
         return self._status
 
     def server_version(self) -> str | None:
         """Facet's version, from the ``status`` tool (``photos.read``)."""
         if self.version is None:
-            self.version = str(self.status().get("server_version") or "unknown")
+            v = self.status().get("server_version")
+            if not v:
+                return "unknown"             # status not answered (yet): not remembered
+            self.version = str(v)
         return self.version
 
     def features(self) -> dict:
@@ -254,7 +274,7 @@ class McpFacetClient:
             t = self.tools()
             st = self.status()
             facet_feats = st.get("features")
-            model_d = isinstance(facet_feats, list) and "annotations" in facet_feats
+            model_d = (isinstance(facet_feats, list) and "annotations" in facet_feats) or self._tools_say_model_d()
             tags = {"add_tags", "remove_tags"} <= t
             self._features = {"annotations_put": "set_annotations" in t, "annotations_read": "get_annotations" in t,
                               "plugin_tags": model_d and tags, "tags": tags, "gps": "set_gps" in t,
@@ -262,6 +282,10 @@ class McpFacetClient:
                               "annotations_batch": model_d and "set_annotations_batch" in t,
                               "annotation_summary": model_d and "get_annotations" in t,
                               "facet_features": list(facet_feats) if isinstance(facet_feats, list) else []}
+            if self._status is None and not model_d:
+                # status failed and the tools do not say model D either: "old Facet" is a guess, not remembered
+                guess, self._features = {**self._features, "uncertain": True}, None
+                return guess
         return self._features
 
     # ---------------------------------------------------------------- reads ---
@@ -385,8 +409,10 @@ class McpFacetClient:
     def put_annotations_batch(self, payloads: dict[str, dict]) -> dict[str, dict]:
         """Store many overlays (model D ``set_annotations_batch``), in chunks of at most :data:`ANN_BATCH` photos
         and :data:`ANN_BATCH_BYTES`, one write each. ``{path: {ok, indexed, index_skipped} | {ok: False, error,
-        message}}``."""
+        message}}``. A chunk that fails (after the rate-limit retries) stops the run: the chunks stored before it keep
+        their ``ok`` results, that chunk and the ones after it come back ``ok: False`` with the reason."""
         out: dict[str, dict] = {}
+        failure: Exception | None = None
         chunk: dict[str, dict] = {}
         size = 0
 
@@ -402,13 +428,21 @@ class McpFacetClient:
                 out.setdefault(p, {"path": p, "ok": False, "error": "unknown", "message": "no result for this photo"})
             chunk, size = {}, 0
 
-        for path, payload in payloads.items():
-            n = len(json.dumps({path: payload}, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
-            if chunk and (len(chunk) >= ANN_BATCH or size + n > ANN_BATCH_BYTES):
-                flush()
-            chunk[path] = payload
-            size += n
-        flush()
+        try:
+            for path, payload in payloads.items():
+                n = len(json.dumps({path: payload}, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+                if chunk and (len(chunk) >= ANN_BATCH or size + n > ANN_BATCH_BYTES):
+                    flush()
+                chunk[path] = payload
+                size += n
+            flush()
+        except Exception as exc:
+            failure = exc
+            log.error("set_annotations_batch stopped: %s", exc)
+        for p in payloads:
+            if p not in out:
+                out[p] = {"path": p, "ok": False, "error": "not_stored",
+                          "message": str(failure) if failure else "no result for this photo"}
         return out
 
     def delete_annotation(self, path: str, source: str) -> bool:

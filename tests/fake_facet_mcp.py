@@ -12,7 +12,9 @@ shows only those, and a call to any other answers ``forbidden_level`` (as Facet 
 ``set_annotations_batch`` copy items marked ``index`` (or in ``index_groups``) into ``fake.detections`` (labels
 normalized like tags, comma or > 64 chars skipped, at most 200, highest score kept) and answer ``indexed`` /
 ``index_skipped``; ``get_annotations`` takes ``summary: true``; ``clear_annotations`` clears the detections too.
-Without ``model_d`` it is the older Facet (local/addons-annot): ``status`` carries none of that.
+Without ``model_d`` it is the older Facet (local/addons-annot): ``status`` carries none of that, ``add_tags`` has no
+``plugin`` parameter in ``tools/list`` and silently IGNORES a ``plugin`` argument (writes a plain row), as the real
+MCP SDK does.
 """
 from __future__ import annotations
 
@@ -81,7 +83,13 @@ def build_server(fake):
 
     class Stub(MCPServer):
         async def list_tools(self):
-            return [t for t in await super().list_tools() if t.name in fake.mcp_tools]
+            tools = [t for t in await super().list_tools() if t.name in fake.mcp_tools]
+            if not fake.model_d:      # the older Facet's add_tags has no `plugin` parameter
+                for t in tools:
+                    props = (getattr(t, "input_schema", None) or {}).get("properties")
+                    if t.name == "add_tags" and isinstance(props, dict):
+                        props.pop("plugin", None)
+            return tools
 
     server = Stub("facet")
 
@@ -168,8 +176,8 @@ def build_server(fake):
         if (refused := guard(name, args)) is not None:
             return refused
         if plugin and not fake.model_d:
-            return _env(error="invalid_input", message="Invalid arguments",
-                        issues=[{"field": "plugin", "message": "Extra inputs are not permitted"}])
+            plugin = False       # the old Facet ignores the unknown argument (pydantic extra="ignore") and writes a
+                                 # plain row; the call is still recorded above with plugin: true
         if plugin and len(tags) > PLUGIN_CAP:
             return _env(error="too_large", message=f"at most {PLUGIN_CAP} plugin tags per call")
         n = 0
