@@ -73,6 +73,9 @@ def add_parser(sub) -> None:
     i.add_argument("--facet-data", required=True, help="Facet's data folder (holds scoring_config.json)")
     i.add_argument("--uv", help="uv executable for the manifest (default $UV, else uv on PATH)")
     i.add_argument("--project", help="astro-id checkout for `uv run --project` (default: this one)")
+    i.add_argument("--older-facet", action="store_true",
+                   help="leave out the manifest's `network` key (a Facet before the model D add-on contract refuses "
+                        "keys it does not know)")
     i.add_argument("-v", "--verbose", action="store_true")
     r = fs.add_parser("uninstall", help="delete <facet data>/addons/astro-id/addon.json")
     r.add_argument("--facet-data", required=True, help="Facet's data folder")

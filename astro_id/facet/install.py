@@ -7,6 +7,11 @@ file and the then-empty ``astro-id`` folder. Neither touches Facet's ``scoring_c
 
 The manifest's ``start.argv`` is absolute: ``argv[0]`` is uv, resolved here (``$UV``, else ``uv`` on PATH, else
 ``~/.local/bin/uv``) because Facet does no PATH lookup; ``--project`` is this checkout.
+
+``network`` (model D Facet): the hosts astro-id's backend contacts, shown on Facet's Add-ons page. An older Facet
+(local/addons-annot) refuses a manifest with any key it does not know, so ``--older-facet`` leaves it out.
+No ``features`` are declared: astro-id reads what Facet speaks from ``status`` and adapts, so naming one would only
+make an older Facet refuse it. The id stays ``astro-id`` (renaming orphans the data already written under it).
 """
 from __future__ import annotations
 
@@ -21,6 +26,10 @@ MANIFEST = "addon.json"
 FACET_API = 1
 PERMISSIONS = ["photos.read", "tags.write", "annotations.write", "gps.write"]
 SLOTS = ["sidebar", "import_hook"]
+# Every host the add-on's backend calls (grep "https://" in astro_id/): USGS elevation for a site's height, the
+# nova.astrometry.net fallback solver (only with ASTROMETRY_API_KEY), and the catalog downloads on first use.
+NETWORK = ["epqs.nationalmap.gov", "nova.astrometry.net", "cdsarc.cds.unistra.fr", "vizier.cfa.harvard.edu",
+           "raw.githubusercontent.com", "www.pas.rochester.edu"]
 
 
 def project_dir() -> Path:
@@ -59,8 +68,8 @@ def package_version() -> str:
         return "0.0.0"
 
 
-def manifest(uv: Path, project: Path) -> dict:
-    return {
+def manifest(uv: Path, project: Path, older_facet: bool = False) -> dict:
+    doc = {
         "id": ADDON_ID, "name": "Astro", "version": package_version(), "icon": "star", "facet_api": FACET_API,
         "start": {"argv": [str(uv), "run", "--project", str(project), "astro-id", "facet", "serve", "--addon"],
                   "port": "auto", "health": "/health"},
@@ -68,6 +77,9 @@ def manifest(uv: Path, project: Path) -> dict:
         "slots": list(SLOTS),
         "permissions": list(PERMISSIONS),
     }
+    if not older_facet:
+        doc["network"] = list(NETWORK)
+    return doc
 
 
 def _data_dir(facet_data: str) -> Path:
@@ -77,12 +89,13 @@ def _data_dir(facet_data: str) -> Path:
     return d.resolve()
 
 
-def install(facet_data: str, uv: str | None = None, project: str | None = None) -> tuple[Path, dict]:
+def install(facet_data: str, uv: str | None = None, project: str | None = None,
+            older_facet: bool = False) -> tuple[Path, dict]:
     data = _data_dir(facet_data)
     proj = Path(project).expanduser().resolve() if project else project_dir()
     if not (proj / "pyproject.toml").is_file():
         raise ValueError(f"not an astro-id checkout (no pyproject.toml): {proj}")
-    doc = manifest(resolve_uv(uv), proj)
+    doc = manifest(resolve_uv(uv), proj, older_facet)
     folder = data / "addons" / ADDON_ID
     folder.mkdir(parents=True, exist_ok=True)
     target = folder / MANIFEST
@@ -108,7 +121,8 @@ def uninstall(facet_data: str) -> tuple[Path, bool]:
 
 def run(args) -> int:
     if args.facet_cmd == "install":
-        target, doc = install(args.facet_data, getattr(args, "uv", None), getattr(args, "project", None))
+        target, doc = install(args.facet_data, getattr(args, "uv", None), getattr(args, "project", None),
+                              bool(getattr(args, "older_facet", False)))
         print(f"wrote {target}")
         print(json.dumps(doc, indent=2))
         print("Facet lists the add-on after a restart or a config reload, once addons.enabled is true in its "

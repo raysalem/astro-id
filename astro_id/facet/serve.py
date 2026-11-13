@@ -320,6 +320,8 @@ class App:
                 "warnings": self.ctx.warnings + self.notes, "can_write": self.client.can_login,
                 "ledger": str(self.ledger.path), "default_rule": DEFAULT_RULE, "review_tag": TAG_REVIEW,
                 "addon": self.addon_id, "mount": self.mount, "tags_via": self.ctx.tags_via,
+                # 'searchable': names become Facet detections (model D); 'tags': names become tags (older Facet)
+                "names_as": "searchable" if self.ctx.model_d else "tags",
                 "transport": getattr(self.client, "mode", "api"), "last_site": self.last_site(),
                 "sky_vocab": self.sky_vocab(), "page_version": PAGE_VERSION}
 
@@ -550,7 +552,7 @@ class App:
             extra["sky_labels"] = view
         cut = _confidence(b.get("min_confidence"))
         if cut is not None:
-            extra["min_confidence"] = cut            # "Save names at confidence >=" (step 5)
+            extra["min_confidence"] = cut            # step 4 "Save names / Make names searchable at confidence >="
         exp = export_options(b.get("export"))
         if exp is not None:
             extra["export"] = exp                    # Export's options (panel step 6)
@@ -622,7 +624,7 @@ class App:
         results = self.job.results if want is None else {p: r for p, r in self.job.results.items() if p in set(want)}
         if not results:
             raise ValueError("none of those photos are in the last solve")
-        cut = _confidence(b.get("min_confidence"))   # step 5's "Save names at confidence >=" (else the solve's)
+        cut = _confidence(b.get("min_confidence"))   # step 4 slider (else the solve's)
         if cut is not None:
             self.job.min_confidence = cut
         reports = apply_results(self._ctx_for(self.job), results)
@@ -635,7 +637,11 @@ class App:
                 "tags_added": sum(len(r.get("add") or []) for r in ok),
                 "tags_removed": sum(len(r.get("remove") or []) for r in ok),
                 "sky_labels": sum(1 for r in ok if r.get("annotation") in ("stored", "unchanged")),
-                "annotations": self.ctx.mode}
+                "annotations": self.ctx.mode, "names_as": "searchable" if self.ctx.model_d else "tags",
+                # model D: names Facet made searchable (stored now) or that were already (unchanged payloads)
+                "searchable": sum(r.get("searchable", len(r.get("names") or [])
+                                        if r.get("annotation") in ("stored", "unchanged") else 0) for r in ok),
+                "old_tags_removed": sum(len(r.get("migrated") or []) for r in ok)}
 
     def annotations(self, q, _b):
         """The astro-id sky labels stored on one photo (the photo open in Facet), for the sky-label controls:
@@ -643,8 +649,24 @@ class App:
         path = (q.get("path") or [""])[0]
         if not path:
             raise ValueError("path required")
-        if not self.client.features().get("annotations_read"):
+        feats = self.client.features()
+        if not feats.get("annotations_read"):
             return {"path": path, "payload": None, "note": "this Facet has no annotations route"}
+        if feats.get("annotation_summary"):
+            # model D: get_annotations summary:true (no geometry, always under Facet's tool-result cap)
+            try:
+                rows = self.client.annotations_summary(path)
+            except FacetError as exc:
+                if exc.status == 404:
+                    return {"path": path, "payload": None}
+                raise
+            mine = next((r for r in rows if r.get("source") in (ANNOTATION_SOURCE, self.addon_id)), None)
+            if mine is None:
+                return {"path": path, "payload": None}
+            groups = [{k: g.get(k) for k in ("id", "label", "default") if k in g} for g in mine.get("groups") or []]
+            return {"path": path, "payload": {"version": mine.get("version"), "groups": groups,
+                                              "metrics": mine.get("metrics"), "score": mine.get("score")},
+                    "items": mine.get("items") or 0, "searchable": mine.get("indexed")}
         try:
             rows = self.client.annotations(path)
         except FacetError as exc:

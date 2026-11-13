@@ -10,10 +10,18 @@ Shared by ``astro-id facet sync`` (batch / polling) and ``astro-id facet serve``
    annotation payload (``PUT /api/photo/annotations``, else TEMPORARY ``--legacy-db``, else skipped);
    the ledger records exactly the tags astro-id added, so a re-run removes only those.
 
+Model D (a Facet whose ``status`` reports add-on ``features``; see mcp_client): per photo at most 3 summary tags
+(``plate-solved`` / ``plate-solve failed``, ``astro-review``) written with ``plugin: true``, and ONE annotation
+payload whose items carry ``index: true`` for the names at or above the save cut: Facet turns those into searchable
+detections. No per-object tags. The first model D save of a photo removes the per-object tags astro-id wrote
+earlier (the ledger lists them; ``remove_tags`` only ever deletes this add-on's own rows), so re-saving converges.
+An older Facet keeps the per-object tags exactly as before.
+
 Nothing here writes Facet's reject/cull flags or ``stats_cache`` (the tag route refreshes its own caches).
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -34,6 +42,8 @@ ANNOTATION_SOURCE = "astro-id"
 TAG_SOLVED = "plate-solved"
 TAG_FAILED = "plate-solve failed"
 TAG_REVIEW = "astro-review"
+MAX_PLUGIN_TAGS = 3          # model D: summary tags per photo per add-on (db/manual_tags.MAX_PLUGIN_TAGS_PER_PHOTO)
+TAG_KIND_PLUGIN = "plugin"
 MAX_TAGS_PER_PHOTO = 50      # Facet's per-photo manual tag cap (db/manual_tags.py), shared with user tags
 MAX_TAG_LENGTH = 64
 _UNSET = object()
@@ -84,6 +94,43 @@ def desired_tags(result: dict, min_confidence: int, extra: list[str] | tuple = (
     return tags
 
 
+def summary_tags(result: dict, extra: list[str] | tuple = ()) -> list[str]:
+    """Model D: the status tag, then ``extra`` (e.g. ``astro-review``), at most :data:`MAX_PLUGIN_TAGS`."""
+    tags = [TAG_SOLVED if result.get("solved") else TAG_FAILED]
+    for t in extra:
+        n = normalize_tag(t)
+        if n and n not in tags:
+            tags.append(n)
+    return tags[:MAX_PLUGIN_TAGS]
+
+
+def searchable(o: dict, min_confidence: int) -> bool:
+    """A name that is saved: at or above the cut and marked ``taggable`` by the engine's policy (level on, not
+    covered by its constellation / cluster / asterism). The same rule made tags before model D."""
+    c = o.get("confidence")
+    return isinstance(c, (int, float)) and c >= min_confidence and o.get("taggable", True) is not False
+
+
+def index_payload(payload: dict, result: dict, min_confidence: int) -> dict:
+    """Model D: a copy of ``payload`` with ``index: true`` on the items whose names :func:`searchable` keeps
+    (matched to the frame's objects by name). Facet copies those into its detections index; the others stay sky
+    labels only. Only true is written (no ``index_groups``, so absent = not indexed): a few bytes per saved name,
+    never per star, so the payload stays under Facet's 512 KB with astro-id's own 500 KB cap."""
+    keep: dict[str, bool] = {}
+    for o in result.get("objects") or []:
+        name = o.get("name")
+        if isinstance(name, str):
+            keep[name] = keep.get(name, False) or searchable(o, min_confidence)
+    items = []
+    for it in payload.get("items") or []:
+        if isinstance(it, dict):
+            it = {k: v for k, v in it.items() if k != "index"}
+            if keep.get(it.get("label")):
+                it["index"] = True
+        items.append(it)
+    return {**payload, "items": items}
+
+
 def ai_tags(photo: dict) -> set[str]:
     raw = photo.get("tags")
     items = raw.split(",") if isinstance(raw, str) else (photo.get("tags_list") or [])
@@ -91,19 +138,25 @@ def ai_tags(photo: dict) -> set[str]:
 
 
 def manual_tags(photo: dict) -> set[str]:
-    """Every manual tag row of the photo (content and album tags both count against the cap)."""
-    return set(photo.get("manual_tags") or []) | set(photo.get("album_tags") or [])
+    """Every manual tag row of the photo (content and album tags both count against the cap; a model D Facet
+    also lists add-on summary tags in ``plugin_tags``)."""
+    plugin = {t.get("tag") for t in photo.get("plugin_tags") or [] if isinstance(t, dict) and t.get("tag")}
+    return set(photo.get("manual_tags") or []) | set(photo.get("album_tags") or []) | plugin
 
 
 def plan_photo(desired: list[str], manual: set[str], ai: set[str], mine: set[str],
-               cap: int = MAX_TAGS_PER_PHOTO) -> dict:
+               cap: int = MAX_TAGS_PER_PHOTO, plugin: bool = False, migrate: bool = False) -> dict:
     """What to change on one photo. ``mine`` = tags the ledger says astro-id added earlier.
 
     A tag someone else put there (user or XMP: in ``manual`` but not ``mine``) is never claimed or removed; a tag
-    the AI tagger already has is skipped (Facet would skip it too); the cap counts foreign rows first."""
+    the AI tagger already has is skipped (Facet would skip it too); the cap counts foreign rows first.
+
+    ``plugin`` (model D summary tags): the cap is the add-on's own, so foreign rows do not use it. ``migrate``: the
+    ledger's tags were written as plain manual rows (an older Facet), so every one of them is removed and the kept
+    ones are added again as summary tags."""
     mine = mine & manual                      # a tag the user deleted in Facet is no longer ours to remove
     foreign = manual - mine
-    room = cap - len(foreign)
+    room = cap if plugin else cap - len(foreign)
     keep, skipped, dropped = [], [], []
     for t in desired:
         if t in foreign or t in ai:
@@ -112,8 +165,12 @@ def plan_photo(desired: list[str], manual: set[str], ai: set[str], mine: set[str
             dropped.append(t)
         else:
             keep.append(t)
-    add = [t for t in keep if t not in manual]
-    remove = sorted(mine - set(keep))
+    if migrate:
+        add = list(keep)
+        remove = sorted(mine)
+    else:
+        add = [t for t in keep if t not in manual]
+        remove = sorted(mine - set(keep))
     return {"keep": keep, "add": add, "remove": remove, "skipped": skipped, "dropped": dropped}
 
 
@@ -221,7 +278,9 @@ class SyncContext:
     mode: str | None = None              # 'api' | 'legacy-db' | None (annotations skipped)
     warnings: list = field(default_factory=list)
     addon: bool = False                  # started by Facet as an add-on: no --legacy-db, sidebar wording
-    tags_via: str = "manual+ledger"      # 'manual+ledger' until Facet PR-3 plugin tags are wired here
+    tags_via: str = "manual+ledger"      # 'manual+ledger'; model D: plugin summary tags + ledger
+    model_d: bool = False                # summary plugin tags + indexed detections (see the module docstring)
+    annotations_batch: bool = False      # set_annotations_batch available (model D)
     _legacy: object = None
 
     def prepare(self) -> "SyncContext":
@@ -230,11 +289,13 @@ class SyncContext:
             self.tags_via = "mcp add_tags (created_by = add-on)+ledger"
         self.version = self.client.server_version()
         feats = self.client.features()
-        if feats.get("plugin_tags"):
-            # Detected first, as the spec asks; its request body is not pinned in PLUGIN_BOUNDARY v0.2, so the
-            # writer stays on batch_manual_tags + ledger until it is (then: source='plugin', created_by = add-on id).
-            self.warnings.append("this Facet has plugin tags (PR-3); astro-id still writes manual tags + its "
-                                 "ledger until the plugin_tags body is pinned in the spec")
+        self.model_d = bool(feats.get("model_d") and feats.get("plugin_tags"))
+        self.annotations_batch = bool(self.model_d and feats.get("annotations_batch"))
+        if self.model_d:
+            self.tags_via = "plugin summary tags+ledger; names as searchable detections"
+            if not (self.annotations and feats.get("annotations_put")):
+                self.warnings.append("Names are not searchable: sky labels are off or this add-on cannot store "
+                                     "them; only the plate-solved / plate-solve failed tags are written")
         if not self.annotations:
             self.mode = None
             return self
@@ -266,9 +327,15 @@ class SyncContext:
             self._legacy.close()
 
 
-def write_annotation(ctx: SyncContext, path: str, result: dict, prev: dict | None) -> tuple[str, str | None, str | None]:
-    """(what happened, payload hash to record, how it was stored)."""
+def write_annotation(ctx: SyncContext, path: str, result: dict, prev: dict | None,
+                     batch: dict | None = None, info: dict | None = None) -> tuple[str, str | None, str | None]:
+    """(what happened, payload hash to record, how it was stored). Model D marks the searchable items first.
+    ``batch`` (a dict): a payload to store goes there (``{path: payload}``) for one ``set_annotations_batch``
+    instead of being written now, and the answer is "pending". ``info`` receives ``searchable`` (Facet's
+    ``indexed``) when a single write answers it."""
     payload = annotation_payload(result)
+    if ctx.model_d and isinstance(payload, dict):
+        payload = index_payload(payload, result, ctx.min_confidence)
     prev_hash = prev.get("payload_hash") if prev else None
     prev_via = prev.get("annotation_via") if prev else None
     if payload is _UNSET:
@@ -290,22 +357,37 @@ def write_annotation(ctx: SyncContext, path: str, result: dict, prev: dict | Non
         return "unchanged", h, prev_via
     if ctx.dry_run:
         return "would store", prev_hash, prev_via
+    if ctx.mode == "api" and batch is not None:
+        batch[path] = payload
+        return "pending", h, ctx.mode
     if ctx.mode == "api":
-        ctx.client.put_annotation(path, ANNOTATION_SOURCE, payload)
+        r = ctx.client.put_annotation(path, ANNOTATION_SOURCE, payload) or {}
+        if info is not None and isinstance(r.get("indexed"), int):
+            info["searchable"] = r["indexed"]
     else:
         ctx._legacy.upsert(path, ANNOTATION_SOURCE, payload)
     return "stored", h, ctx.mode
+
+
+def _job(client):
+    """The client's one-session-per-job block (MCP), or nothing for a client without one."""
+    job = getattr(client, "job", None)
+    return job() if callable(job) else contextlib.nullcontext()
 
 
 def apply_results(ctx: SyncContext, results: dict[str, dict], extra_tags: dict[str, list[str]] | None = None,
                   emit: Callable[[dict], None] | None = None, tags: bool = True) -> list[dict]:
     """Write tags + annotations for ``{facet path: frame result}``. Returns one report per photo.
 
-    Phase 1 plans every photo against a fresh ``GET /api/photo``; phase 2 removes stale astro-id tags and adds
-    new ones (one batch call per tag); phase 3 re-reads each photo and records in the ledger the planned tags
-    that are actually present (a cap race or a refusal never ends up in the ledger)."""
-    emit = emit or (lambda ev: None)
-    extra_tags = extra_tags or {}
+    One MCP session for the whole call. Phase 1 plans every photo against a fresh ``get_photo``; phase 2 removes
+    stale astro-id tags and adds new ones (one call per tag, all its photos); phase 3 stores the annotation payloads
+    (model D: one ``set_annotations_batch`` per 200 photos); phase 4 re-reads each photo and records in the ledger
+    the planned tags that are actually present (a cap race or a refusal never ends up in the ledger)."""
+    with _job(ctx.client):
+        return _apply_results(ctx, results, extra_tags or {}, emit or (lambda ev: None), tags)
+
+
+def _apply_results(ctx, results, extra_tags, emit, tags) -> list[dict]:
     plans: dict[str, dict] = {}
     reports: list[dict] = []
     for path, fr in results.items():
@@ -314,31 +396,79 @@ def apply_results(ctx: SyncContext, results: dict[str, dict], extra_tags: dict[s
         if photo is None:
             reports.append({"path": path, "error": "not in Facet (or not visible)"})
             continue
-        want = desired_tags(fr, ctx.min_confidence, extra_tags.get(path, ()))
         mine = set(prev["tags"]) if prev else set()
-        plan = plan_photo(want, manual_tags(photo), ai_tags(photo), mine) if tags else \
-            {"keep": sorted(mine & manual_tags(photo)), "add": [], "remove": [], "skipped": [], "dropped": []}
+        present = manual_tags(photo)
+        if not tags:
+            plan = {"keep": sorted(mine & present), "add": [], "remove": [], "skipped": [], "dropped": []}
+        elif ctx.model_d:
+            migrate = bool(mine & present) and (prev or {}).get("tag_kind") != TAG_KIND_PLUGIN
+            plan = plan_photo(summary_tags(fr, extra_tags.get(path, ())), present, ai_tags(photo), mine,
+                              cap=MAX_PLUGIN_TAGS, plugin=True, migrate=migrate)
+            plan["migrated"] = sorted(mine & present) if migrate else []
+        else:
+            plan = plan_photo(desired_tags(fr, ctx.min_confidence, extra_tags.get(path, ())), present,
+                              ai_tags(photo), mine)
         plans[path] = {"plan": plan, "prev": prev, "result": fr}
     if not ctx.dry_run:
+        by_tag: dict[str, list[str]] = {}
         for path, p in plans.items():
             for t in p["plan"]["remove"]:
-                ctx.client.delete_tag(path, t)
-        by_tag: dict[str, list[str]] = {}
+                by_tag.setdefault(t, []).append(path)
+        for t, paths in sorted(by_tag.items()):
+            done = ctx.client.batch_remove_tag(t, paths) or {}
+            if done.get("skipped_foreign"):
+                log.warning("%r: Facet left %d row(s) another writer owns", t, done["skipped_foreign"])
+        by_tag = {}
         for path, p in plans.items():
             for t in p["plan"]["add"]:
                 by_tag.setdefault(t, []).append(path)
         for t, paths in sorted(by_tag.items()):
-            ctx.client.batch_add_tag(t, paths)
+            if ctx.model_d:
+                ctx.client.batch_add_tag(t, paths, plugin=True)
+            else:
+                ctx.client.batch_add_tag(t, paths)
+    # Annotations: single writes now; on model D the stores are collected for set_annotations_batch.
+    batch: dict | None = {} if ctx.annotations_batch else None
+    ann: dict[str, tuple] = {}
+    info: dict[str, dict] = {}
+    for path, p in plans.items():
+        info[path] = {}
+        try:
+            ann[path] = write_annotation(ctx, path, p["result"], p["prev"], batch, info[path])
+        except Exception as exc:   # never lose the ledger record of tags already written above
+            prev = p["prev"] or {}
+            ann[path] = (f"error: {exc}", prev.get("payload_hash"), prev.get("annotation_via"))
+            log.error("%s: annotation not stored: %s", path, exc)
+    if batch:
+        try:
+            answers = ctx.client.put_annotations_batch(batch)
+        except Exception as exc:
+            answers = {pp: {"ok": False, "message": str(exc)} for pp in batch}
+        for path in batch:
+            r = answers.get(path) or {}
+            prev = plans[path]["prev"] or {}
+            if r.get("ok"):
+                ann[path] = ("stored",) + tuple(ann[path][1:])
+                if isinstance(r.get("indexed"), int):
+                    info[path]["searchable"] = r["indexed"]
+                if r.get("index_skipped"):
+                    info[path]["not_searchable"] = r["index_skipped"]
+            else:
+                ann[path] = (f"error: {r.get('error') or ''} {r.get('message') or ''}".strip(),
+                             prev.get("payload_hash"), prev.get("annotation_via"))
+                log.error("%s: annotation not stored: %s", path, ann[path][0])
     for path, p in plans.items():
         plan, prev, fr = p["plan"], p["prev"], p["result"]
         rep = {"path": path, "status": "solved" if fr.get("solved") else "failed", "add": plan["add"],
                "remove": plan["remove"], "kept": plan["keep"], "skipped": plan["skipped"],
                "dropped": plan["dropped"], "dry_run": ctx.dry_run}
-        try:
-            rep["annotation"], h, via = write_annotation(ctx, path, fr, prev)
-        except Exception as exc:   # never lose the ledger record of tags already written above
-            rep["annotation"], h, via = f"error: {exc}", (prev or {}).get("payload_hash"), (prev or {}).get("annotation_via")
-            log.error("%s: annotation not stored: %s", path, exc)
+        if plan.get("migrated"):
+            rep["migrated"] = plan["migrated"]
+        if ctx.model_d:
+            rep["names"] = sorted({o["name"] for o in fr.get("objects") or []
+                                   if isinstance(o.get("name"), str) and searchable(o, ctx.min_confidence)})
+        rep["annotation"], h, via = ann[path]
+        rep.update(info[path])
         if not ctx.dry_run:
             after = ctx.client.photo(path) or {}
             present = manual_tags(after)
@@ -347,8 +477,15 @@ def apply_results(ctx: SyncContext, results: dict[str, dict], extra_tags: dict[s
             if missing:
                 rep["not_written"] = missing
                 log.warning("%s: Facet did not store %s", path, missing)
+            left = [t for t in plan["remove"] if t in present and t not in plan["keep"]]
+            if left:
+                rep["not_removed"] = left        # another writer owns that row now: no longer ours to track
+            if not tags:
+                kind = (prev or {}).get("tag_kind")
+            else:
+                kind = TAG_KIND_PLUGIN if ctx.model_d else None
             ctx.ledger.record(ctx.library, path, tags=owned, payload_hash=h, annotation_via=via,
-                              status=rep["status"], facet_version=ctx.version)
+                              status=rep["status"], facet_version=ctx.version, tag_kind=kind)
         reports.append(rep)
         emit({"event": "written", **rep})
     return reports
@@ -356,6 +493,11 @@ def apply_results(ctx: SyncContext, results: dict[str, dict], extra_tags: dict[s
 
 def remove_all(ctx: SyncContext, paths: list[str] | None = None) -> list[dict]:
     """Undo: remove every ledger tag (and our annotation) from ``paths`` (default: every ledger photo)."""
+    with _job(ctx.client):
+        return _remove_all(ctx, paths)
+
+
+def _remove_all(ctx: SyncContext, paths: list[str] | None) -> list[dict]:
     reports = []
     for row in ctx.ledger.rows(ctx.library):
         if paths is not None and row["path"] not in paths:

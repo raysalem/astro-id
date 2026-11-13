@@ -129,6 +129,10 @@ def test_install_writes_only_the_manifest(tmp_path, monkeypatch):
     assert argv[4:] == ["astro-id", "facet", "serve", "--addon"]
     assert "url" not in doc["ui"]                                         # start and ui.url are exclusive
     assert re.match(r"^[a-z0-9][a-z0-9_-]*$", doc["id"])                  # Facet's annotation source id shape
+    # model D: the hosts the backend calls; no `features` (astro-id adapts to what `status` reports)
+    assert "epqs.nationalmap.gov" in doc["network"] and "nova.astrometry.net" in doc["network"]
+    assert "features" not in doc
+    assert "network" not in I.manifest(uv, REPO, older_facet=True)        # an older Facet refuses unknown keys
     # idempotent re-install, then uninstall removes the manifest and its folder only
     I.install(str(data))
     assert _tree(data) - before == {"addons", "addons/astro-id", "addons/astro-id/addon.json"}
@@ -651,13 +655,14 @@ def test_bridge_js_under_node():
 def test_page_priority_layout_terms_and_script_parses(tmp_path):
     """Panel redesign (Ray 2026-11-12, "rank, show the top, fold the rest"): one load bar at the top (load what Facet
     shows · Album · Import a new folder), then Location -> Time (with Auto) -> Plate solve (one button, a counter) ->
-    Results and tags -> Sky labels -> Export (options chosen at export time) -> Culling, folded. No Save setup."""
+    Results -> Sky labels -> Export (options chosen at export time) -> Culling, folded. No Save setup."""
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     text = re.sub(r"<script>.*?</script>", "", html, flags=re.S)
     for want in ('id="loadFacet"', 'id="albumSel"', "Import a new folder", "1. Location", "2. Time", "Auto",
-                 "3. Plate solve", "4. Results and tags", "Save to Facet", "5. Sky labels", "Show sky labels",
+                 "3. Plate solve", "4. Results", "Save to Facet", "5. Sky labels", "Show sky labels",
                  "6. Export labeled copies", "Draw constellation stick figures", "Show confidence numbers",
-                 "Culling (low priority)", "<b>tags</b>", 'id="saveScore"', "Save names at confidence",
+                 "Culling (low priority)", "<b>tags</b>", 'id="saveScore"', "Save names</span>",
+                 "Make names searchable</span>", "Searchable name",
                  "Show names at confidence", 'id="help"', 'id="helpBtn"', "The two confidence sliders", 'id="resAll"',
                  'id="prog"', 'id="autoApply"'):
         assert want in text, want
