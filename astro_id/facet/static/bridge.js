@@ -151,6 +151,12 @@
     };
   }
 
+  /* Facet or the add-on restarted under an open panel: with the add-on gone, Facet answers the CORS preflight 404
+     and fetch rejects with a bare "Failed to fetch"; once it is back, this panel's nonce is stale (403). Either
+     way the panel is dead and a running solve (held in the add-on's memory) is lost: say so, in plain words. */
+  const STALE = "astro-id is not answering: Facet or the add-on restarted, so this panel is out of date and a " +
+                "running solve was lost. Close and reopen the Astro panel, then solve again.";
+
   /* fetch wrapper: relative URLs only, X-Addon-Nonce on every request, JSON in and out; no credentials. */
   function makeApi(fetchFn, nonce) {
     function headers(extra) {
@@ -158,20 +164,24 @@
       if (nonce) h["X-Addon-Nonce"] = nonce;
       return h;
     }
-    async function call(path, body) {
+    async function send(path, opt) {
       if (/^[a-z]+:|^\/\//i.test(path) || path.charAt(0) === "/") throw new Error("relative URLs only");
+      try { return await fetchFn(path, opt); } catch (e) { throw new Error(STALE); }
+    }
+    // Facet's own refusals carry {"detail": ...}; the add-on's carry {"error": ...}.
+    function stale(r, doc) { return r.status === 403 && /stale panel nonce/i.test((doc && (doc.detail || doc.error)) || ""); }
+    async function call(path, body) {
       const opt = body === undefined
         ? {method: "GET", headers: headers(), credentials: "omit"}
         : {method: "POST", headers: headers({"Content-Type": "application/json"}), body: JSON.stringify(body),
            credentials: "omit"};
-      const r = await fetchFn(path, opt);
+      const r = await send(path, opt);
       const doc = await r.json().catch(function () { return {error: "HTTP " + r.status}; });
-      if (!r.ok) throw new Error(doc.error || ("HTTP " + r.status));
+      if (!r.ok) throw new Error(stale(r, doc) ? STALE : (doc.error || doc.detail || ("HTTP " + r.status)));
       return doc;
     }
     async function blob(path) {
-      if (/^[a-z]+:|^\/\//i.test(path) || path.charAt(0) === "/") throw new Error("relative URLs only");
-      const r = await fetchFn(path, {method: "GET", headers: headers(), credentials: "omit"});
+      const r = await send(path, {method: "GET", headers: headers(), credentials: "omit"});
       if (!r.ok) throw new Error("HTTP " + r.status);
       return r.blob();
     }

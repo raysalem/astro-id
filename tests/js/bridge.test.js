@@ -140,6 +140,20 @@ test("api wrapper: X-Addon-Nonce on every request, no credentials, relative URLs
   await assert.rejects(failing.call("api/state"), /nope/);
 });
 
+test("makeApi: Facet or the add-on restarted under the panel -> a plain 'reopen the panel' message", async () => {
+  // add-on gone: Facet 404s the CORS preflight and fetch rejects with a bare TypeError
+  const gone = B.makeApi(async () => { throw new TypeError("Failed to fetch"); }, NONCE);
+  await assert.rejects(gone.call("api/save-config", {}), /restarted.*reopen the Astro panel/i);
+  await assert.rejects(gone.blob("api/thumb?path=x"), /restarted/);
+  // add-on back with a new panel table: this panel's nonce is stale (Facet's refusal says "detail")
+  const stale = B.makeApi(async () => ({ ok: false, status: 403,
+                                         json: async () => ({ detail: "Missing or stale panel nonce" }) }), NONCE);
+  await assert.rejects(stale.call("api/job?after=0"), /restarted.*reopen the Astro panel/i);
+  // any other Facet refusal still shows its own detail
+  const other = B.makeApi(async () => ({ ok: false, status: 400, json: async () => ({ detail: "Invalid path" }) }), NONCE);
+  await assert.rejects(other.call("api/state"), /Invalid path/);
+});
+
 test("constEq compares in full", () => {
   assert.equal(B.constEq("abc", "abc"), true);
   assert.equal(B.constEq("abc", "abd"), false);

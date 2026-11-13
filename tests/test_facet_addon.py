@@ -475,6 +475,71 @@ def test_album_setup_is_saved_per_album_and_prefills_the_album(tmp_path):
             server.server_close()
 
 
+@pytest.mark.parametrize("case", ["saved", "no_folder_file", "two_folders", "empty_offset", "raw"])
+def test_solve_without_save_setup_keeps_the_saved_setup(tmp_path, monkeypatch, case):
+    """B-P5 replay: load an album, do NOT click Save setup, click Plate solve. The panel's Solve sends save-config
+    (the form, prefilled from the saved setup) and then solve: neither may fail, the saved album setup and the
+    folder's astro-id.json stay as they were, and the solve gets the saved offset."""
+    from astro_id import session
+
+    saved_cfg = {"clock_offset": "+2559d11h08m", "time_tolerance_min": 15, "timezone": "America/Los_Angeles",
+                 "site": {"name": "TDS", "lat": 32.614028, "lon": -116.333056, "elev_m": 1128.8},
+                 "solve_source": "jpg", "labeled_copies": {"on": False, "lines": True, "scores": False},
+                 "sky_labels": {}, "min_confidence": 65}
+    a, b = tmp_path / "astro", tmp_path / "astro2"
+    a.mkdir()
+    b.mkdir()
+    if case != "no_folder_file":
+        (a / "astro-id.json").write_text(json.dumps(saved_cfg), encoding="utf-8")
+    ra, rb = str(a).replace("\\", "/"), str(b).replace("\\", "/")
+    paths = [f"{ra}/DSC07610.JPG", f"{ra}/DSC07611.JPG"] + ([f"{rb}/DSC07700.JPG"] if case == "two_folders" else [])
+    rows = [{"path": p, "filename": p.rsplit("/", 1)[1], "albums": [6]} for p in paths]
+    got = {}
+
+    def fake_run(lpaths, opts, emit):
+        got["opts"] = opts
+        done = {"event": "done", "solved": 0, "elapsed_s": 0.0, "time": {},
+                "cull": {"reference": {}, "rule": {}, "frames": {}}}
+        emit(done)
+        return {**done, "results": {}}
+    monkeypatch.setattr(session, "run_session", fake_run)
+    with FakeFacet(rows, addon_token=TOKEN) as fake:
+        args = type("A", (), {"ledger": str(tmp_path / "l.sqlite"), "legacy_db": None, "no_annotations": False,
+                              "path_map": None})()
+        server, box, aenv = SV.build_addon(args, addon_env(fake))
+        try:
+            app = SV.finish_addon(args, box, aenv)
+            setup = {k: saved_cfg[k] for k in ("clock_offset", "time_tolerance_min", "timezone", "solve_source",
+                                               "labeled_copies", "sky_labels", "min_confidence")}
+            if case == "empty_offset":
+                setup["clock_offset"] = ""
+            if case == "raw":
+                setup["solve_source"] = "raw"
+            app.save_album_config(6, setup)
+            d = app.list_photos({}, {"album_id": 6})
+            f = d["album_config"]
+            # what the panel's opts() sends after loaded() filled the form from the saved setup
+            body = {"paths": paths, "offset": f["clock_offset"] or "", "tolerance_min": str(f["time_tolerance_min"]),
+                    "tz": f["timezone"], "source": f["solve_source"], "labeled_copies": f["labeled_copies"],
+                    "sky_labels": f["sky_labels"], "min_confidence": f["min_confidence"], "album_id": 6}
+            before = (a / "astro-id.json").read_text(encoding="utf-8") if case != "no_folder_file" else None
+            r = app.save_config({}, body)
+            assert r["album"] == {"album_id": 6, "changed": False}            # the album setup is untouched
+            if before is not None and case not in ("empty_offset", "raw"):
+                assert json.loads((a / "astro-id.json").read_text(encoding="utf-8")) == json.loads(before)
+            assert app.album_config(6) == setup
+            assert app.solve({}, {**body, "cull": None}) == {"started": len(paths), "write": False}
+            for _ in range(200):
+                if not app.job.running:
+                    break
+                time.sleep(0.01)
+            assert app.job.error is None
+            assert got["opts"].offset == (setup["clock_offset"] or None) and got["opts"].source == setup["solve_source"]
+            app.ledger.close()
+        finally:
+            server.server_close()
+
+
 def test_mcp_client_against_the_stub(fake):
     c = connect(fake.url, token=TOKEN)
     assert isinstance(c, McpFacetClient)
