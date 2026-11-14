@@ -659,6 +659,10 @@ def test_panel_logic_under_node():
     assert r.returncode == 0, r.stdout + r.stderr
 
 
+def panel_idx(html, needle):
+    return html.index(needle, html.index("<main>"))
+
+
 def test_page_priority_layout_terms_and_script_parses(tmp_path):
     """Panel redesign (Ray 2026-11-12, "rank, show the top, fold the rest"): one load bar at the top (load what Facet
     shows · Album · Import a new folder), then Location -> Time (with Auto) -> Plate solve (one button, a counter) ->
@@ -674,6 +678,11 @@ def test_page_priority_layout_terms_and_script_parses(tmp_path):
                  'id="prog"', 'id="autoApply"'):
         assert want in text, want
     panel = text[text.index("<main>"):]          # the panel itself (the help page above uses the same words)
+    # the status line (Ray 2026-11-14): loaded / not, and whether Facet shows the loaded thing, above the load button
+    for want in ('id="stLoadedText"', 'id="stShowing"', 'id="reload"', "Nothing loaded yet.", "Facet is showing: ",
+                 "Open an album, a folder or a photo in Facet, or pick one here:", "About the loaded set"):
+        assert want in html, want
+    assert panel_idx(html, 'id="stLoadedText"') < panel_idx(html, 'id="loadFacet"')
     order = ['id="loadFacet"', 'id="albumSel"', 'id="importBtn"', 'id="s1"', 'id="s2"', 'id="s3"', 'id="saveScore"',
              'id="saveFacet"', 'id="s5"', 'id="skyScore"', 'id="s6"', 'id="exportBtn"', 'id="s7"']
     assert [panel.index(x) for x in order] == sorted(panel.index(x) for x in order)

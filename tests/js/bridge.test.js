@@ -284,3 +284,26 @@ test("makePoller never runs two polls at once, and stops when fn returns false",
   q.start(); await new Promise((r) => setTimeout(r, 30)); assert.equal(q.running, true); q.stop();
   assert.equal(q.running, false);
 });
+
+test("loadState: nothing / empty / current / other / away, and the transition when Facet moves albums", () => {
+  const ctx = (o) => B.sanitizeContext(Object.assign({ route: "/", album_id: null, photo: null, selection: [], scope: null }, o));
+  const a6 = B.facetTarget(ctx({ route: "/album/6", album_id: 6 })), a7 = B.facetTarget(ctx({ route: "/album/7", album_id: 7 }));
+  assert.equal(B.loadState(a6, ""), "nothing");
+  assert.equal(B.loadState(null, ""), "empty");
+  assert.equal(B.loadState(a6, a6.key), "current");
+  assert.equal(B.loadState(a7, a6.key), "other");        // loaded 6, Facet now shows 7
+  assert.equal(B.loadState(null, a6.key), "away");       // loaded 6, Facet on the Albums list
+  assert.equal(B.loadState(a6, a6.key), "current");      // and back
+});
+
+test("nextLastAlbum: remembered for a photo opened from an album, forgotten when the user leaves albums/photos", () => {
+  const ctx = (o) => B.sanitizeContext(Object.assign({ route: "/", album_id: null, photo: null, selection: [], scope: null }, o));
+  assert.equal(B.nextLastAlbum(ctx({ route: "/album/6", album_id: 6 }), null), 6);
+  assert.equal(B.nextLastAlbum(ctx({ route: "/photo", photo: "/p/a.jpg" }), 6), 6);       // photo opened from the album
+  assert.equal(B.nextLastAlbum(ctx({ route: "/albums" }), 6), null);                       // Albums list: forgotten
+  assert.equal(B.nextLastAlbum(ctx({ route: "/addons" }), 6), null);
+  assert.equal(B.nextLastAlbum(ctx({ route: "/album/9", album_id: 9 }), 6), 9);            // another album replaces it
+  assert.equal(B.nextLastAlbum(ctx({ route: "/photo", photo: "/p/a.jpg" }), null), null);
+  // the stale memory no longer turns a folder photo into the old album
+  assert.equal(B.facetTarget(ctx({ route: "/photo", photo: "/p/a.jpg" }), B.nextLastAlbum(ctx({ route: "/albums" }), 6)).kind, "folder");
+});

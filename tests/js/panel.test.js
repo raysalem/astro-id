@@ -54,3 +54,59 @@ test("the page uses non-overlapping pollers, no setInterval, and locks its actio
   assert.match(script, /function lockActions\(\)/);
   assert.match(script, /if \(e\.transient\)/);
 });
+
+// The top status (drawStatus): run the page's own function against stub elements.
+function statusPanel() {
+  const B = require(path.join(__dirname, "..", "..", "astro_id", "facet", "static", "bridge.js"));
+  const el = {}; const $ = (id) => (el[id] = el[id] || {hidden: false, textContent: "", className: "", title: "", disabled: false});
+  const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  const src = between("function drawStatus()", "$(\"reload\").onclick");
+  const mk = new Function("B", "$", "plural", "NONCE", "S",
+    "let facetTarget, loadedKey, loadedLabel, photos, curWhat, curCount, curSmart, curNote, ctxSeen, loadingNow, lastManual, scopeReq;\n"
+    + src + "\nreturn {draw(s){({facetTarget, loadedKey, loadedLabel, photos, curWhat, curCount, curSmart, curNote, ctxSeen, loadingNow, lastManual, scopeReq} = Object.assign({facetTarget:null, loadedKey:'', loadedLabel:'', photos:[], curWhat:'', curCount:null, curSmart:null, curNote:'', ctxSeen:true, loadingNow:false, lastManual:null, scopeReq:null}, s)); drawStatus();}};");
+  const api = mk(B, $, plural, "nonce", {});
+  return {el, draw: api.draw, B};
+}
+const album = (id) => ({kind: "album", key: "album:" + id, album_id: id});
+const six = Array.from({length: 18}, () => ({}));
+
+test("status: nothing loaded -> one line and a Load button naming what Facet shows", () => {
+  const p = statusPanel();
+  p.draw({facetTarget: album(6), curWhat: "Album Astro test (fixed)", curCount: 18});
+  assert.equal(p.el.stLoadedText.textContent, "Nothing loaded yet.");
+  assert.equal(p.el.loadFacet.hidden, false);
+  assert.equal(p.el.loadFacet.textContent, "Load Album Astro test (fixed) (18 photos)");
+  assert.equal(p.el.stShowing.hidden, true);
+});
+
+test("status: loaded and it IS what Facet shows -> tick, no load button, Reload link", () => {
+  const p = statusPanel();
+  p.draw({facetTarget: album(6), loadedKey: "album:6", loadedLabel: "Album Astro test (fixed)", photos: six, curWhat: "Album Astro test (fixed)", curCount: 18, lastManual: [1]});
+  assert.equal(p.el.stLoadedText.textContent, "Loaded: Album Astro test (fixed) · 18 photos ✓");
+  assert.equal(p.el.loadFacet.hidden, true);
+  assert.equal(p.el.stShowing.hidden, true);
+  assert.equal(p.el.reload.hidden, false);
+});
+
+test("status: loaded, Facet moved to another album -> loaded line unchanged, 'Facet is showing', 'Load ... instead'", () => {
+  const p = statusPanel();
+  p.draw({facetTarget: album(7), loadedKey: "album:6", loadedLabel: "Album Astro test (fixed)", photos: six, curWhat: "Album Trip", curCount: 40});
+  assert.equal(p.el.stLoadedText.textContent, "Loaded: Album Astro test (fixed) · 18 photos");
+  assert.equal(p.el.stShowing.hidden, false);
+  assert.equal(p.el.stShowingText.textContent, "Album Trip (40 photos)");
+  assert.equal(p.el.loadFacet.textContent, "Load Album Trip instead");
+  assert.equal(p.el.loadFacet.hidden, false);
+  assert.equal(p.el.reload.hidden, true);
+});
+
+test("status: Facet shows nothing loadable (Albums list, Add-ons) -> say so, keep the loaded line", () => {
+  const p = statusPanel();
+  p.draw({facetTarget: null, loadedKey: "album:6", loadedLabel: "Album Astro test (fixed)", photos: six});
+  assert.equal(p.el.stLoadedText.textContent, "Loaded: Album Astro test (fixed) · 18 photos");
+  assert.equal(p.el.loadFacet.hidden, true);
+  assert.equal(p.el.facetHint.textContent, "Open an album, a folder or a photo in Facet, or pick one here:");
+  const q = statusPanel();
+  q.draw({facetTarget: null});
+  assert.equal(q.el.stLoadedText.textContent, "Nothing loaded yet.");
+  assert.equal(q.el.facetHint.textContent, "Open an album, a folder or a photo in Facet, or pick one here:");
+});

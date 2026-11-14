@@ -20,6 +20,8 @@
   main { max-width:1100px; margin:0 auto; padding:4px 8px 32px; }
   .loadbar { border:1px solid var(--line); border-radius:6px; padding:8px 10px; margin:8px 0; background:var(--card); }
   .loaded { padding:4px 2px; margin:4px 0 2px; }
+  .loadedline { margin:0 0 6px; padding-bottom:6px; border-bottom:1px solid var(--line); }
+  .showing { margin:0 0 6px; }
   button.big { width:100%; padding:8px 10px; font-weight:600; text-align:left; overflow:hidden; text-overflow:ellipsis;
                white-space:nowrap; opacity:1; }
   button.big:not(.secondary) { box-shadow:0 1px 2px rgba(0,0,0,.25); }
@@ -96,9 +98,14 @@
 
   <h2 id="h-flow">The flow</h2>
   <ol>
-    <li><b>Load the photos</b> (top of the panel). Open a photo or an album in Facet and click the button that names
-      it, e.g. <i>Load folder astro (18 photos)</i>. Or pick an <b>Album</b>, or <b>Import a new folder</b> by pasting
-      its path. A folder or album you used before opens with its setup already applied, at the next useful step.</li>
+    <li><b>Load the photos</b> (top of the panel). The first line always says what is loaded:
+      <i>Nothing loaded yet.</i>, or <i>Loaded: Album Trip &middot; 18 photos</i> (with a tick when that is what
+      Facet is showing). Open a photo, an album or a folder in Facet and the button names it, e.g.
+      <i>Load Folder astro (18 photos)</i>. If Facet moves on to something else, the loaded set stays and the panel
+      says <i>Facet is showing: ...</i> with a <i>Load ... instead</i> button; nothing is replaced until you click
+      it. Or pick an <b>Album</b>, or <b>Import a new folder</b> by pasting its path. A folder or album you used
+      before opens with its setup already applied, at the next useful step. The setup and "already saved" lines under
+      the loaded line are about the loaded set, not about what Facet shows.</li>
     <li><b>Location</b> (1), once per folder or album.</li>
     <li><b>Time</b> (2): how far the camera clock was off. After a solve, <b>Auto</b> may offer a correction.</li>
     <li><b>Plate solve</b> (3): one button. This only reads the photos; nothing in Facet changes.</li>
@@ -200,6 +207,9 @@
 <main>
 
 <div class="loadbar" id="loadbar">
+  <div id="stLoaded" class="loadedline"><b id="stLoadedText">Nothing loaded yet.</b>
+    <button id="reload" class="link small" hidden>Reload</button></div>
+  <div id="stShowing" class="showing" hidden>Facet is showing: <b id="stShowingText"></b></div>
   <button id="loadFacet" class="big" hidden></button>
   <div id="facetHint" class="muted small">waiting for Facet...</div>
   <div class="row">
@@ -213,7 +223,7 @@
 </div>
 
 <div class="loaded" id="loaded" hidden>
-  <div class="row"><b id="loadedName" class="name"></b> <span id="autosaved" class="muted small"></span></div>
+  <div class="row"><span id="loadedName" class="muted small"></span> <span id="autosaved" class="muted small"></span></div>
   <div id="folderinfo" class="small"></div>
   <details class="sub" id="photosBox"><summary id="photosSum">Photos</summary>
     <div class="row"><span>Solve from:</span>
@@ -377,7 +387,7 @@ const NONCE = B.readNonce(location.search);
 const API = B.makeApi((u, o) => fetch(u, o), NONCE);
 // Must equal serve.py PAGE_VERSION. Facet reads this page from disk on every load but keeps the add-on process
 // running, so after an update the page can be newer than its server: say so instead of "HTTP 404".
-const PAGE_VERSION = "2026-11-12.6";
+const PAGE_VERSION = "2026-11-14.1";
 const STALE_SERVER = "Astro was updated: stop and reopen it from Facet's Add-ons page.";
 const STALE_PAGE = "Astro was updated: close and reopen the Astro panel.";
 let serverStale = false;
@@ -490,7 +500,6 @@ async function init() {
   $("notesBox").hidden = !notes.length; $("notesSum").textContent = `Notes (${notes.length})`;
   $("warnings").innerHTML = notes.map((n) => `<div>${esc(n)}</div>`).join("");
   if (!NONCE) {
-    $("facetHint").textContent = "Pick an album, or import a folder by its path.";
     $("skyinfo").textContent = "Sky labels are set from inside Facet: open a photo there with the Astro panel.";
   }
   $("rtname").textContent = state.review_tag;
@@ -498,6 +507,7 @@ async function init() {
   drawRule(); drawExport();
   initDone = true;
   fillAlbums().then(() => { if (lastCtx) drawFacetTarget(lastCtx); });
+  drawStatus();
   if (lastCtx) onContext(lastCtx);
 }
 
@@ -512,10 +522,11 @@ function onContext(ctx) {
 let facetTarget = null, targetSeq = 0, lastAlbumId = null;
 const counts = new Map();   // target key -> {count, setup, name, smart}
 const inAlbum = new Map();  // "album id\nphoto" -> is the photo in that album (api/count {album_id, path})
+let curWhat = "", curCount = null, curSmart = null, curNote = "", ctxSeen = false, loadingNow = false;
 async function drawFacetTarget(ctx) {
-  const seq = ++targetSeq, btn = $("loadFacet");
-  const aid = B.albumOf(ctx);
-  if (aid != null) lastAlbumId = aid;
+  const seq = ++targetSeq;
+  ctxSeen = true;
+  lastAlbumId = B.nextLastAlbum(ctx, lastAlbumId);   // forgotten when the user leaves albums/photos (Albums list, Add-ons)
   let t = B.facetTarget(ctx, lastAlbumId), note = "";
   if (t && t.kind === "album" && t.photo) {
     // A photo opened from an album: Facet passes the photo, not the album. Offer the album you viewed last (setups
@@ -528,50 +539,71 @@ async function drawFacetTarget(ctx) {
     }
     if (inAlbum.get(k)) {
       const a = albums.find((x) => Number(x.id) === t.album_id);
-      note = `Facet does not say which album a photo was opened from; this photo is in album ${a ? a.name : "#" + t.album_id}, viewed last. Its folder: ${t.folder.name}.`;
+      note = `Facet does not say which album a photo was opened from. A guess: this photo is in album ${a ? a.name : "#" + t.album_id}, the one you viewed last. Its folder: ${t.folder.name}.`;
     } else t = t.folder;
   }
   if (t && t.kind === "folder" && ctx && ctx.photo && lastAlbumId == null) {
     note = "Opened from an album? Facet does not pass the album with a photo: pick it in the Album list.";
   }
-  facetTarget = t;
-  if (!t) {
-    btn.hidden = true;
-    $("facetHint").hidden = false;
-    $("facetHint").textContent = "Open a photo or an album in Facet and it is offered here. Or pick an album, or import a folder.";
-    return;
-  }
-  $("facetHint").hidden = !note; $("facetHint").textContent = note; btn.hidden = false; btn.disabled = false;
+  facetTarget = t; curNote = note; curSmart = null; curCount = null;
+  if (!t) { curWhat = ""; drawStatus(); return; }
   let what;
   if (t.kind === "album") {
     const a = albums.find((x) => Number(x.id) === t.album_id);
-    what = a ? `album ${a.name}` : `album #${t.album_id}`;
-  } else if (t.kind === "folder") what = `folder ${t.name}`;
+    what = a ? `Album ${a.name}` : `Album #${t.album_id}`;
+  } else if (t.kind === "folder") what = `Folder ${t.name}`;
   else if (t.kind === "selection") what = `the ${plural(t.paths.length, "ticked photo")}`;
   else what = `the photos of import #${t.run_id}`;
+  curWhat = what;
   const show = (c) => {
     if (seq !== targetSeq) return;
-    if (c && c.smart) {
-      btn.hidden = true; $("facetHint").hidden = false;
-      $("facetHint").textContent = `Album ${c.name || ""} is a smart album (a saved filter): open one of its photos to load that folder.`;
-      return;
-    }
-    const n = c && c.count != null ? ` (${plural(c.count, "photo")})` : "";
-    const done = t.key === loadedKey;
-    btn.textContent = (done ? "Loaded: " : "Load ") + what + n + (c && c.setup && !done ? " · setup saved" : "");
-    btn.className = done ? "big secondary" : "big";
-    btn.title = t.kind === "folder" ? t.prefix : "";
+    curWhat = what; curSmart = c && c.smart ? (c.name || "") : null; curCount = c && c.count != null ? c.count : null;
+    drawStatus();
   };
   show(counts.get(t.key));
   if ((t.kind === "folder" || t.kind === "album") && !counts.has(t.key)) {
     try {
       const c = await api("api/count", t.kind === "album" ? {album_id: t.album_id} : {path_prefix: t.prefix});
       counts.set(t.key, c);
-      if (t.kind === "album" && c.name) what = `album ${c.name}`;
+      if (t.kind === "album" && c.name) what = `Album ${c.name}`;
       show(c);
     } catch (e) { /* the label without a count is still right */ }
   }
 }
+/* The top status: exactly one of the states of B.loadState, with its one action. Drawn from module state, so it
+   is cheap to redraw (after a context change, a count, a load). Never touches the loaded set or a solve. */
+function drawStatus() {
+  const t = facetTarget, st = B.loadState(t, loadedKey), btn = $("loadFacet");
+  const hint = $("facetHint"), pick = "Open an album, a folder or a photo in Facet, or pick one here:";
+  const n = curCount != null ? ` (${plural(curCount, "photo")})` : "";
+  const smart = t && curSmart !== null;
+  const hasLoaded = st === "current" || st === "other" || st === "away";
+  $("stLoadedText").textContent = loadingNow ? "Loading..."
+    : hasLoaded ? `Loaded: ${loadedLabel} · ${plural(photos.length, "photo")}${st === "current" ? " ✓" : ""}`
+    : "Nothing loaded yet.";
+  $("reload").hidden = loadingNow || !(st === "current" && (lastManual || scopeReq));
+  $("stShowing").hidden = !(st === "other");
+  btn.hidden = true; hint.hidden = true; hint.textContent = "";
+  if (t && st !== "current") {
+    $("stShowingText").textContent = `${curWhat}${n}`;
+    if (smart) {
+      hint.hidden = false;
+      hint.textContent = `Album ${curSmart} is a smart album (a saved filter): open one of its photos to load that folder.`;
+      return;
+    }
+    btn.hidden = false; btn.disabled = loadingNow; btn.className = "big";
+    btn.textContent = st === "other" ? `Load ${curWhat} instead` : `Load ${curWhat}${n}`;
+    btn.title = t.kind === "folder" ? t.prefix : "";
+    if (curNote) { hint.hidden = false; hint.textContent = curNote; }
+  }
+  if (!t) {
+    hint.hidden = false;
+    hint.textContent = !ctxSeen && NONCE ? "waiting for Facet..." : (NONCE ? pick : "Pick an album, or import a folder by its path:");
+  }
+}
+$("reload").onclick = () => {
+  if (lastManual) manualLoad(...lastManual); else if (scopeReq) loadScope(scopeReq);
+};
 $("loadFacet").onclick = () => {
   const t = facetTarget;
   if (!t) return;
@@ -591,24 +623,26 @@ function scopeLabel(req) {
 async function loadScope(req) {
   scopeReq = req; lastManual = null; loadedAlbum = null;
   loadedKey = B.scopeKey(req);          // set now, so a context sent while loading is not "a change"
-  $("loadinfo").textContent = "loading...";
+  $("loadinfo").textContent = "loading..."; loadingNow = true; drawStatus();
   try {
     const d = await api("api/scope", req);
     loadedKey = B.scopeKey(req); loadedLabel = scopeLabel(req);
     loaded(d);
   } catch (e) { loadedKey = ""; $("loadinfo").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  loadingNow = false; drawStatus();
   if (lastCtx) drawFacetTarget(lastCtx);
 }
 
 let lastManual = null;   // the folder or album load, so a location confirm can re-read it from Facet
 async function manualLoad(body, label, album, key) {
   lastManual = [body, label, album, key]; scopeReq = null;
-  $("loadinfo").textContent = "loading...";
+  $("loadinfo").textContent = "loading..."; loadingNow = true; drawStatus();
   try {
     const d = await api("api/photos", body);
     loadedKey = key; loadedAlbum = album; loadedLabel = label;
     loaded(d);
   } catch (e) { $("loadinfo").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  loadingNow = false; drawStatus();
   if (lastCtx) drawFacetTarget(lastCtx);
 }
 $("importBtn").onclick = () => {
@@ -654,7 +688,7 @@ function loaded(d) {
   review = []; toSave = new Set(); timeFit = null; drawAuto(); drawResults(); drawExport();
   $("loadinfo").textContent = "";
   $("loaded").hidden = false;
-  $("loadedName").textContent = `${loadedLabel}: ${plural(photos.length, "photo")}`;
+  $("loadedName").textContent = `About the loaded set (${loadedLabel}):`;
   if (!photos.length) {
     $("loadinfo").innerHTML = `<span class="warn">Facet has no photos there. A new folder must be imported (scanned) in Facet first, then loaded here.</span>`;
     openOnly(0); return;

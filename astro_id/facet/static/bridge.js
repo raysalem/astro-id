@@ -149,6 +149,28 @@
     return null;
   }
 
+  /* The album the panel may offer for a photo opened from an album: the last album seen in a context. Facet passes
+   * no album with a photo, so the memory is only valid while the user stays in the album/photo part of Facet: a
+   * context with neither an album nor a photo (Albums list, Add-ons page, Gallery) means they left, so forget it. */
+  function nextLastAlbum(ctx, last) {
+    const aid = albumOf(ctx);
+    if (aid != null) return aid;
+    if (ctx && ctx.photo) return last == null ? null : last;
+    return null;
+  }
+
+  /* The panel's top status, from what Facet shows (a facetTarget or null) and the key of what is loaded ("" = nothing):
+   *   nothing  - nothing loaded, Facet shows something loadable  -> "Nothing loaded yet." + Load button
+   *   empty    - nothing loaded, Facet shows nothing loadable    -> "Open an album, a folder or a photo..."
+   *   current  - the loaded set IS what Facet shows              -> "Loaded: ... (check)"
+   *   other    - loaded, Facet shows another loadable thing      -> "Loaded: ..." + "Facet is showing: ..." + Load instead
+   *   away     - loaded, Facet shows nothing loadable            -> "Loaded: ..." + the open/pick hint */
+  function loadState(target, loadedKey) {
+    if (!loadedKey) return target ? "nothing" : "empty";
+    if (!target) return "away";
+    return target.key === loadedKey ? "current" : "other";
+  }
+
   /* annotation_view (PLUGIN_BOUNDARY.md §6c): how Facet draws this add-on's sky labels. Only the contract's keys,
    * with the right types, go out; `visible` defaults to false (labels start hidden). */
   const KEY_RE = /^[A-Za-z0-9_.-]{1,40}$/;
@@ -300,5 +322,6 @@
 
   return {V: V, MAP_SITES: MAP_SITES, readNonce: readNonce, constEq: constEq, sanitizeContext: sanitizeContext,
           scopeRequest: scopeRequest, scopeKey: scopeKey, createBridge: createBridge, makeApi: makeApi,
-          sanitizeView: sanitizeView, compareVersions: compareVersions, makePoller: makePoller, STALE: STALE, folderOfPath: folderOfPath, facetTarget: facetTarget, albumOf: albumOf};
+          sanitizeView: sanitizeView, compareVersions: compareVersions, makePoller: makePoller, STALE: STALE, folderOfPath: folderOfPath, facetTarget: facetTarget, albumOf: albumOf,
+          nextLastAlbum: nextLastAlbum, loadState: loadState};
 });
