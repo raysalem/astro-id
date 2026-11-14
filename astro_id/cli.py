@@ -63,6 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    args.argv = list(argv) if argv is not None else sys.argv[1:]   # the add-on keeper starts its worker with these
     logging.basicConfig(stream=sys.stderr, level=logging.DEBUG if getattr(args, "verbose", False) else logging.INFO,
                         format="%(message)s")
     for noisy in ("urllib3", "PIL"):

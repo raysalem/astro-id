@@ -11,6 +11,8 @@ Two modes share one ``App`` (the five-step session) and one static page:
   to stderr). ``GET /health?c=`` answers ``{"addon": id, "ack": hex HMAC-SHA256(secret, c)}``; every other request
   needs ``X-Facet-Launch: <secret>`` (403 otherwise). The page is served at ``/ui/`` and its API at ``/ui/api/...``
   with relative URLs only, because Facet's proxy mounts it at ``/addons/<id>/``. No cookies are set or read.
+  The process Facet starts is a small keeper (keeper.py) and this server runs in its worker, so the add-on can
+  restart itself on new code (``POST api/restart``) on the same port and launch secret, the session kept.
 
 Flow (one page, two sections):
 
@@ -46,6 +48,7 @@ from urllib.parse import parse_qs, parse_qsl, unquote, urlparse
 
 from .. import config as cfgmod
 from ..cull import DEFAULT_RULE, merge_rule, validate_rule
+from . import keeper
 from .client import ALL_FRAMES, FacetClient, FacetError, addon_credentials, client_from_env, connect
 from .ledger import Ledger
 from .sync import (ANNOTATION_SOURCE, TAG_REVIEW, SyncContext, apply_results, facet_hints, gps_source,
@@ -58,9 +61,81 @@ ALBUM_SETUP = "album_setup:"          # ledger meta key prefix: one album's save
 COPY_KEYS = ("on", "lines", "scores")
 EXPORT_KEYS = ("lines", "scores", "legend")   # Export's plain-language options (panel step 6)
 # The page/server contract version. index.html embeds the same string (const PAGE_VERSION); Facet's supervisor keeps
-# an add-on process running while the page is read from disk on every load, so a page newer than its server shows
-# "Astro was updated: stop and reopen it" instead of failing on routes the old server lacks. Bump both together.
-PAGE_VERSION = "2026-11-14.1"
+# an add-on process running while the page is read from disk on every load, so after an update the page can be newer
+# than its server. The panel then asks the server to restart itself on the new code (api/restart, keeper.py); only
+# a server too old for that gets the one-line "click Stop, then Open". Bump both together.
+PAGE_VERSION = "2026-11-14.2"
+PACKAGE = Path(__file__).resolve().parents[1]    # the astro_id package: its .py files are what a restart reloads
+UPDATING = "Astro is updating: try again in a moment"
+
+
+def code_stamp(root: Path = PACKAGE) -> str:
+    """A fingerprint of the add-on's Python code on disk (every ``.py`` path, size and mtime): it changes when any
+    of it is edited, added or removed. The page and bridge are read from disk per request, so they are not in it."""
+    h = sha256()
+    for p in sorted(root.rglob("*.py")):
+        if "__pycache__" in p.parts:
+            continue
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        h.update(f"{p.relative_to(root).as_posix()}\0{st.st_size}\0{st.st_mtime_ns}\n".encode("utf-8"))
+    return h.hexdigest()
+
+
+START_STAMP = code_stamp()   # taken when this module loaded, i.e. on the code this process runs
+
+
+def disk_page_version(path: Path | None = None) -> str | None:
+    """The PAGE_VERSION of the page on disk now (what a panel opened or reloaded now gets), or None."""
+    try:
+        text = (path or STATIC / "index.html").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = re.search(r'const PAGE_VERSION = "([^"]+)";', text)
+    return m.group(1) if m else None
+
+
+def restart_decision(supported: bool, code_changed: bool, busy: str | None, force: bool = False) -> dict:
+    """Whether the running add-on restarts itself now. ``busy``: "solve" / "export" (a run in progress: never cut
+    it, the panel asks again when it ends). Without new code on disk a restart would change nothing (``current``),
+    unless ``force``."""
+    if not supported:
+        return {"restart": False, "reason": "unsupported"}
+    if busy:
+        return {"restart": False, "reason": "busy", "busy": busy}
+    if not (code_changed or force):
+        return {"restart": False, "reason": "current"}
+    return {"restart": True}
+
+
+def _plain(o):
+    """json.dumps default for the handoff file: numpy scalars/arrays, paths and sets; anything else is refused."""
+    if isinstance(o, (set, frozenset, tuple)):
+        return list(o)
+    if isinstance(o, Path):
+        return str(o)
+    if hasattr(o, "tolist"):
+        return o.tolist()
+    if hasattr(o, "item"):
+        return o.item()
+    raise TypeError(f"{type(o).__name__} is not JSON")
+
+
+class SelfUpdate:
+    """This server's view of its own code (add-on worker mode only): started on which code, may it restart."""
+
+    def __init__(self, supported: bool, handoff: Path | None = None, root: Path = PACKAGE):
+        self.supported = supported
+        self.handoff = handoff
+        self.root = root
+        self.boot = secrets.token_hex(6)       # changes on every restart: the panel waits for a new one
+        self.stamp = START_STAMP if root == PACKAGE else code_stamp(root)
+        self.exit = None                       # callable: stop serving and exit with keeper.RESTART_EXIT
+
+    def code_changed(self) -> bool:
+        return code_stamp(self.root) != self.stamp
 
 
 def export_options(v) -> dict | None:
@@ -257,6 +332,8 @@ class App:
         self.elevation = _elevation         # (lat, lon) -> metres or None; replaced in tests
         self.export_job: dict = {}          # the last Export run (progress for the panel)
         self._export_lock = threading.Lock()  # one export at a time: the check and the start are one step
+        self.update = SelfUpdate(False)     # add-on worker mode replaces it (finish_addon)
+        self.restarting = False             # set once api/restart accepted: no new solve / export starts
 
     # ------------------------------------------------------------ helpers ---
     def local(self, path: str) -> str:
@@ -333,7 +410,96 @@ class App:
                 # 'searchable': names become Facet detections (model D); 'tags': names become tags (older Facet)
                 "names_as": "searchable" if self.ctx.model_d else "tags",
                 "transport": getattr(self.client, "mode", "api"), "last_site": self.last_site(),
-                "sky_vocab": self.sky_vocab(), "page_version": PAGE_VERSION}
+                "sky_vocab": self.sky_vocab(), "page_version": PAGE_VERSION,
+                # self-update (keeper.py): the panel restarts an add-on whose code on disk changed
+                "update": {"supported": self.update.supported, "boot": self.update.boot,
+                           "code_changed": self.update.supported and self.update.code_changed(),
+                           "busy": self.busy(), "restarting": self.restarting,
+                           "unsaved": bool(self.job.results) and not self.job.saved,
+                           "disk_page_version": disk_page_version() if self.update.supported else None}}
+
+    def busy(self) -> str | None:
+        """What a restart must wait for: a solve or an export in progress."""
+        if self.job.running:
+            return "solve"
+        if self.export_job.get("running"):
+            return "export"
+        return None
+
+    # ------------------------------------------------------------ self-update ---
+    def restart(self, _q, b):
+        """``POST api/restart``: restart this add-on on the code now on disk (keeper.py), keeping the session
+        (loaded photos, the last solve's results whether saved or not, the last export) through the handoff file.
+        Refused while a solve or export runs (``busy``); the panel asks again when it ends."""
+        with self._export_lock:
+            d = restart_decision(self.update.supported, self.update.code_changed(), self.busy(),
+                                 bool(b.get("force")))
+            if not d["restart"]:
+                return d
+            try:
+                self.save_handoff()
+            except (OSError, TypeError, ValueError) as exc:
+                if self.job.results and not self.job.saved:
+                    log.warning("self-update: results not kept (%s); waiting for Save to Facet", exc)
+                    return {"restart": False, "reason": "unsaved"}
+                log.warning("self-update: session not kept (%s)", exc)
+            self.restarting = True
+        log.info("self-update: restarting on the code now on disk")
+        t = threading.Timer(0.3, self.update.exit)   # after this answer has gone out
+        t.daemon = True
+        t.start()
+        return {"restart": True, "boot": self.update.boot}
+
+    def save_handoff(self) -> None:
+        """Write the session to the handoff file (atomic). Raises when it cannot be written as plain JSON."""
+        path = self.update.handoff
+        if path is None:
+            return
+        job = self.job
+        with job.lock:
+            doc = {"page_version": PAGE_VERSION, "photos": self.photos, "mount": self.mount,
+                   "job": {"events": job.events, "done": job.done, "reports": job.reports, "results": job.results,
+                           "error": job.error, "saved": job.saved, "saved_paths": sorted(job.saved_paths),
+                           "min_confidence": job.min_confidence},
+                   "export_job": self.export_job if not self.export_job.get("running") else {}}
+            text = json.dumps(doc, default=_plain)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+
+    def load_handoff(self) -> bool:
+        """Take over the session the previous worker left (then delete the file). True when one was restored."""
+        path = self.update.handoff
+        if path is None or not path.is_file():
+            return False
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+            j = doc.get("job") or {}
+            job = Job()
+            job.events = list(j.get("events") or [])
+            job.done = j.get("done")
+            job.reports = list(j.get("reports") or [])
+            job.results = dict(j.get("results") or {})
+            job.error = j.get("error")
+            job.saved = bool(j.get("saved"))
+            job.saved_paths = set(j.get("saved_paths") or [])
+            job.min_confidence = int(j.get("min_confidence") or 65)
+            self.job = job
+            self.photos = dict(doc.get("photos") or {})
+            self.export_job = dict(doc.get("export_job") or {})
+            if doc.get("mount"):
+                self.mount = doc["mount"]
+            return True
+        except (OSError, ValueError, TypeError, AttributeError) as exc:
+            log.warning("self-update: could not restore the session: %s", exc)
+            self.notes.append("Astro updated itself but could not bring back the last session (loaded photos, "
+                              "unsaved results): load the photos again and solve again.")
+            return False
+        finally:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     @staticmethod
     def sky_vocab() -> dict:
@@ -585,12 +751,15 @@ class App:
         paths = list(b.get("paths") or [])
         if not paths:
             raise ValueError("no photos selected")
-        if self.job.running:
-            raise ValueError("a solve is already running")
         opts = self.session_opts(b, paths)
-        self.job = job = Job()
-        job.min_confidence = opts.min_confidence
-        job.running = True
+        with self._export_lock:             # one step with api/restart's busy check: never start into a restart
+            if self.restarting:
+                raise ValueError(UPDATING)
+            if self.job.running:
+                raise ValueError("a solve is already running")
+            self.job = job = Job()
+            job.min_confidence = opts.min_confidence
+            job.running = True
         threading.Thread(target=self._run, args=(job, paths, opts), name="astro-solve", daemon=True).start()
         return {"started": len(paths), "write": False}
 
@@ -745,6 +914,8 @@ class App:
         if not paths:
             raise ValueError("no photos to export")
         with self._export_lock:             # a double click must not start two writers on the same files
+            if self.restarting:
+                raise ValueError(UPDATING)
             if self.export_job.get("running"):
                 raise ValueError("an export is already running")
             if self.job.running:
@@ -833,7 +1004,8 @@ class App:
               ("POST", "api/solve"): "solve", ("POST", "api/recull"): "recull",
               ("POST", "api/review-tags"): "review_tags", ("POST", "api/save"): "save",
               ("GET", "api/annotations"): "annotations", ("POST", "api/count"): "count",
-              ("POST", "api/export"): "export", ("GET", "api/export"): "export_state"}
+              ("POST", "api/export"): "export", ("GET", "api/export"): "export_state",
+              ("POST", "api/restart"): "restart"}
     BINARY = {("GET", "api/thumb"): "thumb"}
 
 
@@ -1059,8 +1231,10 @@ class AddonEnv:
         self.credentials, self.credential_note = addon_credentials(self.addon_id, e)
 
 
-def build_addon(args, env: dict | None = None, client: FacetClient | None = None, ledger: Ledger | None = None):
-    """Add-on mode, step 1: bind the socket (nothing answers until ``finish_addon``). Returns (server, box, aenv)."""
+def build_addon(args, env: dict | None = None, client: FacetClient | None = None, ledger: Ledger | None = None,
+                sock=None):
+    """Add-on mode, step 1: bind the socket, or serve on ``sock`` (a keeper's, keeper.py); nothing answers until
+    ``finish_addon``. Returns (server, box, aenv)."""
     if getattr(args, "legacy_db", None):
         raise ValueError("--legacy-db is not available in add-on mode (annotations go through Facet's API or are "
                          "skipped)")
@@ -1068,13 +1242,21 @@ def build_addon(args, env: dict | None = None, client: FacetClient | None = None
     if aenv.addon_id != ADDON_ID:
         log.warning("Facet started this add-on as %r; its manifest id is %r", aenv.addon_id, ADDON_ID)
     box: dict = {"client": client, "ledger": ledger}
-    server = ThreadingHTTPServer(("127.0.0.1", aenv.port), make_addon_handler(box, aenv.addon_id, aenv.secret))
+    handler = make_addon_handler(box, aenv.addon_id, aenv.secret)
+    if sock is None:
+        server = ThreadingHTTPServer(("127.0.0.1", aenv.port), handler)
+    else:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler, bind_and_activate=False)
+        server.socket.close()
+        server.socket = sock
+        server.server_address = sock.getsockname()
     server.daemon_threads = True
     return server, box, aenv
 
 
-def finish_addon(args, box: dict, aenv: AddonEnv) -> App:
-    """Add-on mode, step 2 (after the port line): connect to Facet and build the session app."""
+def finish_addon(args, box: dict, aenv: AddonEnv, update: SelfUpdate | None = None) -> App:
+    """Add-on mode, step 2 (after the port line): connect to Facet and build the session app. ``update``: a
+    keeper's worker (it can restart itself; it takes over the session its predecessor left)."""
     client = box.get("client") or connect(aenv.url, **aenv.credentials)
     ledger = box.get("ledger") or Ledger(getattr(args, "ledger", None))
     ctx = SyncContext(client=client, ledger=ledger, addon=True,
@@ -1083,24 +1265,44 @@ def finish_addon(args, box: dict, aenv: AddonEnv) -> App:
     if aenv.credential_note:
         app.notes.append(aenv.credential_note)
         log.warning("%s", aenv.credential_note)
+    if update is not None:
+        app.update = update
+        if app.load_handoff():
+            log.info("self-update: session restored (%d photos, %d results)", len(app.photos), len(app.job.results))
     box["app"] = app
     return app
 
 
-def serve_addon(args, env: dict | None = None, out=None, lifeline: bool = True) -> int:
+def serve_addon(args, env: dict | None = None, out=None, lifeline: bool = True, stdin=None) -> int:
+    """The add-on server. Run by the keeper as its worker (keeper.py: the keeper's socket, no port line, exits with
+    ``keeper.RESTART_EXIT`` when asked to update), or on its own (ASTRO_ID_NO_KEEPER=1, tests)."""
+    e = os.environ if env is None else env
     out = out or sys.stdout
-    server, box, aenv = build_addon(args, env)
-    out.write(f"FACET_ADDON_PORT={server.server_address[1]}\n")
-    out.flush()
+    sock = keeper.inherited_socket(e, stdin)
+    server, box, aenv = build_addon(args, env, sock=sock)
+    update = None
+    if sock is None:
+        out.write(f"FACET_ADDON_PORT={server.server_address[1]}\n")
+        out.flush()
+    else:
+        update = SelfUpdate(True, keeper.handoff_path(e))
     if lifeline:
         from .lifeline import watch
 
         log.info("lifeline: exits when any of %s ends", watch() or "nothing (not watched)")
     app = None
+    code = 0
+    if update is not None:
+        def stop_for_update():
+            nonlocal code
+            code = keeper.RESTART_EXIT
+            server.shutdown()
+        update.exit = stop_for_update
     try:
-        app = finish_addon(args, box, aenv)
-        log.info("astro-id add-on %s on 127.0.0.1:%d for Facet %s (version %s); annotations: %s",
-                 aenv.addon_id, server.server_address[1], app.client.url, app.ctx.version, app.ctx.mode or "skipped")
+        app = finish_addon(args, box, aenv, update)
+        log.info("astro-id add-on %s on 127.0.0.1:%d for Facet %s (version %s, page %s); annotations: %s",
+                 aenv.addon_id, server.server_address[1], app.client.url, app.ctx.version, PAGE_VERSION,
+                 app.ctx.mode or "skipped")
         server.serve_forever()
     except KeyboardInterrupt:
         pass
@@ -1109,7 +1311,7 @@ def serve_addon(args, env: dict | None = None, out=None, lifeline: bool = True) 
         if app is not None:
             app.ctx.close()
             app.ledger.close()
-    return 0
+    return code
 
 
 def serve(args) -> int:

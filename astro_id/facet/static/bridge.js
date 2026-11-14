@@ -257,6 +257,82 @@
     return 0;
   }
 
+  /* Self-update (serve.py api/restart, keeper.py). Words the panel shows: */
+  const UPDATE_NOTE = "Updating Astro…";
+  const UPDATE_MANUAL = "Astro needs one restart to update: on Facet's Add-ons page click Stop, then Open.";
+  const UPDATE_REOPEN = "Astro was updated: close and reopen the Astro panel.";
+  const UPDATE_WAIT = {solve: "Astro will update after this solve.", export: "Astro will update after this export.",
+                       unsaved: "Astro will update after you save these results to Facet."};
+
+  /* What the panel does about the running add-on's code, from api/state (`st`), this page's version and what it
+   * already tried ({restarts: n, reloaded: bool}). {action, message?, busy?}:
+   *   none    - same code
+   *   restart - the add-on's code changed on disk, or this page is newer: POST api/restart, wait for a new boot
+   *   wait    - same, but a solve / export runs: say so, ask again when it ends
+   *   reload  - the add-on is newer than this page: reload the page (once)
+   *   manual  - it cannot be done automatically: one sentence (an add-on too old to restart itself, or a restart /
+   *             reload that did not help) */
+  function updatePlan(st, pageVersion, tried) {
+    st = st || {}; tried = tried || {};
+    const u = st.update && typeof st.update === "object" ? st.update : null;
+    const differs = st.page_version !== pageVersion;
+    const changed = !!(u && u.supported && u.code_changed);
+    if (!differs && !changed) return {action: "none"};
+    if (!changed && compareVersions(st.page_version, pageVersion) > 0) {
+      return tried.reloaded ? {action: "manual", message: UPDATE_REOPEN, note: "the add-on has newer code than this panel"}
+                            : {action: "reload"};
+    }
+    if (!u || !u.supported) {
+      return differs ? {action: "manual", message: UPDATE_MANUAL, note: "this panel is newer than the running add-on"}
+                     : {action: "none"};
+    }
+    if (!changed || (tried.restarts || 0) >= 2) {   // a restart that did not bring the same code: stop trying
+      return differs ? {action: "manual", message: UPDATE_MANUAL, note: "the add-on did not pick up the new code"}
+                     : {action: "none"};
+    }
+    if (u.busy) return {action: "wait", busy: u.busy, message: UPDATE_WAIT[u.busy] || UPDATE_WAIT.solve};
+    // This page is older than the code on disk too, so it reloads after the restart, and a reloaded page does not
+    // show the last solve's results: ask for Save to Facet first rather than hide them.
+    if (u.unsaved && u.disk_page_version && u.disk_page_version !== pageVersion) {
+      return {action: "wait", busy: "unsaved", message: UPDATE_WAIT.unsaved};
+    }
+    return {action: "restart"};
+  }
+
+  /* api/restart said no ({restart: false, reason, busy?}): what to show. */
+  function restartRefused(r) {
+    if (r.reason === "busy") return {action: "wait", busy: r.busy, message: UPDATE_WAIT[r.busy] || UPDATE_WAIT.solve};
+    if (r.reason === "unsaved") return {action: "wait", busy: "unsaved", message: UPDATE_WAIT.unsaved};
+    if (r.reason === "unsupported") return {action: "manual", message: UPDATE_MANUAL, note: ""};
+    return {action: "none"};   // current: nothing to update after all
+  }
+
+  /* After api/restart: ask api/state until it answers from a new process (update.boot differs). Requests made while
+   * the add-on restarts wait in its listen queue or fail; both just mean "again". The new state, or null after
+   * opts.timeoutMs. opts.sleep (tests) replaces setTimeout. */
+  async function waitForBoot(getState, oldBoot, opts) {
+    opts = opts || {};
+    const sleep = opts.sleep || function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+    const now = opts.now || function () { return Date.now(); };
+    const end = now() + (opts.timeoutMs || 45000);
+    for (;;) {
+      await sleep(opts.delayMs || 600);
+      try {
+        const st = await getState();
+        if (st && st.update && st.update.boot && st.update.boot !== oldBoot) return st;
+      } catch (e) { /* restarting */ }
+      if (now() >= end) return null;
+    }
+  }
+
+  /* The page's own URL with astro_reloaded=1 (the nonce stays: Facet's proxy accepts it on the document request). */
+  function reloadUrl(href) {
+    const u = String(href || "");
+    if (/[?&]astro_reloaded=1(&|#|$)/.test(u)) return u;
+    const i = u.indexOf("#"), base = i >= 0 ? u.slice(0, i) : u, hash = i >= 0 ? u.slice(i) : "";
+    return base + (base.indexOf("?") >= 0 ? "&" : "?") + "astro_reloaded=1" + hash;
+  }
+
   /* A poll loop that never overlaps itself: the next call is scheduled only after the previous one finished
    * (setTimeout chain, not setInterval). fn returns false to stop the loop. timers: {set, clear} (tests). */
   function makePoller(fn, ms, timers) {
@@ -323,5 +399,7 @@
   return {V: V, MAP_SITES: MAP_SITES, readNonce: readNonce, constEq: constEq, sanitizeContext: sanitizeContext,
           scopeRequest: scopeRequest, scopeKey: scopeKey, createBridge: createBridge, makeApi: makeApi,
           sanitizeView: sanitizeView, compareVersions: compareVersions, makePoller: makePoller, STALE: STALE, folderOfPath: folderOfPath, facetTarget: facetTarget, albumOf: albumOf,
-          nextLastAlbum: nextLastAlbum, loadState: loadState};
+          nextLastAlbum: nextLastAlbum, loadState: loadState, updatePlan: updatePlan, restartRefused: restartRefused,
+          waitForBoot: waitForBoot, reloadUrl: reloadUrl, UPDATE_NOTE: UPDATE_NOTE, UPDATE_MANUAL: UPDATE_MANUAL,
+          UPDATE_REOPEN: UPDATE_REOPEN, UPDATE_WAIT: UPDATE_WAIT};
 });

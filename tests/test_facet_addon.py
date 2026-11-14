@@ -699,10 +699,15 @@ def test_page_priority_layout_terms_and_script_parses(tmp_path):
     for want in ("bridge.annotationView(", '"api/save"', "api/annotations?path=", '"api/save-config"',
                  '"api/export"', '"api/count"', "B.facetTarget(", "time_fit", "Solving "):
         assert want in script, want
-    # a page newer than its running server says so (GUI test 2026-11-12: it said "HTTP 404")
+    # a page newer than its running server updates the server (B-P8; before: "stop and reopen it")
     assert f'const PAGE_VERSION = "{SV.PAGE_VERSION}";' in script
-    assert "Astro was updated: stop and reopen it from Facet's Add-ons page." in script
+    assert "Astro was updated: stop and reopen it" not in script
     assert "state.page_version !== PAGE_VERSION" in script
+    for want in ('"api/restart"', "B.updatePlan(", "B.waitForBoot(", "if (updating) await updating;"):
+        assert want in script, want
+    bridge = (STATIC / "bridge.js").read_text(encoding="utf-8")
+    assert "Astro needs one restart to update: on Facet's Add-ons page click Stop, then Open." in bridge
+    assert SV.disk_page_version() == SV.PAGE_VERSION
     # the counter names the frame being solved (first unfinished path), not the last one finished
     assert "solveOrder.find((p) => !finished.has(p))" in script
     # every element the script reaches by id exists

@@ -85,6 +85,7 @@
   <div class="row" style="margin:0"><h1 style="flex:1">Astro</h1>
     <button id="helpBtn" class="secondary" aria-expanded="false">Help</button></div>
   <div id="facet" class="err small"></div>
+  <div id="update" class="muted small" role="status" hidden></div>
   <details class="sub small" id="notesBox" hidden><summary id="notesSum">Notes</summary>
     <div id="warnings" class="muted small"></div></details>
 </header>
@@ -386,16 +387,16 @@ const plural = (n, one, many) => `${n} ${n === 1 ? one : (many || one + "s")}`;
 const NONCE = B.readNonce(location.search);
 const API = B.makeApi((u, o) => fetch(u, o), NONCE);
 // Must equal serve.py PAGE_VERSION. Facet reads this page from disk on every load but keeps the add-on process
-// running, so after an update the page can be newer than its server: say so instead of "HTTP 404".
-const PAGE_VERSION = "2026-11-14.1";
-const STALE_SERVER = "Astro was updated: stop and reopen it from Facet's Add-ons page.";
-const STALE_PAGE = "Astro was updated: close and reopen the Astro panel.";
+// running, so after an update the page can be newer than its server: the add-on then restarts itself (B.updatePlan).
+const PAGE_VERSION = "2026-11-14.2";
 let serverStale = false;
+let updating = null;   // a Promise while Astro restarts itself on new code: every api() call waits for it
 async function api(path, body) {
+  if (updating) await updating;
   try { return await API.call(path, body); }
   catch (e) {
-    // an api route the running server does not know = an older server than this page
-    if (/^(HTTP 404|not found)$/i.test(e.message)) { markStale(STALE_SERVER, "this panel is newer than the running add-on"); throw new Error(STALE_SERVER); }
+    // an api route the running server does not know = an older server than this page: update it
+    if (/^(HTTP 404|not found)$/i.test(e.message)) { checkVersion(); throw new Error(B.UPDATE_NOTE); }
     // the add-on restarted (two failed fetches in a row, or a stale nonce): the panel is dead
     if (e.stale) markStale(e.message, "");
     // one failed fetch may only be a hiccup: look at the version again before calling it anything else
@@ -416,25 +417,61 @@ function lockActions() {
   }
 }
 function markStale(msg, note) {
-  serverStale = true; solvePoller.stop(); exPoller.stop();
+  serverStale = true; solvePoller.stop(); exPoller.stop(); waitPoller.stop();
   document.body.classList.add("stale");
   $("facet").innerHTML = `<b>${esc(msg)}</b>` + (note ? ` <span class="muted small">(${esc(note)})</span>` : "");
   lockActions();
 }
-// The server's version against this page's: the server older = restart the add-on, newer = reopen the panel.
-function staleForVersion(serverVersion) {
-  if (B.compareVersions(serverVersion, PAGE_VERSION) > 0) markStale(STALE_PAGE, "the add-on has newer code than this panel");
-  else markStale(STALE_SERVER, "this panel is newer than the running add-on");
+/* Self-update. The page (read from disk) and the running add-on must be the same code. B.updatePlan decides:
+   the add-on's code changed on disk or the page is newer -> it restarts itself (api/restart: same port, same panel,
+   the session kept) and the panel waits for the new process; a solve or export runs -> after it; the add-on is
+   newer than the page -> the page reloads itself; an add-on too old to restart itself -> one sentence, two clicks. */
+const RELOADED = /[?&]astro_reloaded=1(&|$)/.test(location.search);
+let restarts = 0, updateNoteShown = false;
+function updateNote(msg) {
+  const el = $("update");
+  el.hidden = !msg; el.textContent = msg || ""; updateNoteShown = !!msg;
+}
+const waitPoller = B.makePoller(async () => { await checkVersion(); return !serverStale && updateNoteShown && !updating; }, 3000);
+async function applyUpdate(st) {
+  const plan = B.updatePlan(st, PAGE_VERSION, {restarts: restarts, reloaded: RELOADED && !initDone});
+  if (plan.action === "none") { if (!updating) updateNote(""); return; }
+  if (plan.action === "manual") { updateNote(""); markStale(plan.message, plan.note || ""); return; }
+  if (plan.action === "reload") { updateNote(B.UPDATE_NOTE); location.replace(B.reloadUrl(location.href)); return; }
+  if (plan.action === "wait") { updateNote(plan.message); waitPoller.start(); return; }
+  restarts += 1;                                     // "restart"
+  updating = restartAndWait(st.update.boot).finally(() => { updating = null; });
+  await updating;
+}
+async function restartAndWait(oldBoot) {
+  updateNote(B.UPDATE_NOTE);
+  let r = null;
+  try { r = await API.call("api/restart", {}); } catch (e) { r = null; }
+  if (r && r.restart === false) {                    // busy / unsaved / current: the plan says what to show
+    const plan = B.restartRefused(r);
+    if (plan.action === "wait") { updateNote(plan.message); waitPoller.start(); }
+    else if (plan.action === "manual") { updateNote(""); markStale(plan.message, plan.note || ""); }
+    else updateNote("");
+    return;
+  }
+  const st = await B.waitForBoot(() => API.call("api/state"), oldBoot, {timeoutMs: 45000, delayMs: 600});
+  if (!st) { updateNote(""); markStale(B.UPDATE_MANUAL, "Astro did not come back after updating"); return; }
+  state = st;
+  const plan = B.updatePlan(st, PAGE_VERSION, {restarts: restarts, reloaded: RELOADED && !initDone});
+  if (plan.action === "reload") { location.replace(B.reloadUrl(location.href)); return; }   // the page was old too
+  updateNote("");
+  if (plan.action === "manual") markStale(plan.message, plan.note || "");
 }
 let versionBusy = false;
-async function checkVersion() {
-  if (versionBusy || serverStale) return;
+async function checkVersion(given) {
+  if (versionBusy || serverStale || updating) return;
   versionBusy = true;
   try {
-    const st = await API.call("api/state");
-    if (st.page_version !== PAGE_VERSION) staleForVersion(st.page_version);
-  } catch (e) { /* unreachable now: the next call decides */ }
-  finally { versionBusy = false; }
+    let st = given;
+    try { if (!st) st = await API.call("api/state"); }
+    catch (e) { st = null; /* unreachable now: the next call decides */ }
+    if (st) await applyUpdate(st);
+  } finally { versionBusy = false; }
 }
 const versionPoller = B.makePoller(async () => { await checkVersion(); return !serverStale; }, 60000);
 let bridge = null, scopeReq = null, loadedKey = "", initDone = false, lastCtx = null;
@@ -494,7 +531,7 @@ async function init() {
   state = await api("api/state");
   document.body.classList.toggle("names-search", state.names_as === "searchable");
   $("facet").textContent = state.can_write ? "" : "Read-only: Astro has no Facet credential, so nothing can be written.";
-  if (state.page_version !== PAGE_VERSION) staleForVersion(state.page_version);
+  if (state.page_version !== PAGE_VERSION || (state.update && state.update.code_changed)) checkVersion(state);
   versionPoller.start();
   const notes = state.warnings || [];
   $("notesBox").hidden = !notes.length; $("notesSum").textContent = `Notes (${notes.length})`;
