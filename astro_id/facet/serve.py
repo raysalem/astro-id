@@ -19,12 +19,14 @@ Flow (one page, two sections):
   ``astro-id.json`` and, for an album, to the album setup store (the ledger's meta table, key ``album_setup:<id>``
   per Facet library).
 - **B. Run**: plate solve (background thread, JSON-lines events; it writes **nothing** to Facet) -> the results
-  review in the panel (``api/job`` ``done.review``) -> ``api/save`` writes tags + sky labels (annotations) for the
+  review in the panel (``api/job`` ``done.review``) -> ``api/save`` writes object tags + sky labels (annotations) for the
   last solve's results -> culling (low priority; quality, keep/review/reject, re-cull without re-solving). The
   sky-label view (groups, min confidence, max magnitude, scores) is a display setting the panel sends to Facet over
   the bridge; ``api/annotations`` reads a photo's stored astro-id overlay so the panel can offer the controls.
 
-Terms: **tags** = searchable words on a photo in Facet; **sky labels** = names Facet draws over the photo (the
+Terms: **tags** = words that describe a photo (astro-id adds only 1-3 status tags); **object tags** = the sky objects
+astro-id names in a photo (Facet's search and filters find them; an older Facet stores them as ordinary tags);
+**sky labels** = names Facet draws over the photo (the
 annotation payload); **labeled copies** = separate JPG files with the labels burned in (was "overlay images").
 Facet's own reject / cull flags are never written.
 """
@@ -819,7 +821,7 @@ class App:
         if not self.job.results:
             raise ValueError("solve first")
         if not self.job.saved_paths:
-            raise ValueError("Save to Facet first (step 5): the review tag only goes on photos already saved")
+            raise ValueError("Save to Facet first (step 4): the astro-review status tag only goes on photos already saved")
         # Only the photos already saved: re-asserting their tags + sky labels writes nothing new for them.
         results = {p: r for p, r in self.job.results.items() if p in self.job.saved_paths}
         flagged = set(b.get("paths") or [])
