@@ -307,3 +307,65 @@ test("nextLastAlbum: remembered for a photo opened from an album, forgotten when
   // the stale memory no longer turns a folder photo into the old album
   assert.equal(B.facetTarget(ctx({ route: "/photo", photo: "/p/a.jpg" }), B.nextLastAlbum(ctx({ route: "/albums" }), 6)).kind, "folder");
 });
+
+// ---------------------------------------------------------------- self-update (B-P8) ---
+const U = (u) => Object.assign({supported: true, boot: "b0", code_changed: false, busy: null, unsaved: false, disk_page_version: "2026-11-14.2"}, u);
+
+test("updatePlan: restart when the add-on's code changed or the page is newer; never for the same code", () => {
+  assert.deepEqual(B.updatePlan({page_version: "2026-11-14.2", update: U({})}, "2026-11-14.2", {}), {action: "none"});
+  assert.equal(B.updatePlan({page_version: "2026-11-14.1", update: U({code_changed: true})}, "2026-11-14.2", {}).action, "restart");
+  assert.equal(B.updatePlan({page_version: "2026-11-14.2", update: U({code_changed: true})}, "2026-11-14.2", {}).action, "restart");
+  // two restarts that did not bring the page's code: stop trying, say the two clicks
+  const p = B.updatePlan({page_version: "2026-11-14.1", update: U({code_changed: true})}, "2026-11-14.2", {restarts: 2});
+  assert.equal(p.action, "manual");
+  assert.equal(p.message, B.UPDATE_MANUAL);
+  // ...but a python-only change that keeps "changed" does not nag
+  assert.equal(B.updatePlan({page_version: "2026-11-14.2", update: U({code_changed: true})}, "2026-11-14.2", {restarts: 2}).action, "none");
+});
+
+test("updatePlan: busy -> wait with the run named; unsaved results only matter when this page will reload", () => {
+  const w = B.updatePlan({page_version: "2026-11-14.1", update: U({code_changed: true, busy: "solve"})}, "2026-11-14.2", {});
+  assert.deepEqual(w, {action: "wait", busy: "solve", message: "Astro will update after this solve."});
+  assert.equal(B.updatePlan({page_version: "2026-11-14.1", update: U({code_changed: true, busy: "export"})}, "2026-11-14.2", {}).message,
+               "Astro will update after this export.");
+  // page = disk: no reload after the restart, the add-on carries the results over -> restart now
+  assert.equal(B.updatePlan({page_version: "2026-11-14.1", update: U({code_changed: true, unsaved: true})}, "2026-11-14.2", {}).action, "restart");
+  // page older than disk: it reloads after, which would hide them -> save first
+  assert.equal(B.updatePlan({page_version: "2026-11-14.1", update: U({code_changed: true, unsaved: true})}, "2026-11-14.1", {}).busy, "unsaved");
+});
+
+test("updatePlan: add-on newer than the page -> reload once; an old add-on -> manual", () => {
+  assert.deepEqual(B.updatePlan({page_version: "2026-11-15.1", update: U({})}, "2026-11-14.2", {}), {action: "reload"});
+  const again = B.updatePlan({page_version: "2026-11-15.1", update: U({})}, "2026-11-14.2", {reloaded: true});
+  assert.equal(again.action, "manual");
+  assert.equal(again.message, B.UPDATE_REOPEN);
+  // a server from before self-update: no `update` block, maybe no page_version at all
+  assert.equal(B.updatePlan({}, "2026-11-14.2", {}).message, B.UPDATE_MANUAL);
+  assert.equal(B.updatePlan({page_version: "2026-11-14.1"}, "2026-11-14.2", {}).action, "manual");
+  assert.equal(B.updatePlan({page_version: "2026-11-14.1", update: U({supported: false})}, "2026-11-14.2", {}).action, "manual");
+});
+
+test("restartRefused maps the server's reasons", () => {
+  assert.equal(B.restartRefused({restart: false, reason: "busy", busy: "export"}).message, "Astro will update after this export.");
+  assert.equal(B.restartRefused({restart: false, reason: "unsaved"}).message, "Astro will update after you save these results to Facet.");
+  assert.equal(B.restartRefused({restart: false, reason: "unsupported"}).action, "manual");
+  assert.equal(B.restartRefused({restart: false, reason: "current"}).action, "none");
+});
+
+test("waitForBoot: waits through errors and the old process, gives up at the timeout", async () => {
+  let t = 0;
+  const o = {sleep: async () => { t += 500; }, now: () => t, timeoutMs: 5000};
+  const seq = [new Error("x"), {update: {boot: "old"}}, {update: {boot: "new"}}];
+  const got = await B.waitForBoot(async () => { const s = seq.shift(); if (s instanceof Error) throw s; return s; }, "old", o);
+  assert.equal(got.update.boot, "new");
+  t = 0;
+  assert.equal(await B.waitForBoot(async () => ({update: {boot: "old"}}), "old", o), null);
+  assert.ok(t >= 5000);
+});
+
+test("reloadUrl keeps the nonce and marks the reload once", () => {
+  assert.equal(B.reloadUrl("http://h/addons/astro-id/ui/?nonce=abc"), "http://h/addons/astro-id/ui/?nonce=abc&astro_reloaded=1");
+  assert.equal(B.reloadUrl("http://h/ui/?nonce=abc&astro_reloaded=1"), "http://h/ui/?nonce=abc&astro_reloaded=1");
+  assert.equal(B.reloadUrl("http://h/ui/"), "http://h/ui/?astro_reloaded=1");
+  assert.equal(B.reloadUrl("http://h/ui/?nonce=a#x"), "http://h/ui/?nonce=a&astro_reloaded=1#x");
+});

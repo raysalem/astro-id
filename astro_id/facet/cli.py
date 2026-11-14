@@ -122,6 +122,11 @@ def run(args) -> int:
 
             return run_install(args)
         if args.facet_cmd == "serve":
+            from . import keeper
+
+            if getattr(args, "addon", False) and keeper.wanted():
+                # the process Facet started: a small keeper; the server runs in a worker it can restart on new code
+                return keeper.run_keeper(getattr(args, "argv", None) or sys.argv[1:])
             from .serve import serve
 
             return serve(args)
