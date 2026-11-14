@@ -37,11 +37,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--no-fallback", action="store_true", help="never use nova.astrometry.net")
     s.add_argument("--no-quality", action="store_true", help="skip the per-frame quality metrics (focus, trailing...)")
     g = s.add_argument_group("tag policy (default: astro-id.json tag_policy, else levels 1-4, stars off)")
-    g.add_argument("--tag-levels", help="levels that become tags, e.g. 1,2,3,4 (1 constellation, 2 Sun/Moon/planet, "
+    g.add_argument("--tag-levels", help="levels that become object tags, e.g. 1,2,3,4 (1 constellation, 2 Sun/Moon/planet, "
                                         "3 Messier/NGC/IC, 4 asterism, 5 named star)")
     g.add_argument("--star-mag-limit", type=float,
-                   help="tag named stars at least this bright (e.g. 1.5 = the ~20 brightest); turns level 5 on")
-    g.add_argument("--max-catalog-mag", type=float, help="faintest catalog object (level 3) to tag (default 6.0)")
+                   help="give named stars at least this bright an object tag (e.g. 1.5 = the ~20 brightest); turns level 5 on")
+    g.add_argument("--max-catalog-mag", type=float, help="faintest catalog object (level 3) that gets an object tag (default 6.0)")
     g.add_argument("--tag-style", choices=["plain", "kind"],
                    help="plain: 'orion'; kind: 'constellation/orion', 'planet/jupiter' (default plain)")
     k = s.add_argument_group("stacking sequences (folder runs)")

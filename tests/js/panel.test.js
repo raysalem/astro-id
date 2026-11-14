@@ -28,18 +28,18 @@ const objs = [
   {name: "Betelgeuse", confidence: 95, tag: false, items: 1} // covered by its constellation
 ];
 
-test("searchable count = saved names that have a sky label item (what Facet will index)", () => {
+test("object tag count = saved objects that have a sky label item (what Facet will index)", () => {
   const P = load("searchable", 65);
   assert.equal(P.indexedCount({objects: objs}), 2);
   assert.equal(P.nSave({objects: objs}), 2);
   assert.equal(load("searchable", 30).indexedCount({objects: objs}), 3);
 });
 
-test("tag mode still counts every saved object", () => {
+test("older Facet (plain-tag fallback) still counts every saved object tag", () => {
   assert.equal(load("tags", 65).nSave({objects: objs}), 3);
 });
 
-test("a name used by two objects counts its items once; Facet keeps at most 200", () => {
+test("an object name used twice counts its items once; Facet keeps at most 200", () => {
   const P = load("searchable", 0);
   assert.equal(P.indexedCount({objects: [{name: "a", confidence: 90, tag: true, items: 2}, {name: "a", confidence: 80, tag: true, items: 2}]}), 2);
   const many = Array.from({length: 250}, (_, i) => ({name: "n" + i, confidence: 90, tag: true, items: 1}));
@@ -241,4 +241,11 @@ test("update: same code everywhere -> nothing shown, nothing called", async () =
   assert.deepEqual(p.calls, []);
   assert.deepEqual(p.stale, []);
   assert.equal(p.el.update.hidden, true);
+});
+
+test("one word for astro-id's per-object output: object tags (no 'searchable names' or 'Astro tags')", () => {
+  const ui = html.replace(/<script>[\s\S]*?<\/script>/g, "");
+  assert.match(ui, /Save object tags/);
+  assert.match(ui, /<dt>Object tags<\/dt>/);
+  assert.doesNotMatch(ui, /searchable name|Make names searchable|Astro tags/i);
 });
