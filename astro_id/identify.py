@@ -265,7 +265,9 @@ def identify(sol: Solution, t_true: datetime, tol_min: float, site: Site | None,
         dd = 1.0 if found else 0.5 * C.detectability(mag, lim)
         bonus = 1.1 if (found and bright) else 1.0
         m = C.horizon_margin(None if alt is None else float(alt.min()))
-        conf = C.combine(q, p, dd, m, bonus, cap)
+        site_cap = None if site is not None else (C.NO_SITE_MOON_CAP if key == "moon" else C.NO_SITE_CAP)
+        caps = [c for c in (cap, site_cap) if c is not None]
+        conf = C.combine(q, p, dd, m, bonus, min(caps) if caps else None)
         objs.append(Obj(name, kind, conf, float(x[mid]), float(y[mid]), alt_min=None if alt is None else float(alt.min()),
                         sep_deg=sep_deg, mag=mag, level=TP.LEVEL_BODY, ra=float(ra[mid]), dec=float(dec[mid])))
         if key == "moon" and found:

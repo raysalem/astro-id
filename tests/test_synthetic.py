@@ -273,3 +273,35 @@ def test_warnings_without_offset_and_site(frame_dir, stub_astap, capsys, tmp_pat
                           "--overlay-dir", str(tmp_path), "--json", "--no-overlay", "--no-fallback",
                           "--no-results-file"])["results"][0]
     assert fr["warnings"] == []
+
+
+def test_planets_without_site_are_capped_with_site_unchanged(frame_dir, stub_astap, capsys, tmp_path, monkeypatch):
+    import astro_id.config as cfg
+    from astro_id import confidence as C
+
+    monkeypatch.setattr(cfg, "find_config", lambda folder: None)
+    base = ["solve", str(frame_dir / "SYN0001.JPG"), "--offset", "+0m", "--overlay-dir", str(tmp_path), "--json",
+            "--no-overlay", "--no-fallback", "--no-results-file"]
+    nosite = run_cli(capsys, base)["results"][0]
+    bodies = [o for o in nosite["objects"] if o["name"] in ("Sun", "Moon") or o["kind"] == "planet"]
+    assert any(o["name"] == "Jupiter" for o in bodies)
+    for o in bodies:
+        cap = C.NO_SITE_MOON_CAP if o["name"] == "Moon" else C.NO_SITE_CAP
+        assert o["confidence"] <= cap and o["tier"] != "high", o
+    assert next(o for o in bodies if o["name"] == "Jupiter")["tier"] == "likely"
+    assert any("no site" in w and "capped at 79" in w for w in nosite["warnings"])
+    assert any(o["kind"] == "star" and o["tier"] == "high" for o in nosite["objects"])   # stars unaffected
+    withsite = run_cli(capsys, base + ["--site", "32.6064,-116.3239,1100"])["results"][0]
+    assert next(o for o in withsite["objects"] if o["name"] == "Jupiter")["tier"] == "high"   # unchanged
+
+
+def test_facet_session_site_hint_keeps_full_confidence(frame_dir, stub_astap, tmp_path):
+    """The add-on passes a site (Facet GPS hint or the folder config): no cap, no no-site warning."""
+    from astro_id.session import SessionOptions, run_session
+
+    p = str(frame_dir / "SYN0001.JPG")
+    out = run_session([p], SessionOptions(offset="+0m", no_fallback=True, overlay_dir=str(tmp_path / "ov"),
+                                          include_results=True, hints={p: {"site": "32.6064,-116.3239,1100"}}))
+    fr = out["results"][p]
+    assert next(o for o in fr["objects"] if o["name"] == "Jupiter")["tier"] == "high"
+    assert not any("no site" in w for w in fr.get("warnings", []))

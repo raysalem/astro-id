@@ -116,7 +116,7 @@ def preview_one(path: str, opts: SessionOptions) -> dict:
             out["site"] = {"lat": float(s["lat"]), "lon": float(s["lon"]), "elev_m": s.get("elev_m"), "name": s.get("name")}
             out["site_source"] = "config"
         else:
-            out["warnings"].append("no site: altitude checks are skipped and planets cannot be ruled out by horizon")
+            out["warnings"].append("no site: altitude checks are skipped and planets cannot be ruled out by horizon (their confidence is capped at 79, the Moon 70)")
         # timezone
         if opts.tz:
             out["timezone"], out["tz_source"] = opts.tz, "session"

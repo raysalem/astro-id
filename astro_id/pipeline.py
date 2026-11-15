@@ -57,7 +57,8 @@ def empty_frame(path: Path) -> dict:
 WARN_NO_OFFSET = ("no clock offset configured: the EXIF time is used as is, so Sun, Moon and planets are "
                   "capped at candidate")
 WARN_NO_SITE = ("no site (position): Sun, Moon and planets are computed from the geocentre (the Moon can be up to "
-                "~1 deg off) and nothing is checked against the horizon; no default site is assumed")
+                "~1 deg off) and nothing is checked against the horizon, so their confidence is capped at 79 (the Moon 70); "
+                "no default site is assumed")
 WARN_NO_EXIF_TIME = ("no EXIF DateTimeOriginal: Sun, Moon and planets were computed for the current clock time "
                      "and are capped at candidate")
 _warned: set[str] = set()   # each distinct message is logged once per run; every frame still carries it

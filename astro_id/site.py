@@ -14,10 +14,11 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import unquote
 
+from . import data
 from .config import CONFIG_NAME, Site, infer_timezone, load_config, site_from_dict
 from .timeutil import parse_offset
 
-DEFAULT_SITE = Site(32.6064, -116.3239, 1100.0, "Tierra del Sol")
+LAST_SITE_FILE = "last_site.json"   # in the per-user data folder (data.cache_dir): the site last saved on this machine
 EPQS = "https://epqs.nationalmap.gov/v1/json?x={lon}&y={lat}&units=Meters&wkid=4326"
 
 _NUM = r"[-+]?\d{1,3}(?:\.\d+)?"
@@ -117,7 +118,32 @@ def parse_location(text: str) -> tuple[float, float, float | None]:
     raise ValueError(f"cannot read coordinates from {text!r}")
 
 
-def maps_url(site: Site) -> str:
+def last_site_path() -> Path:
+    return data.cache_dir() / LAST_SITE_FILE
+
+
+def load_last_site() -> Site | None:
+    """The site this user last saved on this machine, or None (never a built-in default)."""
+    try:
+        raw = json.loads(last_site_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return site_from_dict(raw) if isinstance(raw, dict) else None
+
+
+def save_last_site(site: Site) -> None:
+    try:
+        last_site_path().write_text(json.dumps(merge_config({}, site)["site"]) + "\n", encoding="utf-8")
+    except OSError:
+        pass  # a remembered suggestion is a convenience, never a reason to fail the save
+
+
+WORLD_VIEW = "https://www.google.com/maps/@20,0,2z/data=!3m1!1e3"   # neutral: no site known
+
+
+def maps_url(site: Site | None) -> str:
+    if site is None:
+        return WORLD_VIEW
     return f"https://www.google.com/maps/@{site.lat:.5f},{site.lon:.5f},15z/data=!3m1!1e3"
 
 
@@ -158,7 +184,7 @@ def merge_config(existing: dict, site: Site, offset: str | None = None, timezone
     return {k: out[k] for k in order if k in out} | {k: v for k, v in out.items() if k not in order}
 
 
-def open_maps(site: Site) -> None:
+def open_maps(site: Site | None) -> None:
     url = maps_url(site)
     for chrome in [r"C:\Program Files\Google\Chrome\Application\chrome.exe",
                    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe", shutil.which("google-chrome"),
@@ -170,7 +196,7 @@ def open_maps(site: Site) -> None:
 
 
 def run_site(folder: Path, ask: Callable[[str], str] = input, say: Callable[[str], None] = print,
-             open_browser: Callable[[Site], None] = open_maps,
+             open_browser: Callable[[Site | None], None] = open_maps,
              elevation: Callable[[float, float], float | None] = fetch_elevation) -> int:
     folder = Path(folder)
     if not folder.is_dir():
@@ -178,15 +204,25 @@ def run_site(folder: Path, ask: Callable[[str], str] = input, say: Callable[[str
         return 2
     path = folder / CONFIG_NAME
     existing = load_config(path) if path.exists() else {}
-    current = site_from_dict(existing.get("site")) or DEFAULT_SITE
-    say(f"Current site: {current.name or '(unnamed)'} {current.lat:.5f}, {current.lon:.5f}")
+    # Suggestion order: this folder's saved site, then the site this user last saved here, else none.
+    current = site_from_dict(existing.get("site")) or load_last_site()
+    if current is None:
+        say("No site is known for this folder yet: you must give the coordinates (nothing is assumed).")
+    else:
+        say(f"Current site: {current.name or '(unnamed)'} {current.lat:.5f}, {current.lon:.5f}")
     open_browser(current)
     say("In Google Maps, right-click the exact spot and click the first line (lat, long) to copy it.")
     while True:
-        txt = ask("Paste lat, lon (or a Maps URL; blank keeps the current site): ").strip()
-        if not txt:
-            lat, lon = current.lat, current.lon
-            break
+        if current is None:
+            txt = ask("Paste lat, lon (or a Maps URL): ").strip()
+            if not txt:
+                say("  coordinates are required")
+                continue
+        else:
+            txt = ask("Paste lat, lon (or a Maps URL; blank keeps the current site): ").strip()
+            if not txt:
+                lat, lon = current.lat, current.lon
+                break
         try:
             lat, lon = parse_latlon(txt)
             break
@@ -203,7 +239,8 @@ def run_site(folder: Path, ask: Callable[[str], str] = input, say: Callable[[str
                 say("  enter a number")
     else:
         say(f"Elevation (USGS): {elev:.0f} m")
-    name = ask(f"Site name [{current.name or ''}]: ").strip() or current.name or "site"
+    default_name = (current.name if current else "") or ""
+    name = ask(f"Site name [{default_name}]: ").strip() or default_name or "site"
     offset = None
     if "clock_offset" not in existing:
         while True:
@@ -220,6 +257,7 @@ def run_site(folder: Path, ask: Callable[[str], str] = input, say: Callable[[str
         say("Not saved.")
         return 1
     path.write_text(json.dumps(merge_config(existing, site, offset), indent=2) + "\n", encoding="utf-8")
+    save_last_site(site)
     say(f"Saved {path}")
     return 0
 

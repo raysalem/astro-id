@@ -145,3 +145,62 @@ def test_parse_location_dms(text, elev):
 def test_parse_location_rejects(bad):
     with pytest.raises(ValueError):
         parse_location(bad)
+
+
+# ---- no personal default site; suggestion order: folder -> last saved on this machine -> none
+
+def _run(tmp_path, answers, opened=None, **kw):
+    said = []
+    rc = run_site(tmp_path, ask=_scripted(answers), say=said.append,
+                  open_browser=(opened.append if opened is not None else (lambda s: None)),
+                  elevation=lambda a, b: 100.0, **kw)
+    return rc, said
+
+
+def test_no_default_site_constant():
+    import astro_id.site as S
+
+    assert not hasattr(S, "DEFAULT_SITE")
+
+
+def test_enter_alone_saves_nothing(tmp_path, _isolated_last_site):
+    opened = []
+    # Enter at the coordinates prompt is refused (asked again), then Enter at "Save?" declines: nothing written
+    rc, said = _run(tmp_path, ["", "", "5, 6", "", "", ""], opened)
+    assert opened == [None]                       # the map opens on a neutral world view, not on any site
+    assert rc == 1                                # Save? [y/N] answered blank = no
+    assert not (tmp_path / "astro-id.json").exists() and not _isolated_last_site.exists()
+    assert any("required" in m for m in said)
+
+
+def test_neutral_map_url():
+    from astro_id.site import maps_url
+
+    assert "32.6" not in maps_url(None) and "116.3" not in maps_url(None)
+
+
+def test_last_used_site_is_suggested(tmp_path):
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir(); b.mkdir()
+    rc, _ = _run(a, ["10, 20", "Camp", "+0m", "y"])
+    assert rc == 0
+    opened = []
+    rc, said = _run(b, ["", "", "+0m", "y"], opened)         # blank keeps the suggestion (= folder a's site)
+    assert rc == 0 and (opened[0].lat, opened[0].lon, opened[0].name) == (10.0, 20.0, "Camp")
+    cfg = json.loads((b / "astro-id.json").read_text())
+    assert (cfg["site"]["lat"], cfg["site"]["lon"], cfg["site"]["name"]) == (10.0, 20.0, "Camp")
+
+
+def test_folder_site_beats_last_used(tmp_path):
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir(); b.mkdir()
+    _run(a, ["10, 20", "Camp", "+0m", "y"])
+    (b / "astro-id.json").write_text(json.dumps({"clock_offset": "", "site": {"name": "Own", "lat": 1, "lon": 2, "elev_m": 3}}))
+    opened = []
+    _run(b, ["", "", "n"], opened)
+    assert opened[0].name == "Own"
+
+
+def test_declined_save_does_not_remember(tmp_path, _isolated_last_site):
+    _run(tmp_path, ["10, 20", "Camp", "+0m", "n"])
+    assert not _isolated_last_site.exists()

@@ -25,7 +25,8 @@ def build_parser() -> argparse.ArgumentParser:
                                    "<folder>-annotated, or --overlay-dir.\n\nSun, Moon and planets: without a clock "
                                    "offset (or --time) they are computed from the raw EXIF time and capped at "
                                    "candidate; without a site they are computed without a horizon check and "
-                                   "without parallax. No default site is ever assumed. Both cases add a "
+                                   "without parallax, so their confidence is capped at 79 (the Moon at 70): "
+                                   "'likely' at best, never 'high'. No default site is ever assumed. Both cases add a "
                                    "'warnings' entry to the frame result.",
                        epilog=VOCAB + "\n\n" + exit_epilog("solve"))
     s.add_argument("target", help="image file or folder")
