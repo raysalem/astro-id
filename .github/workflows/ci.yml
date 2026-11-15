@@ -23,14 +23,14 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --frozen
       - run: uv run pytest -q -rs
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: "22"
       - run: node --test tests/js/bridge.test.js
@@ -44,20 +44,20 @@ jobs:
       ASTAP_PATH: /opt/astap/astap_cli
       ASTAP_DB: /opt/astap
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - name: Check for examples/expected.json
         id: has
         run: |
           if [ -f examples/expected.json ]; then echo "present=true" >> "$GITHUB_OUTPUT"
           else echo "present=false" >> "$GITHUB_OUTPUT"; echo "::notice::examples/expected.json not present, skipping"; fi
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.3.3
         if: steps.has.outputs.present == 'true'
         with:
           python-version: "3.12"
           enable-cache: true
       - name: Cache ASTAP downloads
         if: steps.has.outputs.present == 'true'
-        uses: actions/cache@v6
+        uses: actions/cache@v6.1.0
         with:
           path: ~/astap-dl
           key: astap-2026.11.01-w08-v1
@@ -80,7 +80,7 @@ jobs:
           ls /opt/astap | head
       - name: Cache astro-id catalogs
         if: steps.has.outputs.present == 'true'
-        uses: actions/cache@v6
+        uses: actions/cache@v6.1.0
         with:
           path: |
             ~/.astro-id
