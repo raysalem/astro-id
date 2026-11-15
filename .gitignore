@@ -18,3 +18,4 @@ astro-id-report.csv
 *.bsp
 hip_main.dat
 dev-notes/
+astro-id-results.json

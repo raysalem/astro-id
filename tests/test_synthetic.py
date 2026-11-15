@@ -224,3 +224,52 @@ def test_usage_errors_exit_nonzero(tmp_path):
     assert cli.main(["solve", str(tmp_path / "missing")]) == 2
     (tmp_path / "a.jpg").write_bytes(b"")
     assert cli.main(["solve", str(tmp_path), "--offset", "garbage"]) == 2
+
+
+def test_results_file_written_by_default_and_merged(frame_dir, stub_astap, capsys, tmp_path):
+    out_dir = tmp_path / "annotated"
+    doc = run_cli(capsys, ["solve", str(frame_dir), "--offset", "+0m", "--site", "32.6064,-116.3239,1100",
+                           "--overlay-dir", str(out_dir), "--json", "--no-overlay", "--no-fallback"])
+    res = out_dir / "astro-id-results.json"
+    assert res.exists() and not list(out_dir.glob("*.tmp"))
+    on_disk = json.loads(res.read_text(encoding="utf-8"))
+    assert on_disk == doc  # same document `--json` prints
+    _check_contract(on_disk)
+    # a second run of the same photo replaces its entry and keeps entries of other files
+    stale = on_disk["results"] + [dict(on_disk["results"][0], file="C:/elsewhere/OTHER.JPG")]
+    res.write_text(json.dumps({"contract": 1, "results": stale}), encoding="utf-8")
+    run_cli(capsys, ["solve", str(frame_dir), "--offset", "+0m", "--site", "32.6064,-116.3239,1100",
+                     "--overlay-dir", str(out_dir), "--json", "--no-overlay", "--no-fallback"])
+    files = [r["file"] for r in json.loads(res.read_text(encoding="utf-8"))["results"]]
+    assert len(files) == 2 and files.count(on_disk["results"][0]["file"]) == 1 and "C:/elsewhere/OTHER.JPG" in files
+
+
+def test_no_results_file_flag(frame_dir, stub_astap, capsys, tmp_path):
+    out_dir = tmp_path / "annotated"
+    run_cli(capsys, ["solve", str(frame_dir), "--overlay-dir", str(out_dir), "--json", "--no-overlay",
+                     "--no-fallback", "--no-results-file"])
+    assert (out_dir / "astro-id-report.csv").exists() and not (out_dir / "astro-id-results.json").exists()
+
+
+def test_session_run_writes_no_results_file(frame_dir, stub_astap, tmp_path):
+    from astro_id.session import SessionOptions, run_session
+
+    out_dir = tmp_path / "annotated"
+    run_session([str(frame_dir / "SYN0001.JPG")], SessionOptions(overlay_dir=str(out_dir), no_overlay=True,
+                                                                  no_fallback=True, offset="+0m"))
+    assert not (out_dir / "astro-id-results.json").exists()   # the Facet add-on path never gets the new file
+
+
+def test_warnings_without_offset_and_site(frame_dir, stub_astap, capsys, tmp_path, monkeypatch):
+    import astro_id.config as cfg
+
+    monkeypatch.setattr(cfg, "find_config", lambda folder: None)
+    fr = run_cli(capsys, ["solve", str(frame_dir / "SYN0001.JPG"), "--overlay-dir", str(tmp_path), "--json",
+                          "--no-overlay", "--no-fallback", "--no-results-file"])["results"][0]
+    assert any("no clock offset" in w for w in fr["warnings"])
+    assert any("no site" in w and "no default site" in w for w in fr["warnings"])
+    # offset + site given: neither warning
+    fr = run_cli(capsys, ["solve", str(frame_dir / "SYN0001.JPG"), "--offset", "+0m", "--site", "32.6,-116.3,1100",
+                          "--overlay-dir", str(tmp_path), "--json", "--no-overlay", "--no-fallback",
+                          "--no-results-file"])["results"][0]
+    assert fr["warnings"] == []

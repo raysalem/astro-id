@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import csv
+import json
 import logging
+import os
 import traceback
 from datetime import datetime
 from pathlib import Path
@@ -18,6 +20,8 @@ from .timeutil import format_offset, iso, true_time
 log = logging.getLogger("astro_id")
 
 CSV_NAME = "astro-id-report.csv"
+RESULTS_NAME = "astro-id-results.json"
+CONTRACT_VERSION = 1
 CSV_FIELDS = ["file", "true_time", "time_source", "tolerance_min", "best_fit_time", "time_flag", "solved",
               "solver", "grade", "stars", "rms_px", "lim_mag", "center_ra_deg", "center_dec_deg", "object",
               "kind", "confidence", "tier", "level", "magnitude", "parent", "member_of", "taggable", "x", "y",
@@ -46,8 +50,28 @@ def empty_frame(path: Path) -> dict:
         "center_ra_deg": None, "center_dec_deg": None, "fov_deg": None, "true_time": None,
         "time_tolerance_min": None, "time_source": "exif", "best_fit_time": None, "time_flag": None,
         "overlay": None, "error": None, "stack_of": None, "objects": [], "annotations": None, "solve_source": None,
-        "best_fit_delta_min": None, "quality": None,
+        "best_fit_delta_min": None, "quality": None, "warnings": [],
     }
+
+
+WARN_NO_OFFSET = ("no clock offset configured: the EXIF time is used as is, so Sun, Moon and planets are "
+                  "capped at candidate")
+WARN_NO_SITE = ("no site (position): Sun, Moon and planets are computed from the geocentre (the Moon can be up to "
+                "~1 deg off) and nothing is checked against the horizon; no default site is assumed")
+WARN_NO_EXIF_TIME = ("no EXIF DateTimeOriginal: Sun, Moon and planets were computed for the current clock time "
+                     "and are capped at candidate")
+_warned: set[str] = set()   # each distinct message is logged once per run; every frame still carries it
+
+
+def reset_warnings() -> None:
+    _warned.clear()
+
+
+def _warn(fr: dict, msg: str) -> None:
+    fr.setdefault("warnings", []).append(msg)
+    if msg not in _warned:
+        _warned.add(msg)
+        log.warning("%s", msg)
 
 
 def _quality(path: Path, fr: dict, scale_deg: float | None, matched: int | None, enabled: bool) -> None:
@@ -103,7 +127,7 @@ def process(path: Path, offset_flag, tol_flag, site_flag, overlay_dir: Path | No
         fr.update(solved=True, solver=sol.solver, grade=sol.grade, rms_px=sol.rms_px, center_ra_deg=round(ra, 3),
                   center_dec_deg=round(dec, 3), fov_deg=[round(fw, 1), round(fh, 1)])
         if t_true is None:
-            fr["error"] = "no EXIF DateTimeOriginal: time-dependent objects skipped"
+            fr["error"] = "no EXIF DateTimeOriginal: Sun, Moon and planets computed for the current clock time"
             t_true = datetime.now().astimezone()
         ident: Identification = identify(sol, t_true, fc.tolerance_min, fc.site, fc.time_source, fc.policy,
                                          min_confidence)
@@ -175,6 +199,12 @@ def _frame_time(path: Path, fr: dict, offset_flag, tol_flag, site_flag, time_fla
         t_true = true_time(exif.datetime_original, fc.offset, fc.timezone)
         fr["true_time"] = iso(t_true)
     log.info("%s: true time %s (offset %s, %s)", path.name, fr["true_time"], format_offset(fc.offset), fc.time_source)
+    if fc.time_override is None and exif.datetime_original is None:
+        _warn(fr, WARN_NO_EXIF_TIME)
+    elif fc.time_source == "exif":
+        _warn(fr, WARN_NO_OFFSET)
+    if fc.site is None:
+        _warn(fr, WARN_NO_SITE)
     return fc, exif, t_true
 
 
@@ -259,4 +289,24 @@ def write_csv(path: Path, rows: list[dict]) -> Path:
         w.writeheader()
         for r in merged:
             w.writerow(r)
+    return path
+
+
+def write_results(path: Path, frames: list[dict]) -> Path:
+    """Write the per-frame results next to the CSV report: ``{"contract": 1, "results": [<frame>, ...]}``, the same
+    document ``solve --json`` prints. Like the report it keeps entries of other files already there (a single-file
+    run replaces only its own frame), sorted by file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    mine = {f["file"] for f in frames}
+    keep: list[dict] = []
+    if path.exists():
+        try:
+            old = json.loads(path.read_text(encoding="utf-8"))
+            keep = [r for r in old.get("results", []) if isinstance(r, dict) and r.get("file") not in mine]
+        except (OSError, ValueError, AttributeError) as exc:
+            log.warning("could not read existing results %s (%s); rewriting it", path, exc)
+    merged = sorted(keep + list(frames), key=lambda r: str(r.get("file") or ""))
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps({"contract": CONTRACT_VERSION, "results": merged}, indent=1) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
     return path
