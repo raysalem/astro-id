@@ -34,6 +34,16 @@ class Detections:
         blobs (Milky Way patches) have big summed flux but modest peaks, so they sink."""
         return np.lexsort((-self.flux, -self.peak))
 
+    def order_by_brightness(self, clip_frac: float = 0.97) -> np.ndarray:
+        """Like order_by_peak, but peaks within ``clip_frac`` of the highest are one tie, ranked by flux.
+
+        An 8-bit image at its own resolution (a downscaled copy, not halved again) clips hundreds of stars
+        at 252-255; their peaks then rank by JPEG noise and a V 1.8 star fell to rank ~190 (B-E1)."""
+        if len(self.peak) == 0:
+            return np.zeros(0, int)
+        pk = np.minimum(self.peak, clip_frac * float(np.max(self.peak)))
+        return np.lexsort((-self.flux, -pk))
+
 
 def background_map(img: np.ndarray, cell: int = 64) -> np.ndarray:
     h, w = img.shape

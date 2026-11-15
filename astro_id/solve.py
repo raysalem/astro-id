@@ -30,10 +30,34 @@ from .stars import Detections, detect, fwhm_estimate
 log = logging.getLogger("astro_id")
 warnings.simplefilter("ignore", FITSFixedWarning)
 
-REDUCE = 2  # detection / crop work happens on a 1/2-scale image
+REDUCE = 2  # large frames: detection / crop work happens on a 1/2-scale image
+REDUCE_MIN_EDGE = 6000  # ... only when the long edge is at least this (so the work image keeps >= 3000 px);
+#                        smaller images are worked at full size
 SMOOTH_SCALES = (1.0, 3.0, 6.0, 12.0)  # gaussian sigma in reduced pixels
 CORNER_GROWTH = 0.0  # optional extra match radius toward the corners (0: corners are handled by ring growth)
 RING_MAG, RING_RADIUS, RING_MAX_DET = 5.5, 15.0, 400  # corner growth: bright stars, radius px @3000 wide
+
+
+def reduce_for(width: int, height: int) -> int:
+    """Integer downscale for detection and the ASTAP crops.
+
+    Halving a 60-megapixel frame costs nothing (stars span several pixels), but a web-sized copy has
+    1-2 px stars already: halving it again merged or erased the faint ones, and ASTAP then saw a
+    ~300"/px image (B-E1). Small images are therefore used as they are."""
+    return REDUCE if max(width, height) >= REDUCE_MIN_EDGE else 1
+
+
+# Below this long edge a failed solve is reported as "image too small". Measured (B-E1) on 8 A7R IV 20 mm
+# frames: all solve at grade A from 2400 px; at 2000 a twilight frame fails and one solves only at grade C.
+TOO_SMALL_EDGE = 2400
+
+
+def small_image_hint(width: int, height: int) -> str:
+    """One sentence for a failed solve of a small image, '' for a large one."""
+    if max(width, height) >= TOO_SMALL_EDGE:
+        return ""
+    return (f"too few stars at this size ({max(width, height)} px long edge); "
+            f"use a larger copy (at least {TOO_SMALL_EDGE} px)")
 
 
 # ---------------------------------------------------------------- ASTAP discovery
@@ -87,6 +111,7 @@ class Solution:
     match_hip: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=int))
     attempts: list[str] = field(default_factory=list)
     det_smooth: float = 1.0  # detection smoothing scale (reduced px) the fit used
+    reduce: int = REDUCE  # downscale of the work image (1 = the photo's own pixels, see reduce_for)
 
     @property
     def center(self) -> tuple[float, float] | None:
@@ -173,8 +198,10 @@ def wcs_to_full(sub_wcs: WCS, nx: int, ny: int, to_full) -> WCS:
 
 # ---------------------------------------------------------------- ASTAP
 def run_astap(fits_path: Path, fov: float, exe: Path, db: Path | None, timeout: int = 180,
-              downsample: int | None = None) -> dict | None:
+              downsample: int | None = None, tolerance: float | None = None) -> dict | None:
     cmd = [str(exe), "-f", str(fits_path), "-fov", f"{fov:.3f}", "-r", "180"]
+    if tolerance is not None:
+        cmd += ["-t", f"{tolerance:g}"]
     if db:
         cmd += ["-d", str(db)]
         dbs = available_databases(db)
@@ -209,25 +236,53 @@ def _write_fits(a: np.ndarray, path: Path) -> None:
     fits.PrimaryHDU(scaled.astype(np.uint16)).writeto(path, overwrite=True)
 
 
+COARSE_ARCSEC = 100.0  # work image coarser than this ("/px): stars are 1-2 px, see coarse_work_image()
+LOOSE_TOLERANCE = 0.014  # ASTAP quad tolerance for coarse images (ASTAP default 0.007)
+
+
+def coarse_work_image(scale_full: float | None, reduce: float) -> bool:
+    """True when the work image's pixels are coarse (a downscaled copy, or a halved 24 MP frame at 20 mm).
+
+    Stars are then 1-2 px, so each star position is uncertain by a larger share of the small quads ASTAP
+    builds, and ASTAP's default quad tolerance rejects true matches (B-E1). A full-size 60 MP frame at 20 mm
+    is worked at ~78"/px and never takes this path."""
+    return bool(scale_full) and reduce * scale_full * 3600 >= COARSE_ARCSEC
+
+
 def astap_attempts(gray: np.ndarray, scale_full: float | None, full_w: int, full_h: int):
-    """Yield (label, crop array, fov_height_deg, to_full) attempts, cheapest/likeliest first."""
+    """Yield (label, crop array, fov_height_deg, to_full, quad tolerance or None) attempts,
+    cheapest/likeliest first."""
+    seen: set[tuple] = set()
+    for att in _astap_attempts(gray, scale_full, full_w, full_h):
+        key = (att[1].shape, round(att[2], 6), tuple(np.round(att[3](0, 0), 1)), att[4])
+        if key not in seen:  # a bin clamped to the work scale can repeat an earlier attempt
+            seen.add(key)
+            yield att
+
+
+def _astap_attempts(gray: np.ndarray, scale_full: float | None, full_w: int, full_h: int):
     rh, rw = gray.shape
     R = full_w / rw  # reduce factor actually applied
 
-    def make(cx_f: float, cy_f: float, size_full: int, bin_full: float, label: str):
+    def make(cx_f: float, cy_f: float, size_full: int, bin_full: float, label: str, tol: float | None = None,
+             upsample: bool = False):
+        # Never finer than the work image by accident: a BOX upsample of a reduced image only adds blocky,
+        # blurred pixels (B-E1). ``upsample`` asks for a smooth 2x of the work pixels on purpose.
+        bin_full = R / 2 if upsample else max(bin_full, R)
         size_r = int(min(size_full / R, rw, rh))
         x0 = int(round(min(max(cx_f / R - size_r / 2, 0), rw - size_r)))
         y0 = int(round(min(max(cy_f / R - size_r / 2, 0), rh - size_r)))
         crop = gray[y0 : y0 + size_r, x0 : x0 + size_r]
         n = max(64, int(round(size_r * R / bin_full)))
-        img = np.asarray(Image.fromarray(crop).resize((n, n), Image.BOX), dtype=np.float32)
+        img = np.asarray(Image.fromarray(crop).resize((n, n), Image.BICUBIC if upsample else Image.BOX),
+                         dtype=np.float32)
         k = size_r / n
 
         def to_full(uu, vv, x0=x0, y0=y0, k=k):
             return (x0 + (np.asarray(uu) + 0.5) * k) * R - 0.5, (y0 + (np.asarray(vv) + 0.5) * k) * R - 0.5
 
         fov = span_deg(size_r * R, scale_full) if scale_full else 0.0
-        return label, img, fov, to_full
+        return label, img, fov, to_full, tol
 
     cx, cy = full_w / 2, full_h / 2
     if scale_full is None:
@@ -243,6 +298,13 @@ def astap_attempts(gray: np.ndarray, scale_full: float | None, full_w: int, full
     s30 = min(npx_for_span(30, scale_full), full_h)
     s40 = min(npx_for_span(40, scale_full), full_h)
     yield make(cx, cy, s30, base_bin, f"c30/b{base_bin}")
+    if coarse_work_image(scale_full, R):
+        # small photos: the same field at the work scale, then smoothly 2x upsampled (stars ~3 px, which
+        # ASTAP's detector handles better), both with a looser quad tolerance. Measured on 8 frames at
+        # 1600-6400 px, the two together solve what the default attempts miss (dev-notes BUGS B-E1).
+        bw = round(R)
+        yield make(cx, cy, s30, R, f"c30/b{bw}/t", LOOSE_TOLERANCE)
+        yield make(cx, cy, s30, R, f"c30/up2/t", LOOSE_TOLERANCE, upsample=True)
     yield make(cx, cy, s30, base_bin + 1, f"c30/b{base_bin + 1}")
     yield make(cx, cy, s40, base_bin + 1, f"c40/b{base_bin + 1}")
     for dx, dy, tag in [(0, -0.25, "up"), (0, 0.25, "down"), (-0.25, 0, "left"), (0.25, 0, "right")]:
@@ -256,13 +318,13 @@ def solve_with_astap(gray, scale_full, full_w, full_h, attempts_log: list[str]) 
         attempts_log.append("astap: not found")
         return None
     with tempfile.TemporaryDirectory(prefix="astro-id-") as td:
-        for label, img, fov, to_full in astap_attempts(gray, scale_full, full_w, full_h):
+        for label, img, fov, to_full, tol in astap_attempts(gray, scale_full, full_w, full_h):
             fp = Path(td) / "crop.fits"
             for ext in (".ini", ".wcs"):
                 fp.with_suffix(ext).unlink(missing_ok=True)
             _write_fits(img, fp)
             t0 = time.time()
-            h = run_astap(fp, fov, exe, db)
+            h = run_astap(fp, fov, exe, db, tolerance=tol)
             attempts_log.append(f"astap {label} fov={fov:.1f}: {'ok' if h else 'fail'} ({time.time() - t0:.1f}s)")
             if h:
                 sub = _wcs_from_header_dict(h, img.shape[1], img.shape[0])
@@ -702,8 +764,9 @@ def solve_image(path: Path, exif, use_fallback: bool = True, epoch: float = 2026
     from .imageio import load_gray
 
     attempts: list[str] = []
-    gray = load_gray(source or path, REDUCE, crop=raw_crop)
     full_w, full_h = exif.width, exif.height
+    reduce = reduce_for(full_w, full_h)
+    gray = load_gray(source or path, reduce, crop=raw_crop)
     R = full_w / gray.shape[1]
     cell = max(32, gray.shape[1] // 75)
     # Several smoothing scales: sharp stars need ~1 px, defocused discs need several px.
@@ -711,9 +774,9 @@ def solve_image(path: Path, exif, use_fallback: bool = True, epoch: float = 2026
     det_r = dets[SMOOTH_SCALES[0]]
     scale = pixel_scale_deg(exif, full_w, full_h)
     sol = Solution(False, width=full_w, height=full_h, det=det_r.scaled(R), psf_px=fwhm_estimate(det_r) * R,
-                   attempts=attempts)
+                   attempts=attempts, reduce=reduce)
     if max(len(d) for d in dets.values()) < 8:
-        sol.error = f"too few stars ({len(det_r)} sources)"
+        sol.error = small_image_hint(full_w, full_h) or f"too few stars ({len(det_r)} sources)"
         return sol
 
     candidates: list[tuple[str, WCS]] = []
@@ -727,7 +790,10 @@ def solve_image(path: Path, exif, use_fallback: bool = True, epoch: float = 2026
         elif use_fallback:
             attempts.append("astrometry.net: skipped (no ASTROMETRY_API_KEY)")
     if not candidates:
-        sol.error = "no plate solution" + ("" if find_astap()[0] else " (ASTAP not installed)")
+        if not find_astap()[0]:
+            sol.error = "no plate solution (ASTAP not installed)"
+        else:
+            sol.error = small_image_hint(full_w, full_h) or "no plate solution"
         return sol
 
     # Score each detection scale by its center agreement with the first solution, then fully
@@ -759,7 +825,7 @@ def solve_image(path: Path, exif, use_fallback: bool = True, epoch: float = 2026
         sol.det, sol.psf_px, sol.det_smooth = det, fwhm_estimate(dets[sm]) * R, sm
         best = (solver, w, ci, dj, res)
     if best is None or len(best[2]) < 6:
-        sol.error = "solution did not verify against catalog"
+        sol.error = small_image_hint(full_w, full_h) or "solution did not verify against catalog"
         return sol
     solver, w, ci, dj, res = best
     rms = float(np.sqrt(np.mean(res ** 2)))
