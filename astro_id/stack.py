@@ -135,7 +135,7 @@ def register(rep_xy: np.ndarray, rep_bright: np.ndarray, det_xy: np.ndarray, det
 def verify(path: Path, exif, rep_sol, tol: float) -> StackMatch | None:
     """Register ``path`` to the representative's solution; None when the pointing does not match."""
     from .imageio import load_gray
-    from .solve import REDUCE, SMOOTH_SCALES
+    from .solve import SMOOTH_SCALES, reduce_for
     from .stars import detect
 
     if (exif.width, exif.height) != (rep_sol.width, rep_sol.height) or rep_sol.det is None:
@@ -145,7 +145,7 @@ def verify(path: Path, exif, rep_sol, tol: float) -> StackMatch | None:
     rd = rep_sol.det
     rep_xy = np.c_[rd.x, rd.y]
     rep_bright = rep_xy[rd.order_by_peak()[:200]]
-    gray = load_gray(path, REDUCE)
+    gray = load_gray(path, reduce_for(w, h))  # same scale as the solve, so det_smooth means the same
     R = w / gray.shape[1]
     cell = max(32, gray.shape[1] // 75)
     scales = [rep_sol.det_smooth] + [s for s in SMOOTH_SCALES if s != rep_sol.det_smooth]

@@ -157,7 +157,9 @@ def fraction_inside(sol: Solution, x: float, y: float, r: float, n: int = 24) ->
 
 def bright_sources(sol: Solution, n: int = 150):
     d = sol.det
-    o = d.order_by_peak()[:n]
+    # A photo worked at its own pixels clips hundreds of stars in 8 bits, so peaks no longer rank them
+    # (B-E1); a halved frame keeps peak order, which sinks bright diffuse blobs (twilight sky, glow).
+    o = (d.order_by_brightness() if getattr(sol, "reduce", 2) == 1 else d.order_by_peak())[:n]
     return d.x[o], d.y[o], d.flux[o]
 
 

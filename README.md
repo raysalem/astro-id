@@ -292,16 +292,24 @@ with a Facet that has no add-on support.
 
 ## How it solves
 
-1. The JPG is read at half size and converted to grayscale. Stars are detected at several smoothing
-   scales (sharp stars and defocused discs both work).
-2. Wide fields (> 35 deg tall): a central ~30 deg crop is binned to ~2 arcmin/px and solved blind by
-   ASTAP with W08 and the field size from EXIF. If that fails, larger/offset crops are tried.
-   Narrow fields are solved whole.
+1. The JPG is converted to grayscale, at half size when its long edge is 6000 px or more (a 60 MP frame),
+   else at its own size: a downscaled copy already has 1-2 px stars, and halving it again would lose the
+   faint ones. Stars are detected at several smoothing scales (sharp stars and defocused discs both work).
+2. Wide fields (> 35 deg tall): a central ~30 deg crop is binned to ~2 arcmin/px (never finer than the
+   image itself) and solved blind by ASTAP with W08 and the field size from EXIF. Small or coarse images
+   (coarser than 100"/px, e.g. a 20 mm frame under ~4000 px) then try the same crop at their own scale
+   and smoothly upsampled 2x, both with a looser ASTAP quad tolerance (`-t 0.014`). If that fails,
+   larger/offset crops are tried. Narrow fields are solved whole.
 3. The crop solution is grown to the whole frame: catalog stars are matched outward from the center
    and a TAN-SIP model (up to 4th order) is fitted, with outlier clipping each round, so the corners of
    a 20 mm frame are usable. Projections where the polynomial cannot be trusted are discarded.
 4. Grade: **A** = 100+ matched stars and RMS <= 1 px; **B** = 30+ stars and RMS <= 2 px; **C** otherwise
    (RMS in full-resolution pixels).
+
+**Small photos.** Downscaled copies solve from about **2400 px** on the long edge (measured on 20 mm
+full-frame night and twilight frames: all solve at grade A from 2400 px and keep ~92 % of the full-size
+high-confidence objects; dark-sky frames often solve down to 1600-2000 px, but small clusters and nebulae
+drop out). A failed solve below 2400 px says so: "too few stars at this size ...; use a larger copy".
 
 ## Confidence scale
 
