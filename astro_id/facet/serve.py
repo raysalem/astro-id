@@ -52,6 +52,7 @@ from .. import config as cfgmod
 from ..cull import DEFAULT_RULE, merge_rule, validate_rule
 from . import keeper
 from .client import ALL_FRAMES, FacetClient, FacetError, addon_credentials, client_from_env, connect
+from ..requirements import requirements_block
 from .ledger import Ledger
 from .sync import (ANNOTATION_SOURCE, TAG_REVIEW, SyncContext, apply_results, facet_hints, gps_source,
                    parse_path_map, to_local)
@@ -66,7 +67,7 @@ EXPORT_KEYS = ("lines", "scores", "legend")   # Export's plain-language options 
 # an add-on process running while the page is read from disk on every load, so after an update the page can be newer
 # than its server. The panel then asks the server to restart itself on the new code (api/restart, keeper.py); only
 # a server too old for that gets the one-line "click Stop, then Open". Bump both together.
-PAGE_VERSION = "2026-11-15.1"
+PAGE_VERSION = "2026-11-15.2"
 PACKAGE = Path(__file__).resolve().parents[1]    # the astro_id package: its .py files are what a restart reloads
 UPDATING = "Astro is updating: try again in a moment"
 
@@ -434,6 +435,8 @@ class App:
                 "names_as": "searchable" if self.ctx.model_d else "tags",
                 "transport": getattr(self.client, "mode", "api"), "last_site": self.last_site(),
                 "sky_vocab": self.sky_vocab(), "page_version": PAGE_VERSION,
+                # minimums (requirements.py): {ok, problems} for the panel's one calm line
+                "requirements": requirements_block(self.client),
                 # the set this add-on holds (B-P9): a panel opened now starts with "Loaded: <label> · N photos"
                 "loaded": self.loaded_summary(),
                 # self-update (keeper.py): the panel restarts an add-on whose code on disk changed
@@ -1316,6 +1319,8 @@ def finish_addon(args, box: dict, aenv: AddonEnv, update: SelfUpdate | None = No
     ctx = SyncContext(client=client, ledger=ledger, addon=True,
                       annotations=not getattr(args, "no_annotations", False)).prepare()
     app = App(client, ledger, ctx, parse_path_map(getattr(args, "path_map", None)), addon_id=aenv.addon_id)
+    for problem in requirements_block(client)["problems"]:
+        log.warning("requirement: %s", problem)    # the panel shows it too; solving stays blocked by `solve`
     if aenv.credential_note:
         app.notes.append(aenv.credential_note)
         log.warning("%s", aenv.credential_note)

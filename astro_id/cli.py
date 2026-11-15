@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -58,6 +59,12 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("folder")
     d = sub.add_parser("setup", help="download reference data and check for ASTAP")
     d.add_argument("-v", "--verbose", action="store_true")
+    for name in ("check", "doctor"):
+        c = sub.add_parser(name, help="check the minimum requirements (Python, uv, ASTAP + database, Facet); "
+                                      "exit 0 when all required ones pass")
+        c.add_argument("--facet", metavar="URL", help="also check this Facet (set FACET_TOKEN for an add-on token)")
+        c.add_argument("--offline", action="store_true", help="skip the internet check")
+        c.add_argument("--json", action="store_true", help="machine-readable result")
     return p
 
 
@@ -74,6 +81,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_site(Path(args.folder))
     if args.cmd == "setup":
         return cmd_setup()
+    if args.cmd in ("check", "doctor"):
+        return cmd_check(args)
     if args.cmd == "session":
         return cmd_session(args)
     if args.cmd == "cull":
@@ -167,6 +176,14 @@ def cmd_session(args) -> int:
                 _emit({"event": "config_saved", "path": w})
         time_preview(paths, opts, _emit)
         return 0
+    from .requirements import RequirementError, require_astap
+
+    try:   # the add-on solves through here: stop early with one sentence
+        require_astap(fallback_ok=not args.no_fallback and bool(os.environ.get("ASTROMETRY_API_KEY")))
+    except RequirementError as exc:
+        log.error("%s", exc)
+        _emit({"event": "error", "error": str(exc)})
+        return 2
     run_session(paths, opts, _emit, save_config=args.save_folder_config)
     return 0
 
@@ -208,6 +225,26 @@ def cmd_setup() -> int:
     return 0 if exe and all(v == "ok" for v in st.values()) else 3
 
 
+def cmd_check(args) -> int:
+    from . import requirements as R
+
+    try:   # the marks are not in every Windows console code page
+        sys.stdout.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
+    url = args.facet
+    if url is None and os.environ.get("FACET_ADDON_ID") and os.environ.get("FACET_URL"):
+        url = os.environ["FACET_URL"]      # under the add-on environment: check the Facet that started us
+    doc = R.summarize(R.run_checks(offline=args.offline, facet_url=url))
+    if args.json:
+        print(json.dumps(doc, indent=1))
+    else:
+        done = "All required checks passed." if doc["ok"] else "Some required checks failed (marked with x)."
+        print(R.render(doc["checks"]))
+        print(done)
+    return 0 if doc["ok"] else 1
+
+
 def cmd_solve(args) -> int:
     from . import config as cfgmod
     from .imageio import collect
@@ -237,10 +274,15 @@ def cmd_solve(args) -> int:
     except ValueError as exc:
         log.error("%s", exc)
         return 2
-    from .solve import find_astap
+    from .requirements import RequirementError, require_astap
 
-    if find_astap()[0] is None:
-        log.warning("ASTAP not found (set ASTAP_PATH); only the astrometry.net fallback can solve")
+    try:   # fail early, in one sentence; a configured astrometry.net fallback may stand in for a missing ASTAP
+        st = require_astap(fallback_ok=not args.no_fallback and bool(os.environ.get("ASTROMETRY_API_KEY")))
+        if st.exe is None:
+            log.warning("ASTAP not found (set ASTAP_PATH); only the astrometry.net fallback can solve")
+    except RequirementError as exc:
+        log.error("%s", exc)
+        return 2
     files = collect(target)
     if not files:
         log.error("no images in %s", target)
