@@ -23,3 +23,5 @@ dev-notes/
 !examples/annotated/*.jpg
 !examples/astro-id.json
 !docs/img/*.jpg
+!docs/img/demo.mp4
+!docs/img/demo.webp
