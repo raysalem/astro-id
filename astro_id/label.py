@@ -91,7 +91,6 @@ def _say(msg: str) -> None:
 def run(args) -> int:
     from . import config as cfgmod
     from .imageio import DIRECT_EXT, RAW_EXT
-    from .solve import find_astap
     from .timeutil import parse_offset, parse_tolerance
 
     if not args.verbose:
@@ -110,8 +109,12 @@ def run(args) -> int:
     except ValueError as exc:
         _say(f"bad option: {exc}")
         return 2
-    if find_astap()[0] is None:
-        _say("ASTAP (the plate solver) was not found. Run `astro-id check` to see what is missing, or set ASTAP_PATH.")
+    from .requirements import RequirementError, require_astap
+
+    try:   # the same gate as `solve`: ASTAP missing or older than the minimum stops here, in one sentence
+        require_astap(fallback_ok=not args.no_fallback and bool(os.environ.get("ASTROMETRY_API_KEY")))
+    except RequirementError as exc:
+        _say(str(exc))
         return 2
     if target.is_file() and target.suffix.lower() not in DIRECT_EXT | RAW_EXT:
         _say(f"not a photo I can read: {target.name}")

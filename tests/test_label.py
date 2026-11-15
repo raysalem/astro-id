@@ -109,9 +109,26 @@ def test_exit_codes(tmp_path, stub, monkeypatch, capsys):
     _photo(tmp_path, "good.JPG")
     assert run(tmp_path) == 0                                # one labeled, one failed
     assert run(tmp_path / "good.JPG", "--offset", "bogus") == 2
-    monkeypatch.setattr("astro_id.solve.find_astap", lambda: (None, None))
-    assert run(tmp_path / "good.JPG") == 2
-    assert "astro-id check" in capsys.readouterr().out
+
+
+def test_label_uses_the_solve_requirements_gate(tmp_path, stub, monkeypatch, capsys):
+    """`label` stops on the same ASTAP decision as `solve`: missing, or older than the minimum."""
+    from astro_id import requirements as R
+
+    p = _photo(tmp_path, "good.JPG")
+    monkeypatch.delenv("ASTROMETRY_API_KEY", raising=False)
+    monkeypatch.setattr(R, "astap_status", lambda: R.AstapStatus())                    # not installed
+    assert run(p) == 2
+    out = capsys.readouterr().out
+    assert "ASTAP is not installed" in out and "astro-id check" in out and stub == []
+    old = (R.MIN_ASTAP[0] - 1, 0, 0)
+    monkeypatch.setattr(R, "astap_status", lambda: R.AstapStatus(Path("astap_cli"), Path("."), old, {"w08"}))
+    assert run(p) == 2
+    assert "older than the minimum" in capsys.readouterr().out and stub == []
+    monkeypatch.setenv("ASTROMETRY_API_KEY", "k")                                         # fallback may stand in
+    monkeypatch.setattr(R, "astap_status", lambda: R.AstapStatus())
+    assert run(p, "--no-fallback") == 2 and stub == []                                    # ...unless turned off
+    assert run(p) == 0 and stub == ["good.JPG"]
 
 
 def test_time_note_without_site(tmp_path, stub, capsys):
