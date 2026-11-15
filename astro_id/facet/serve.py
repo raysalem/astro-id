@@ -887,8 +887,12 @@ class App:
             self.job.saved_paths |= {r["path"] for r in reports if not r.get("error") and r.get("path")}
         ok = [r for r in reports if not r.get("error")]
         return {"reports": reports, "photos": len(ok), "errors": len(reports) - len(ok),
-                "tags_added": sum(len(r.get("add") or []) for r in ok),
-                "tags_removed": sum(len(r.get("remove") or []) for r in ok),
+                # what Facet now holds after the save (B-P11), not what was planned
+                "tags_added": sum(len(r.get("added", r.get("add")) or []) for r in ok),
+                "tags_removed": sum(len(r.get("removed", r.get("remove")) or []) for r in ok),
+                # an older Facet that does not say who wrote a tag: rows with an object's name astro-id has no
+                # record of were left alone (they may be the user's)
+                "tags_unknown_owner": sum(len(r.get("unknown_owner") or []) for r in ok),
                 "sky_labels": sum(1 for r in ok if r.get("annotation") in ("stored", "unchanged")),
                 "annotations": self.ctx.mode, "names_as": "searchable" if self.ctx.model_d else "tags",
                 # model D: names Facet made searchable (stored now) or that were already (unchanged payloads)
@@ -1333,7 +1337,7 @@ def finish_addon(args, box: dict, aenv: AddonEnv, update: SelfUpdate | None = No
     keeper's worker (it can restart itself; it takes over the session its predecessor left)."""
     client = box.get("client") or connect(aenv.url, **aenv.credentials)
     ledger = box.get("ledger") or Ledger(getattr(args, "ledger", None))
-    ctx = SyncContext(client=client, ledger=ledger, addon=True,
+    ctx = SyncContext(client=client, ledger=ledger, addon=True, addon_id=aenv.addon_id,
                       annotations=not getattr(args, "no_annotations", False)).prepare()
     app = App(client, ledger, ctx, parse_path_map(getattr(args, "path_map", None)), addon_id=aenv.addon_id)
     if aenv.credential_note:
