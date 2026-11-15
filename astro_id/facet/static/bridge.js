@@ -279,12 +279,21 @@
   const UPDATE_REOPEN = "Astro was updated: close and reopen the Astro panel.";
   const UPDATE_WAIT = {solve: "Astro will update after this solve.", export: "Astro will update after this export.",
                        unsaved: "Astro will update after you save these results to Facet."};
+  // B-P10: the new code on disk did not start in its trial run; the running add-on keeps the previous version
+  const UPDATE_FAILED = "An update to Astro is not ready yet; still running the previous version.";
+  // the new version passed its trial run but stopped right after the switch: the keeper answers on its own
+  const UPDATE_BROKEN = "An update to Astro did not start; Astro will try again as soon as its files change.";
+  // the add-on did not answer at all after an update (an add-on without the safe-update keeper)
+  const UPDATE_LOST = "Astro did not come back after updating: on Facet's Add-ons page click Stop, then Open.";
 
   /* What the panel does about the running add-on's code, from api/state (`st`), this page's version and what it
    * already tried ({restarts: n, reloaded: bool}). {action, message?, busy?}:
    *   none    - same code
-   *   restart - the add-on's code changed on disk, or this page is newer: POST api/restart, wait for a new boot
+   *   restart - the add-on's code changed on disk (and passed its trial run), or this page is newer: POST
+   *             api/restart, wait for a new boot
    *   wait    - same, but a solve / export runs: say so, ask again when it ends
+   *   pending - new code on disk is settling or being tried: nothing shown, ask again in a few seconds
+   *   failed  - the new code did not start: one calm line (message), keep working, ask again now and then
    *   reload  - the add-on is newer than this page: reload the page (once)
    *   manual  - it cannot be done automatically: one sentence (an add-on too old to restart itself, or a restart /
    *             reload that did not help) */
@@ -293,6 +302,11 @@
     const u = st.update && typeof st.update === "object" ? st.update : null;
     const differs = st.page_version !== pageVersion;
     const changed = !!(u && u.supported && u.code_changed);
+    const serverNewer = differs && !changed && compareVersions(st.page_version, pageVersion) > 0;
+    if (u && u.supported && u.fallback) return {action: "failed", message: UPDATE_BROKEN, fallback: true};
+    // the running add-on is newer than this page: reload first (it says the rest once reloaded)
+    if (u && u.supported && u.update_failed && !serverNewer) return {action: "failed", message: UPDATE_FAILED};
+    if (u && u.supported && u.pending && !changed && !serverNewer) return {action: "pending"};
     if (!differs && !changed) return {action: "none"};
     if (!changed && compareVersions(st.page_version, pageVersion) > 0) {
       return tried.reloaded ? {action: "manual", message: UPDATE_REOPEN, note: "the add-on has newer code than this panel"}
@@ -320,6 +334,8 @@
     if (r.reason === "busy") return {action: "wait", busy: r.busy, message: UPDATE_WAIT[r.busy] || UPDATE_WAIT.solve};
     if (r.reason === "unsaved") return {action: "wait", busy: "unsaved", message: UPDATE_WAIT.unsaved};
     if (r.reason === "unsupported") return {action: "manual", message: UPDATE_MANUAL, note: ""};
+    if (r.reason === "update_failed") return {action: "failed", message: UPDATE_FAILED};
+    if (r.reason === "pending") return {action: "pending"};
     return {action: "none"};   // current: nothing to update after all
   }
 
@@ -417,5 +433,6 @@
           sanitizeView: sanitizeView, compareVersions: compareVersions, makePoller: makePoller, STALE: STALE, folderOfPath: folderOfPath, facetTarget: facetTarget, albumOf: albumOf,
           nextLastAlbum: nextLastAlbum, loadState: loadState, restoredLoad: restoredLoad, updatePlan: updatePlan, restartRefused: restartRefused,
           waitForBoot: waitForBoot, reloadUrl: reloadUrl, UPDATE_NOTE: UPDATE_NOTE, UPDATE_MANUAL: UPDATE_MANUAL,
-          UPDATE_REOPEN: UPDATE_REOPEN, UPDATE_WAIT: UPDATE_WAIT};
+          UPDATE_REOPEN: UPDATE_REOPEN, UPDATE_WAIT: UPDATE_WAIT, UPDATE_FAILED: UPDATE_FAILED,
+          UPDATE_BROKEN: UPDATE_BROKEN, UPDATE_LOST: UPDATE_LOST};
 });

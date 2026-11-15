@@ -387,7 +387,7 @@ const NONCE = B.readNonce(location.search);
 const API = B.makeApi((u, o) => fetch(u, o), NONCE);
 // Must equal serve.py PAGE_VERSION. Facet reads this page from disk on every load but keeps the add-on process
 // running, so after an update the page can be newer than its server: the add-on then restarts itself (B.updatePlan).
-const PAGE_VERSION = "2026-11-15.1";
+const PAGE_VERSION = "2026-11-15.2";
 let serverStale = false;
 let updating = null;   // a Promise while Astro restarts itself on new code: every api() call waits for it
 async function api(path, body) {
@@ -416,7 +416,7 @@ function lockActions() {
   }
 }
 function markStale(msg, note) {
-  serverStale = true; solvePoller.stop(); exPoller.stop(); waitPoller.stop();
+  serverStale = true; solvePoller.stop(); exPoller.stop(); waitPoller.stop(); failPoller.stop();
   document.body.classList.add("stale");
   $("facet").innerHTML = `<b>${esc(msg)}</b>` + (note ? ` <span class="muted small">(${esc(note)})</span>` : "");
   lockActions();
@@ -427,39 +427,55 @@ function markStale(msg, note) {
    newer than the page -> the page reloads itself; an add-on too old to restart itself -> one sentence, two clicks. */
 const RELOADED = /[?&]astro_reloaded=1(&|$)/.test(location.search);
 let restarts = 0, updateNoteShown = false;
+// What the panel keeps an eye on (B-P10): "wait" (a run must end first) and "pending" (new code settling or being
+// tried) ask api/state every 3 s; "failed" (the new code did not start) every 10 s, so the update goes ahead by
+// itself once the files are fixed. Nothing is locked meanwhile: the running add-on keeps working.
+let updateWatch = "";
 function updateNote(msg) {
   const el = $("update");
   el.hidden = !msg; el.textContent = msg || ""; updateNoteShown = !!msg;
 }
-const waitPoller = B.makePoller(async () => { await checkVersion(); return !serverStale && updateNoteShown && !updating; }, 3000);
+const waitPoller = B.makePoller(async () => { await checkVersion(); return !serverStale && (updateWatch === "wait" || updateWatch === "pending") && !updating; }, 3000);
+const failPoller = B.makePoller(async () => { await checkVersion(); return !serverStale && updateWatch === "failed" && !updating; }, 10000);
+function watchUpdate(kind, msg) {
+  updateWatch = kind; updateNote(msg || "");
+  if (kind === "failed") failPoller.start(); else if (kind) waitPoller.start();
+}
+// A plan that is not "restart": show it. True when it was one of these.
+function showPlan(plan) {
+  if (plan.action === "none") { if (!updating) watchUpdate(""); return true; }
+  if (plan.action === "manual") { watchUpdate(""); markStale(plan.message, plan.note || ""); return true; }
+  if (plan.action === "reload") { updateNote(B.UPDATE_NOTE); location.replace(B.reloadUrl(location.href)); return true; }
+  if (plan.action === "wait") { watchUpdate("wait", plan.message); return true; }
+  if (plan.action === "pending") { watchUpdate("pending", ""); return true; }
+  if (plan.action === "failed") { watchUpdate("failed", plan.message); return true; }
+  return false;
+}
 async function applyUpdate(st) {
   const plan = B.updatePlan(st, PAGE_VERSION, {restarts: restarts, reloaded: RELOADED && !initDone});
-  if (plan.action === "none") { if (!updating) updateNote(""); return; }
-  if (plan.action === "manual") { updateNote(""); markStale(plan.message, plan.note || ""); return; }
-  if (plan.action === "reload") { updateNote(B.UPDATE_NOTE); location.replace(B.reloadUrl(location.href)); return; }
-  if (plan.action === "wait") { updateNote(plan.message); waitPoller.start(); return; }
+  if (showPlan(plan)) return;
   restarts += 1;                                     // "restart"
   updating = restartAndWait(st.update.boot).finally(() => { updating = null; });
   await updating;
 }
 async function restartAndWait(oldBoot) {
-  updateNote(B.UPDATE_NOTE);
+  updateWatch = ""; updateNote(B.UPDATE_NOTE);
   let r = null;
   try { r = await API.call("api/restart", {}); } catch (e) { r = null; }
-  if (r && r.restart === false) {                    // busy / unsaved / current: the plan says what to show
+  if (r && r.restart === false) {                    // busy / unsaved / not ready / current: say what it means
     const plan = B.restartRefused(r);
-    if (plan.action === "wait") { updateNote(plan.message); waitPoller.start(); }
-    else if (plan.action === "manual") { updateNote(""); markStale(plan.message, plan.note || ""); }
-    else updateNote("");
+    if (!showPlan(plan)) updateNote("");
     return;
   }
+  // The keeper checks the new version itself and answers on its own if it does not start, so a new boot comes
+  // back in a few seconds either way; no answer at all only happens with an add-on started before that keeper.
   const st = await B.waitForBoot(() => API.call("api/state"), oldBoot, {timeoutMs: 45000, delayMs: 600});
-  if (!st) { updateNote(""); markStale(B.UPDATE_MANUAL, "Astro did not come back after updating"); return; }
+  if (!st) { watchUpdate(""); markStale(B.UPDATE_LOST, ""); return; }
   state = st;
   const plan = B.updatePlan(st, PAGE_VERSION, {restarts: restarts, reloaded: RELOADED && !initDone});
   if (plan.action === "reload") { location.replace(B.reloadUrl(location.href)); return; }   // the page was old too
-  updateNote("");
-  if (plan.action === "manual") markStale(plan.message, plan.note || "");
+  watchUpdate("");
+  if (plan.action !== "restart") showPlan(plan);
 }
 let versionBusy = false;
 async function checkVersion(given) {
@@ -530,7 +546,8 @@ async function init() {
   state = await api("api/state");
   document.body.classList.toggle("names-search", state.names_as === "searchable");
   $("facet").textContent = state.can_write ? "" : "Read-only: Astro has no Facet credential, so nothing can be written.";
-  if (state.page_version !== PAGE_VERSION || (state.update && state.update.code_changed)) checkVersion(state);
+  const up = state.update || {};
+  if (state.page_version !== PAGE_VERSION || up.code_changed || up.pending || up.update_failed || up.fallback) checkVersion(state);
   versionPoller.start();
   const notes = state.warnings || [];
   $("notesBox").hidden = !notes.length; $("notesSum").textContent = `Notes (${notes.length})`;

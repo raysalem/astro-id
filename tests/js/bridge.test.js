@@ -350,6 +350,27 @@ test("restartRefused maps the server's reasons", () => {
   assert.equal(B.restartRefused({restart: false, reason: "unsaved"}).message, "Astro will update after you save these results to Facet.");
   assert.equal(B.restartRefused({restart: false, reason: "unsupported"}).action, "manual");
   assert.equal(B.restartRefused({restart: false, reason: "current"}).action, "none");
+  assert.deepEqual(B.restartRefused({restart: false, reason: "update_failed", update_failed: {reason: "x"}}),
+                   {action: "failed", message: B.UPDATE_FAILED});
+  assert.deepEqual(B.restartRefused({restart: false, reason: "pending"}), {action: "pending"});
+});
+
+test("updatePlan (B-P10): failed trial -> calm line; settling -> quiet; keeper fallback -> its own line; never manual", () => {
+  const f = {reason: "did not start (exit code 1): SyntaxError: invalid syntax", at: "2026-11-15T10:00:00"};
+  assert.deepEqual(B.updatePlan({page_version: "2026-11-14.2", update: U({update_failed: f})}, "2026-11-14.2", {}),
+                   {action: "failed", message: "An update to Astro is not ready yet; still running the previous version."});
+  // page newer than the add-on but the new code failed: still the calm line (not "click Stop, then Open")
+  assert.equal(B.updatePlan({page_version: "2026-11-14.1", update: U({update_failed: f})}, "2026-11-14.2", {}).action, "failed");
+  assert.equal(B.updatePlan({page_version: "2026-11-14.1", update: U({pending: true})}, "2026-11-14.2", {}).action, "pending");
+  assert.equal(B.updatePlan({page_version: "2026-11-14.2", update: U({pending: true})}, "2026-11-14.2", {}).action, "pending");
+  // the add-on is newer than this page: reload wins (the reloaded page sees the rest)
+  assert.equal(B.updatePlan({page_version: "2026-11-15.1", update: U({update_failed: f})}, "2026-11-14.2", {}).action, "reload");
+  // ready wins over a stale pending flag
+  assert.equal(B.updatePlan({page_version: "2026-11-14.2", update: U({code_changed: true, pending: true})}, "2026-11-14.2", {}).action, "restart");
+  const fb = B.updatePlan({page_version: "", update: U({fallback: true, update_failed: f})}, "2026-11-14.2", {});
+  assert.equal(fb.action, "failed");
+  assert.equal(fb.message, "An update to Astro did not start; Astro will try again as soon as its files change.");
+  for (const m of [B.UPDATE_FAILED, B.UPDATE_BROKEN]) assert.ok(!/Stop|Open/.test(m));
 });
 
 test("waitForBoot: waits through errors and the old process, gives up at the timeout", async () => {
