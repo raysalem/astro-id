@@ -34,9 +34,11 @@ uv run astro-id moon <photo-or-folder> [--time ISO] [--site lat,lon] [--north-an
   centred; it must be whole in the frame for this first version.
 - Time and site are optional. With both, the orientation is computed; without them it is fitted from the picture
   (needs enough pixels) or given with `--north-angle`.
-- Ray's four eclipse frames (2000 x 1333, disc about 65 px, no EXIF at all, so no time) are at the very bottom of
-  what can work: at 65 px a 100 km crater is under 2 px, so **no crater can be named**; the largest maria are
-  10-20 px. Their orientation cannot be computed (no time); a fit is tried and its result is reported honestly.
+- A disc of about 65 px (a wide frame of an eclipse, 2000 x 1333, no EXIF time) is at the very bottom of what can
+  work: at 65 px a 100 km crater is under 2 px, so **no crater can be named**; the largest maria are 10-20 px, and a
+  67 px disc is too small (craters like Tycho need about 245 px). Without a time the orientation cannot be
+  computed; a fit is tried and its result is reported honestly. An eclipsed or black-shadowed disc needs the
+  photo's time to be told from a phase.
 - What to shoot for crater names: the disc in pixels is about `focal length (mm) x 9.1 / pixel pitch (um)`
   (the Moon is ~0.52 deg). A crater is nameable at ~6 px, i.e. a 85 km crater (Tycho) needs a ~250 px disc; ~40 km
   craters (Aristarchus, Kepler) need ~550 px. Example: 3.76 um pixels (Sony A7R IV) give 250 px at ~105 mm and
@@ -114,7 +116,7 @@ comes with exact time, libration and axis angle, i.e. ground truth). Image 8 is 
 
 - New: `astro_id/moon.py` (disc fit, state, ephemeris maths, projection, albedo fit, features, payload, CLI run),
   `astro_id/moon_catalog.py` (the curated catalog), `tools/make_moon_catalog.py`, `tests/test_moon.py`,
-  `examples/moon/` (Ray's four eclipse frames, the NASA frame, `expected` notes in examples/README.md), this plan.
+  `examples/moon/` (four NASA frames, notes in examples/README.md), this plan.
 - Changed, minimally: `astro_id/cli.py` (register the subcommand), `astro_id/vocab.py` + `CONTRACT.md` (exit codes
   of `moon`, the help test keeps them in step), `docs/MANUAL.md` and `docs/REFERENCE.md` (a "Moon" section),
   `THIRD_PARTY_NOTICES.md` (gazetteer, NASA SVS image), `examples/README.md` (the Moon frames and credits),
@@ -140,8 +142,8 @@ comes with exact time, libration and axis angle, i.e. ground truth). Image 8 is 
   into `solve`/`label` or the Facet add-on yet.
 - **Changes from the plan, with reasons:**
   - The disc is refitted after RANSAC to the half-level crossing of rays from the centre: the threshold blobs sat
-    1-2 px out in the blur (a synthetic 60 px disc measured 63) or inside a dim eclipsed edge (eclipse frame 01 came
-    out 62 px and off-centre; refitted 67 px, centred, like 02-04).
+    1-2 px out in the blur (a synthetic 60 px disc measured 63) or inside a dim eclipsed edge (an eclipse frame came
+    out 62 px and off-centre; refitted 67 px, centred).
   - "Sunlit" is above 22 % of the bright level, not 50 %: at 50 % the maria counted as unlit and a full Moon read
     as gibbous.
   - The albedo fit flattens the sunlit part and the visible umbra **separately** and skips a band along the
@@ -159,14 +161,17 @@ comes with exact time, libration and axis angle, i.e. ground truth). Image 8 is 
     circle). Names under 20 are kept in the JSON, not drawn. A small Moon is drawn on a 4x crop.
 - **Ephemeris check:** Meeus example 53.a exact to 0.002 deg (P 15.066 vs 15.08 with physical libration); NASA SVS
   2026-11-24 12:00 and 2026-11-20 06:00 UTC: libration within 0.03 deg, axis angle within 0.12 deg.
-- **Real runs** (`examples/README.md` has the table): the four eclipse frames: disc found at 67-68 px (quality
-  1.0), three read as `eclipse-partial` (red umbra visible), frame 04 as `crescent` (its umbra is black; without a
-  time a shadow edge and a phase look alike at this size). The maria fit fails on all four (margin 0.005-0.18):
-  no names, and the message says what is missing. The fit's best angles agree across the four frames (150-200 deg)
-  but that is below the trust line, so nothing is claimed. NASA SVS full Moon (690 px): with its time and north up,
+- **Real runs** (`examples/README.md` has the table): four eclipse frames of 67-68 px (not committed): the disc was
+  found (quality 1.0), three read as `eclipse-partial` (red umbra visible), one as `crescent` (its umbra was black; without a
+  time a shadow edge and a phase look alike at this size). The maria fit failed on all four (margin 0.005-0.18):
+  no names, and the message says what is missing. NASA SVS full Moon (690 px): with its time and north up,
   83 features at 65-100 in the right places; with nothing at all, the fit finds the pole at 348 deg (true 347.2).
-  Ray's image 8 (the Commons photo, run locally, not committed): fit at 344 deg, 90 % certainty, labels on
+  A Commons full-Moon photo (run locally, not committed): fit at 344 deg, 90 % certainty, labels on
   Tycho, Copernicus, Plato, Grimaldi and Crisium in place.
+- **Merge into the release (2026-11-15):** the lit level is the 99th percentile (was 97th) so a rendered earthshine
+  is not counted as sunlit on a crescent, and a time that says the Moon is under 90 % lit makes a narrow lit limb a
+  thin crescent rather than the Earth's shadow edge. Examples are now four NASA SVS frames (full, waxing crescent,
+  first quarter, waxing gibbous).
 - Tests: `tests/test_moon.py` (30, no network; the two NASA SVS ephemeris checks and the time + site check skip
   without a cached DE421).
 - A raw EXIF time (no `clock_offset`, no `--time`) lowers the time + site certainty from 0.75 to 0.5, as `solve`
@@ -174,8 +179,8 @@ comes with exact time, libration and axis angle, i.e. ground truth). Image 8 is 
 
 ## What is left
 
-1. Ray's answers below (eclipse date/time and site: then frames 01-04 get a computed orientation).
-2. A real Moon photo at 250+ px with EXIF time and site, to check the time + site path on a real camera.
+1. A real Moon photo at 250+ px with EXIF time and site, to check the time + site path on a real camera.
+2. Eclipse and thin-crescent handling (both need the photo's time).
 3. Run automatically from `label`/`solve` when a solve fails and a disc over ~200 px is found; the Facet add-on.
 4. Topocentric libration (up to ~1 deg) and physical libration (~0.04 deg); a plate solve for wide frames with the
    Moon and stars; mare outlines instead of caps for the albedo model; a crop of a disc cut by the frame edge.
@@ -184,7 +189,5 @@ comes with exact time, libration and axis angle, i.e. ground truth). Image 8 is 
 
 ## Open questions (for Ray)
 
-1. The eclipse frames have no EXIF at all (no time, no lens): which eclipse and where (date/time and site)? With
-   them the orientation can be computed instead of guessed.
-2. Are larger originals of 4-7 on the NAS? At full resolution the disc may already be 250+ px (craters).
-3. Is a hand-held level camera the usual set-up for Moon shots, or a telescope with a star diagonal (mirrored)?
+1. Own Moon photos at a 250 px disc or more, with their time (EXIF or `--time`) and site.
+2. Is a hand-held level camera the usual set-up for Moon shots, or a telescope with a star diagonal (mirrored)?

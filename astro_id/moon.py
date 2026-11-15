@@ -275,7 +275,9 @@ def lit_limb_span(lit: np.ndarray, d: Disc) -> float:
     return float(5 * np.sum((tot > 0) & (on > 0.5 * np.maximum(tot, 1))))
 
 
-def disc_state(rgb: np.ndarray, d: Disc) -> State:
+def disc_state(rgb: np.ndarray, d: Disc, phase_known: bool = False) -> State:
+    """phase_known: the photo's time says the Sun lights only part of the Moon, so a narrow lit limb is a thin
+    crescent, not the Earth's shadow edge."""
     from scipy import ndimage
 
     gray = ndimage.uniform_filter(rgb.sum(axis=2) / 3.0, 3)
@@ -283,7 +285,7 @@ def disc_state(rgb: np.ndarray, d: Disc) -> State:
     inner = disc_masks(gray.shape, d, 0.92)
     bg = float(np.median(gray[~disc_masks(gray.shape, d, 1.3)])) if (~disc).any() else 0.0
     v = gray[disc] - bg
-    lit_level = float(np.percentile(v, 97))
+    lit_level = float(np.percentile(v, 99))
     # sunlit = above 22 % of the bright level: the maria are ~30-50 % of the highlands, the night side of a
     # phase is black, the Earth's umbra is dim (and red)
     lit = disc & ((gray - bg) > LIT_FRACTION_LEVEL * lit_level)
@@ -300,7 +302,7 @@ def disc_state(rgb: np.ndarray, d: Disc) -> State:
     rg_all = (rgb[..., 0][disc].mean() - bg) / max(rgb[..., 1][disc].mean() - bg, 1e-6)
     span = lit_limb_span(lit, d)
     # a phase always lights exactly half of the limb (all of it at full Moon); the Earth's shadow does not
-    shadow_edge = lit_frac < 0.95 and (span < 140 or 230 < span < 320)
+    shadow_edge = not phase_known and lit_frac < 0.95 and (span < 140 or 230 < span < 320)
     visible = lit
     umbra_shows = dark > 0.03 and red > 1.15 and unlit.sum() > 0.08 * disc.sum()
     if umbra_shows or shadow_edge:
@@ -633,13 +635,13 @@ def analyse(path: Path, t: datetime | None = None, site=None, north_angle: float
     d = find_disc(rgb)
     if d is None:
         return MoonResult(str(path), False, "no Moon disc found", W, H)
-    st = disc_state(rgb, d)
     eph = None
     if t is not None:
         try:
             eph = physical_ephemeris(t, site)
         except Exception as exc:          # no ephemeris file and no network
             log.warning("Moon ephemeris unavailable: %s", exc)
+    st = disc_state(rgb, d, phase_known=eph is not None and eph.illuminated < 0.9)
     l0, b0 = (eph.l, eph.b) if eph else (0.0, 0.0)
     if eph is not None and eph.illuminated > 0.97 and st.state in ("gibbous", "half", "crescent"):
         # the Sun lights the whole disc at this time: the missing part is the Earth's shadow

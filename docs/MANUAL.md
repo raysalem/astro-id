@@ -285,6 +285,25 @@ uv run astro-id moon IMG_0412.jpg --time 2026-11-24T04:00-08:00 --north-angle 0 
 - `--json` prints everything (disc, state, orientation, features with pixel positions and confidence, and the
   annotations payload). `--tag-style kind` spells the tags `moon/tycho`.
 
+**What you need**
+
+- A photo with the whole Moon in it, as large as you can: disc size in pixels is about
+  `focal length (mm) x 9.1 / pixel pitch (um)`. About **250 px** across names big craters like Tycho; about **550 px**
+  names 40 km craters (Aristarchus, Kepler); maria need about 60 px.
+- The photo's **time** (EXIF, or `--time 2026-11-24T04:00-08:00`) and a **site** (`--site lat,lon`, or the
+  `astro-id.json` settings). Keep the camera's real time: with time and site the turn of the Moon is computed;
+  without them it is fitted from the picture, which needs a clean, large disc.
+- If you know where north is, say so: `--north-angle DEG` (degrees counter-clockwise from up). A star diagonal or
+  any mirror reverses the picture: add `--mirror`.
+
+**When the disc is too small** the command names nothing it cannot support and says so, e.g. "the Moon is 65 px
+across here: only the largest maria can be named; craters like Tycho need about 245 px". Shoot longer or crop less.
+
+**Honest limits (first version).** An eclipsed or thin-crescent Moon needs the photo's time to be told from a phase
+(a black shadow edge and a phase look alike without it). The camera is assumed level when only time and site give the
+turn. The Moon must be whole in the frame. Libration is the geocentric one (up to about 1 degree off for the
+observer). It is not in the Facet panel yet. Examples: [four NASA frames](../examples/README.md#moon-photos-moon).
+
 ## 8. Inside Facet, end to end
 
 The Astro panel needs a Facet version that supports add-ons; where to get one:

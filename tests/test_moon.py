@@ -77,7 +77,7 @@ def test_partial_arc_cut_by_the_frame():
     assert d is not None and abs(d.cx - 30) < 2 and abs(d.r - 60) < 2
 
 
-def test_small_disc_like_the_eclipse_frames():
+def test_small_disc_in_a_wide_frame():
     rgb = synth(w=2000, h=1333, cx=1000.3, cy=600.7, r=33.0)
     d = M.find_disc(rgb)
     assert d is not None and abs(d.r - 33) < 1.2 and abs(d.cx - 1000.3) < 1
@@ -301,3 +301,14 @@ def test_nasa_example_without_time_fits_north_up():
     assert abs((r.orientation["pole_angle_deg"] - 347.2 + 180) % 360 - 180) <= 4
     names = {f["name"] for f in r.features}
     assert {"Tycho", "Copernicus", "Mare Crisium"} <= names
+
+
+@pytest.mark.skipif(not _de421(), reason="DE421 not cached (run astro-id setup); no network in this test")
+@pytest.mark.skipif(not (ROOT / "examples" / "moon" / "05-nasa-svs-full-moon.jpg").exists(), reason="no example")
+def test_nasa_full_moon_names_the_famous_features_with_its_time():
+    """The NASA SVS full Moon (2026-11-24 12:00 UTC, north up) must name the best-known features at 80+."""
+    t = datetime(2026, 11, 24, 12, 0, tzinfo=timezone.utc)
+    r = M.analyse(ROOT / "examples" / "moon" / "05-nasa-svs-full-moon.jpg", t=t, north_angle=0.0)
+    conf = {f["name"]: f["confidence"] for f in r.features}
+    for name in ("Tycho", "Copernicus", "Plato", "Mare Crisium", "Mare Imbrium"):
+        assert conf.get(name, 0) >= 80, (name, conf.get(name))

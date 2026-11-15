@@ -60,6 +60,17 @@ on Linux/macOS run `./astro-label.sh photo.jpg`; or `uv run astro-id label <phot
 labelled copy `<name>_astro.jpg` next to it; `--out sidecar` writes `<name>.astro.json` instead, `--out both` writes
 both, `--to <folder>` puts them elsewhere.
 
+### Label the Moon
+
+A close-up of the Moon has no stars to solve, so it has its own command:
+`uv run astro-id moon <photo> --time 2026-11-20T06:00Z --site 32.6,-116.3`. It finds the disc, works out how the Moon
+is turned, and writes `<name>_moon.jpg` with the maria, large craters, mountain ranges and Apollo sites named on the lit
+part. The disc must be about 250 px across for craters ([manual](docs/MANUAL.md#photos-of-the-moon-astro-id-moon)).
+
+![Part of a NASA Moon frame, labeled by astro-id moon](docs/img/moon-labeled.jpg)
+
+*Crop of a labeled NASA Moon frame (NASA's Scientific Visualization Studio, public domain); more in [examples/moon](examples/README.md#moon-photos-moon).*
+
 **[Install](#install) · [Usage](#use-it-standalone) · [Confidence](#how-confidence-works) · [Facet add-on](#use-it-with-facet) · [Manual](docs/MANUAL.md)**
 
 ## What it does

@@ -78,11 +78,13 @@ Licenses were checked on each source's own page on 2026-11-15.
   https://nssdc.gsfc.nasa.gov/planetary/lunar/lunar_sites.html
 - **License:** U.S. public domain (NASA).
 
-### Full-Moon test image (NASA Scientific Visualization Studio)
+### Moon test images (NASA Scientific Visualization Studio)
 
-- **Used for:** `examples/moon/05-nasa-svs-full-moon.jpg`, a 730 x 730 px frame of *Moon Phase and Libration, 2026*
-  for 2026-11-24 12:00 UTC (SVS ID 5587, frame 7861; rendered from LRO LOLA elevation and the LROC WAC mosaic,
-  celestial north up).
+- **Used for:** `examples/moon/05-nasa-svs-full-moon.jpg`, `06-nasa-svs-waxing-crescent.jpg`,
+  `07-nasa-svs-first-quarter.jpg`, `08-nasa-svs-waxing-gibbous.jpg` (and their labeled copies in
+  `examples/moon/annotated/`): 730 x 730 px frames of *Moon Phase and Libration, 2026* (SVS ID 5587, 730x730
+  frame set; frames 7861, 7573, 7693, 7759 = 2026-11-24 12:00, 2026-11-12 12:00, 2026-11-17 12:00,
+  2026-11-20 06:00 UTC; rendered from LRO LOLA elevation and the LROC WAC mosaic, celestial north up).
 - **By:** NASA's Scientific Visualization Studio (visualizer Ernie Wright). https://svs.gsfc.nasa.gov/5587
 - **License:** public domain ("All of our content is in the public domain unless otherwise noted",
   https://svs.gsfc.nasa.gov/help/). Credit: NASA's Scientific Visualization Studio.
