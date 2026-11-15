@@ -1,0 +1,7 @@
+# .dev-notes.toml (optional, repo root): settings for dev-notes/tools/check.py
+skip_folders = ["docs", "docs/img", "node_modules", ".venv", "build", "dist"]
+code_extensions = [".py", ".ts", ".js", ".go", ".rs"]
+extra_required_docs = []   # e.g. ["docs/CONTRACT.md"]
+
+[size_limits]              # overrides STANDARD.md 2.4
+# "docs/USAGE.md" = 600

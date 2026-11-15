@@ -17,6 +17,22 @@ labels green = high, amber = likely, gray = candidate). `expected.json` is what 
 solved, grade, and the tags at confidence 80 and up. `tags` are asserted by the CI check (confidence >= 85, planets
 and the Moon >= 80); `borderline` (80-84) is informational; `scores` records each listed tag's confidence in that run.
 
+## Brief
+Five example frames with their settings (`astro-id.json`) and expected results (`expected.json`). The files are the test input for the CI `examples` job and the pictures in the README.
+
+Public surface:
+
+| Name | Kind | Use |
+|---|---|---|
+| `astro-id.json` | config | site, clock offset and tolerance for the set |
+| `expected.json` | data | what must be found, with confidences |
+| `annotated/` | folder | the labeled copies |
+
+## Tests
+- Covered by: `tests/check_examples.py` (CI job `examples`).
+- Run just these: see [Reproduce](#reproduce).
+- Gaps: needs ASTAP and the W08 database.
+
 ## Reproduce
 
 Install astro-id, ASTAP and the W08 star database first (see the main README), then from the repo root:
