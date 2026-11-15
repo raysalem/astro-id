@@ -1,0 +1,6 @@
+{
+  "clock_offset": "+2559d11h08m",
+  "time_tolerance_min": 15,
+  "timezone": "America/Los_Angeles",
+  "site": {"name": "Tierra del Sol", "lat": 32.6064, "lon": -116.3239, "elev_m": 1100}
+}

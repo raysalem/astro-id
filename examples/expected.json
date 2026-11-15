@@ -1,0 +1,95 @@
+{
+  "generated_by": "uv run astro-id solve examples/ --json --no-fallback --overlay-dir examples/annotated",
+  "astro_id_contract": 1,
+  "min_confidence": 80,
+  "note": "tags: taggable objects (default tag policy) at confidence >= 85, plus planets/Moon/Sun at >= 80 (a grade-C solve caps a planet near 82); assert these. borderline: other tags at 80-84, informational only, may move across the 80 line with a different ASTAP or catalog build.",
+  "files": {
+    "01-cassiopeia-perseus.jpg": {
+      "solved": true,
+      "grade": "A",
+      "tags": [
+        "auriga",
+        "camelopardalis",
+        "cassiopeia",
+        "cepheus",
+        "little dipper",
+        "m45 pleiades",
+        "ngc 869 h persei cluster",
+        "ngc 884 chi persei cluster",
+        "perseus",
+        "ursa minor",
+        "w of cassiopeia"
+      ],
+      "borderline": []
+    },
+    "02-milky-way-cepheus.jpg": {
+      "solved": true,
+      "grade": "A",
+      "tags": [
+        "camelopardalis",
+        "cassiopeia",
+        "cepheus",
+        "little dipper",
+        "m39",
+        "ngc 869 h persei cluster",
+        "ngc 884 chi persei cluster",
+        "triangulum",
+        "ursa minor",
+        "w of cassiopeia"
+      ],
+      "borderline": [
+        "lacerta",
+        "perseus"
+      ]
+    },
+    "03-taurus-perseus-uranus.jpg": {
+      "solved": true,
+      "grade": "A",
+      "tags": [
+        "aries",
+        "auriga",
+        "m45 pleiades",
+        "ngc 869 h persei cluster",
+        "ngc 884 chi persei cluster",
+        "perseus",
+        "triangulum",
+        "uranus"
+      ],
+      "borderline": [
+        "andromeda",
+        "cassiopeia",
+        "m37",
+        "w of cassiopeia"
+      ]
+    },
+    "04-orion-rising.jpg": {
+      "solved": true,
+      "grade": "A",
+      "tags": [
+        "auriga",
+        "m45 pleiades",
+        "ngc 1788",
+        "ngc 1980 lower sword",
+        "ngc 1981 upper sword",
+        "ngc 2239",
+        "ngc 2264 christmas tree cluster",
+        "orion",
+        "orion's belt",
+        "taurus",
+        "uranus"
+      ],
+      "borderline": [
+        "m37"
+      ]
+    },
+    "05-dawn-jupiter-mars.jpg": {
+      "solved": true,
+      "grade": "C",
+      "tags": [
+        "jupiter",
+        "mars"
+      ],
+      "borderline": []
+    }
+  }
+}
