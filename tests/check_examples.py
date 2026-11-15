@@ -28,6 +28,10 @@ def main(argv):
         print(f"SKIP: {exp_path} not found")
         return 0
     expected = json.loads(exp_path.read_text(encoding="utf-8"))
+    min_conf = MIN_CONF
+    if isinstance(expected.get("files"), dict):          # {"min_confidence": 80, "files": {name: {...}}}
+        min_conf = expected.get("min_confidence", MIN_CONF)
+        expected = expected["files"]
     results = json.loads(out_path.read_text(encoding="utf-8"))["results"]
     by_name = {Path(r["file"]).name: r for r in results}
     bad = []
@@ -42,9 +46,14 @@ def main(argv):
             continue
         conf = {o["tag"].lower(): o.get("confidence", 0) for o in r.get("objects", [])}
         for tag in _tags(spec):
-            if conf.get(tag, -1) < MIN_CONF:
-                bad.append(f"{name}: '{tag}' confidence {conf.get(tag, 'absent')} < {MIN_CONF}")
-        print(f"{name}: solved={r.get('solved')} objects={len(conf)}")
+            if conf.get(tag, -1) < min_conf:
+                bad.append(f"{name}: '{tag}' confidence {conf.get(tag, 'absent')} < {min_conf}")
+        if isinstance(spec, dict):                       # borderline tags are informational, never asserted
+            bl = {t: conf.get(t, "absent") for t in _tags(spec.get("borderline", []))}
+            if bl:
+                print(f"{name}: borderline (not asserted) {bl}")
+        print(f"{name}: solved={r.get('solved')} grade={(r.get('quality') or {}).get('grade')} "
+              f"objects={len(conf)} asserted={len(_tags(spec))}")
     for b in bad:
         print("FAIL", b)
     return 1 if bad else 0

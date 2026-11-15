@@ -90,7 +90,7 @@ jobs:
           uv sync --frozen
           uv run astro-id setup || true
           for i in 1 2; do
-            uv run astro-id solve examples/ --json > solve.json && break
+            uv run astro-id solve examples/ --json --no-fallback --overlay-dir "$RUNNER_TEMP/annotated" > solve.json && break
             echo "attempt $i failed, retrying"; sleep 10
           done
           uv run python tests/check_examples.py solve.json examples/expected.json
