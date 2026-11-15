@@ -8,7 +8,7 @@ Fixed before the engine and the plugin are built in parallel. Change it only wit
 astro-id solve <file-or-folder> [--min-confidence 65] [--offset +2559d11h08m]
                [--time ISO8601 [--timezone IANA]]
                [--time-tolerance 15m] [--site lat,lon[,elev_m]]
-               [--overlay-dir DIR] [--json] [--no-overlay] [--no-fallback]
+               [--overlay-dir DIR] [--json] [--no-overlay] [--no-fallback] [--no-results-file]
 astro-id site <folder>          # interactive: Google Maps pin -> astro-id.json
 ```
 
@@ -350,3 +350,60 @@ accepts only `{type: "context", v: 1, nonce}` from `window.parent` with that non
 only offers "Load the new photos", so a session in progress is never wiped. Panel -> host:
 `show_photos {paths}`, `open_photo {path}`, `refresh {paths}` (after GPS, solve writes and review tags), `close`;
 each carries `v: 1` and the nonce. No storage, cookies, popups, downloads, form submits or modal dialogs.
+
+## CLI gaps closed (2026-11-15, non-breaking; the contract number stays 1)
+
+### Results file
+
+`astro-id solve` writes `astro-id-results.json` beside `astro-id-report.csv` (in `<folder>-annotated`, or `--overlay-dir`; never next to the photos): `{"contract": 1, "results": [<frame>, ...]}`, exactly the document `--json` prints, one entry per frame. Like the CSV it is merged across runs: a run replaces only the entries of the files it solved and keeps the others (sorted by `file`). `--no-results-file` turns it off. The log line `results: <path>` follows `report: <path>`. `astro-id session` and the Facet sidecar / add-on call the engine in process and never write it (they get the same data as events); nothing new appears in their output folders.
+
+### Frame `warnings`
+
+Every frame result gains `warnings`: a list of strings (empty when there is nothing to say). Consumers must ignore unknown fields as before. Each distinct message is also logged once per run on stderr.
+
+- `no clock offset configured: ...`: `time_source` is `"exif"`, so the EXIF time is used as is and Sun, Moon and planets are capped at candidate.
+- `no site (position): ...`: see the next section.
+- `no EXIF DateTimeOriginal: ...`: the current clock time is used (see below).
+
+### Sun, Moon and planets: what happens without a trustworthy time or a site (verified in `identify.py`, `config.py`)
+
+- **No clock offset** (no `--offset`, no `clock_offset` in `astro-id.json`, no `--time`; `time_source` `"exif"`): Sun, Moon and planets are still identified, at the raw EXIF time, and their confidence is capped at 64, i.e. tier `candidate`. They stay in the JSON, the CSV and the labeled JPG; with the default `--min-confidence 65` they never become object tags. Any `clock_offset` key counts as configured, even a blank one ("the camera clock is right"), and then the cap is lifted. `--time` (`time_source` `"facet"`) also lifts it.
+- **No EXIF capture time and no `--time`**: the frame is solved and the same bodies are computed for the current clock time of the machine (not skipped, despite the old error text), with the candidate cap. Both a `warnings` entry and `error` say so.
+- **No site** (no `--site`, no `site` in `astro-id.json`, no per-photo position from Facet): the bodies are computed from the geocentre, so the Moon can be up to about 1 degree off, and no altitude or horizon check is made (a body below the horizon is not ruled out; the horizon margin counts as 1). The cap is NOT applied for a missing site. No default site is ever assumed: the Tierra del Sol coordinates exist only as the starting suggestion of `astro-id site` (pressing Enter at its first prompt and then answering y at Save? writes them into that folder's `astro-id.json`, so give the real coordinates).
+- The timezone is separate: with no site and no `timezone` it falls back to the system zone.
+
+### Exit codes (read from the code that returns them)
+
+Every subcommand also exits 2 when the command line itself cannot be parsed. The same table is printed in each command's `--help`.
+
+| Command | Exit | Meaning |
+|---|---|---|
+| `astro-id solve` | 0 | the run completed (frames that did not solve are in the report, not an error) |
+| `astro-id solve` | 2 | usage error: target not found, a bad flag value, or no images in the folder |
+| `astro-id site` | 0 | saved |
+| `astro-id site` | 1 | not saved (you answered no at the Save? prompt) |
+| `astro-id site` | 2 | the folder does not exist |
+| `astro-id setup` | 0 | reference data is ready and ASTAP was found |
+| `astro-id setup` | 3 | ASTAP was not found (set ASTAP_PATH) or a reference dataset is not ok |
+| `astro-id session` | 0 | the session ran (frames may have failed; see the events) |
+| `astro-id session` | 2 | a bad option or no photos (after an error event on stdout) |
+| `astro-id cull` | 0 | verdicts printed |
+| `astro-id cull` | 2 | bad metrics file or cull rule |
+| `astro-id facet sync` | 0 | the run completed |
+| `astro-id facet sync` | 2 | usage, login or connection error |
+| `astro-id facet status` | 0 | ledger printed |
+| `astro-id facet status` | 2 | usage, login or connection error |
+| `astro-id facet undo` | 0 | done (or dry run) |
+| `astro-id facet undo` | 2 | usage, login or connection error |
+| `astro-id facet adopt` | 0 | done (or dry run) |
+| `astro-id facet adopt` | 2 | usage, login or connection error |
+| `astro-id facet serve` | 0 | stopped normally (Ctrl+C, or Facet ended) |
+| `astro-id facet serve` | 2 | missing or bad environment / connection error |
+| `astro-id facet install` | 0 | manifest written |
+| `astro-id facet install` | 2 | Facet data folder not found, uv not found, or a bad --project |
+| `astro-id facet uninstall` | 0 | manifest removed (or there was none) |
+| `astro-id facet uninstall` | 2 | Facet data folder not found |
+
+### `facet install`
+
+The manifest carries the `network` key unless `--older-facet` is given. Whether a Facet accepts it cannot be known offline, so after a normal install the command prints one line on stderr: `If Facet refuses the add-on, run again with --older-facet`.
