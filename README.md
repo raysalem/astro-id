@@ -12,8 +12,8 @@ Works standalone from the command line, or as an add-on inside the [Facet](https
 </p>
 
 <p align="center">
-  <a href="docs/img/demo.mp4"><img src="docs/img/demo.gif" width="800" alt="Short animation: a plain night-sky photo fades into its labelled version, the view zooms in on one object label and its confidence score, then the astro-id panel inside Facet lists the objects it found."></a>
-  <br><sub>From a plain photo to named objects in a few seconds. Video not playing? <a href="docs/img/demo.mp4">Watch the demo</a>.</sub>
+  <a href="docs/img/demo.mp4"><img src="docs/img/demo.webp" width="800" alt="20-second animation: an astro-id title card; the plain photo of Orion rising over trees, which then gains its labels and constellation figures; a slow zoom onto the Pleiades (M45) label; a montage of the other example frames, ending on Jupiter and Mars in morning twilight; an end card."></a>
+  <br><sub>From a plain photo to named objects. Animation not playing? <a href="docs/img/demo.mp4">Watch the video (MP4)</a>.</sub>
 </p>
 
 <table>
@@ -40,8 +40,13 @@ uv sync
 uv run astro-id solve examples/
 ```
 
-The labelled copies and `astro-id-report.csv` appear in `examples-annotated/`. Run `uv run astro-id check` to verify
-your setup.
+The labelled copies, `astro-id-report.csv` and `astro-id-results.json` appear in `examples-annotated/`. Run
+`uv run astro-id check` to verify your setup ([requirements](docs/REQUIREMENTS.md)).
+
+**The simplest way** ([docs/SIMPLE.md](docs/SIMPLE.md)): on Windows drag a photo or a folder onto `astro-label.cmd`;
+on Linux/macOS run `./astro-label.sh photo.jpg`; or `uv run astro-id label <photo-or-folder>`. Each photo gets a
+labelled copy `<name>_astro.jpg` next to it; `--out sidecar` writes `<name>.astro.json` instead, `--out both` writes
+both, `--to <folder>` puts them elsewhere.
 
 **[Install](#install) · [Usage](#use-it-standalone) · [Confidence](#how-confidence-works) · [Facet add-on](#use-it-with-facet) · [Manual](docs/MANUAL.md)**
 
@@ -52,7 +57,7 @@ your setup.
 - **Draws the labels on the photo:** an annotated copy per photo plus a CSV report; originals are never changed.
 - **Fixes a wrong camera clock:** set the offset once per folder; the Moon, when in frame, pins the true time.
 - **Grades every frame:** focus, trailing and star count, with a keep / review / reject suggestion.
-- **Tags photos in Facet:** objects become searchable tags and live sky labels you can filter.
+- **Tags photos in Facet:** objects become searchable object tags, plus sky labels drawn on the photo.
 - **Works offline after setup;** solves JPG or RAW.
 
 ## Install
@@ -95,8 +100,8 @@ export ASTAP_DB=/usr/local/opt/astap
 
 For telephoto shots (field under about 20 degrees, e.g. 85-200 mm on full frame) also install the **D50** database.
 
-**3. Catalogs:** `uv run astro-id setup` downloads the reference data once (needs internet), then
-`uv run astro-id check` verifies the whole setup. How ASTAP is found:
+**3. Catalogs:** `uv run astro-id setup` downloads the reference data once (needs internet; it exits 3 when ASTAP or
+a dataset is missing), then `uv run astro-id check` verifies the whole setup. How ASTAP is found:
 [reference](docs/REFERENCE.md#astap-and-reference-data).
 
 ## Use it standalone
@@ -108,9 +113,12 @@ uv run astro-id site <folder>                        # pick the observing site o
 uv run astro-id solve <folder> --json > results.json # full results as JSON
 ```
 
-Labelled copies (`<name>_astro.jpg`) and `astro-id-report.csv` (one row per object) go to `<folder>-annotated/`.
-There is no separate results file per photo today; the full per-photo results come from `--json`
-([CONTRACT.md](CONTRACT.md)), and the CSV holds the same objects.
+Labelled copies (`<name>_astro.jpg`), `astro-id-report.csv` (one row per object) and `astro-id-results.json` (the
+full per-photo results, the same document `--json` prints) go to `<folder>-annotated/`; `--no-results-file` skips the
+JSON file. Runs from the Facet add-on do not write it. Formats and exit codes: [CONTRACT.md](CONTRACT.md).
+
+`astro-id site` suggests the folder's saved site, else the last site you saved on this machine; with neither it asks
+for coordinates (or a Google Maps link). No default site is ever assumed.
 
 Settings that belong to a folder (clock offset, time tolerance, timezone, site) go in an `astro-id.json` next to the
 photos; command-line flags override it. Every option: [All options](docs/REFERENCE.md#all-options).
@@ -130,9 +138,10 @@ uv run astro-id facet install --facet-data "$env:LOCALAPPDATA\Facet\data"   # Wi
 uv run astro-id facet install --facet-data /path/to/facet/data             # Linux / macOS
 ```
 
-Add `--older-facet` for an older Facet that refuses the manifest's `network` key. Turn on
+If Facet refuses the add-on, run the install again with `--older-facet` (for a Facet that does not know the
+manifest's `network` key); the install prints this hint too. Turn on
 `"addons": {"enabled": true}` in Facet's `scoring_config.json` and restart Facet. Then open the Astro panel on a
-folder or selection, confirm location and time, and solve: objects become tags and sky labels appear on each photo.
+folder or selection, confirm location and time, and solve: objects become object tags, and sky labels appear on each photo.
 A Facet without add-ons can use the separate web page `astro-id facet serve`
 ([Facet sidecar](docs/REFERENCE.md#facet-sidecar-astro-id-facet-)).
 
@@ -159,13 +168,15 @@ Full factor table: [Confidence scale](docs/REFERENCE.md#confidence-scale). Which
 
 - **It needs stars.** Cloud, bright twilight or a frame filled by the Moon will not solve; few stars give a grade C.
 - **Wide-angle shots need W08; telephoto shots need D50 too.**
-- **Time only matters for the planets, the Moon and the horizon.** Stars and deep-sky objects come from the stars
-  alone. Without a clock offset or a confirmed time, the Sun, Moon and planets are capped at *candidate* (64).
+- **Time and place only matter for the Sun, Moon and planets.** Stars and deep-sky objects come from the stars
+  alone. The bodies are always computed, but without a clock offset or a confirmed time they are capped at 64
+  (*candidate*), and without a site at 79 (*likely*; the Moon at 70). No default site is ever assumed.
 - The extreme corners of very wide or fisheye frames may stay unlabelled.
 
 ## Docs
 
-- [Manual](docs/MANUAL.md): a guided walk-through. [Requirements](docs/REQUIREMENTS.md): minimum versions.
+- [Simplest way](docs/SIMPLE.md): `astro-id label` in five lines. [Manual](docs/MANUAL.md): a guided walk-through.
+  [Requirements](docs/REQUIREMENTS.md): minimum versions and `astro-id check`. [Testing](docs/TESTING.md): the suites and CI.
 - [Reference](docs/REFERENCE.md): [all options](docs/REFERENCE.md#all-options), [astro-id.json](docs/REFERENCE.md#per-folder-settings-astro-idjson),
   [time and tolerance](docs/REFERENCE.md#time-and-tolerance), [how it solves](docs/REFERENCE.md#how-it-solves),
   [confidence](docs/REFERENCE.md#confidence-scale), [tags](docs/REFERENCE.md#tag-hierarchy-and-tag-policy),
@@ -193,7 +204,8 @@ Labelled copies carry Stellarium figures and OpenNGC names: credit them if you p
 
 ## Development and license
 
-Tests need no ASTAP or photos (reference data downloads on first run):
+Tests need no ASTAP or photos (reference data downloads on first run); CI and the example check:
+[docs/TESTING.md](docs/TESTING.md).
 
 ```sh
 uv run pytest -q
