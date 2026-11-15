@@ -1,66 +1,213 @@
 # astro-id
 
-Plate-solve night-sky photos and name what is in them: Messier and bright NGC/IC objects, IAU-named
-bright stars, asterisms, the 88 constellations, the Sun, Moon and planets. Every object gets a **0-100 confidence**
-and a tier, and each frame gets an annotated overlay JPG with constellation stick figures.
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/raysalem/astro-id/actions/workflows/ci.yml/badge.svg)](https://github.com/raysalem/astro-id/actions/workflows/ci.yml)
 
-Works for wide-field (14-35 mm) and narrow-field shots. Runs on its own, or as a sidecar next to the
-[Facet](https://github.com/ncoevoet/facet) photo library (`astro-id facet sync|serve`, over Facet's HTTP API).
+**Drop in a night-sky photo and astro-id tells you what is in it: constellations, planets, the Moon, bright
+stars and Messier/NGC objects, each with a 0-100 confidence score.**
 
-## Install
+![A wide-field night-sky photo labelled by astro-id: constellation stick figures, planets and named deep-sky objects](docs/img/hero.jpg)
 
-Requires Python 3.12 and [uv](https://docs.astral.sh/uv/).
+<!-- Screen recording of the panel inside Facet, to be added later:
+![astro-id panel inside Facet](docs/img/panel-demo.gif)
+-->
 
-```powershell
-git clone <this repo> astro-id
+## What it does
+
+- **Names what is in the frame** — constellations, the Sun, Moon and planets, IAU-named stars, asterisms and
+  Messier/NGC/IC objects, each with a 0-100 confidence score and a tier (high, likely, candidate).
+- **Fixes a wrong camera clock** — give it the offset once per folder; when the Moon is in the frame it also
+  works out the true capture time from where the Moon sits.
+- **Makes photos searchable in Facet** — the objects become tags (`orion`, `jupiter`, `m45 pleiades`) in the
+  [Facet](https://github.com/ncoevoet/facet) photo library.
+- **Draws sky labels live over the photo** — inside Facet the labels are an overlay you filter by confidence,
+  group and magnitude, without solving again.
+- **Exports labelled copies** — an annotated JPG per photo plus a CSV report; your originals are never changed.
+- **Works offline after setup** — the plate solver and catalogs live on your machine. Nothing is uploaded
+  unless you turn on the optional online fallback.
+
+It works standalone from the command line, or as an add-on panel inside Facet.
+
+## Quick start
+
+You need [Python 3.12+](https://www.python.org/downloads/) and [uv](https://docs.astral.sh/uv/getting-started/installation/).
+
+**1. Get astro-id**
+
+```sh
+git clone https://github.com/raysalem/astro-id.git
 cd astro-id
 uv sync
 ```
 
-### ASTAP (plate solver) and its star database
+**2. Install the ASTAP plate solver and its W08 star database.** [ASTAP](https://www.hnsky.org/astap.htm) is a
+free plate solver by Han Kleijn; astro-id calls it to find where in the sky a photo points. W08 is ASTAP's
+wide-field star database (fields of about 20 degrees and wider, i.e. wide-angle lenses). All files are on the
+[ASTAP download page](https://www.hnsky.org/astap.htm) and the
+[astap-program SourceForge project](https://sourceforge.net/projects/astap-program/files/).
 
-astro-id uses the [ASTAP](https://www.hnsky.org/astap.htm) command-line solver (MPL-2.0, by Han Kleijn).
+<details open>
+<summary><b>Windows</b> (per user, no admin rights)</summary>
 
-Windows, per user, no admin rights:
-
-1. Download the command-line solver `astap_command-line_version_win64.zip` from the ASTAP page
-   (SourceForge project `astap-program`, folder `windows_installer`) and unzip `astap_cli.exe` into
-   `%LOCALAPPDATA%\astap\`.
-2. Download the **W08** wide-field star database installer `w08_star_database_mag08_astap.exe`
-   (SourceForge `astap-program`, folder `star_databases`) and install it silently into the same folder:
+1. Download `astap_command-line_version_win64.zip` and unzip `astap_cli.exe` into `%LOCALAPPDATA%\astap\`.
+2. Download the W08 installer `w08_star_database_mag08_astap.exe` and install it into the same folder:
    ```powershell
    .\w08_star_database_mag08_astap.exe /VERYSILENT /SUPPRESSMSGBOXES /SP- /DIR="$env:LOCALAPPDATA\astap"
    ```
-   W08 covers fields of roughly 20 degrees and up (wide-angle lenses). For telephoto frames
-   (field under ~20 degrees, e.g. 85-200 mm on full frame) also install **D50** the same way.
-3. Check: `uv run astro-id setup` downloads the reference data and reports the ASTAP path and databases.
 
-astro-id finds ASTAP through the `ASTAP_PATH` environment variable (the exe or its folder), then
-`%LOCALAPPDATA%\astap`, `%ProgramFiles%\astap`, and `PATH`. The star database is taken from
-`ASTAP_DB` or the folder of the exe. Linux/macOS: install ASTAP from the same site and set `ASTAP_PATH`.
+astro-id looks for ASTAP in `ASTAP_PATH`, then `%LOCALAPPDATA%\astap`, `%ProgramFiles%\astap`, then `PATH`.
+</details>
 
-### Optional fallback: astrometry.net
+<details>
+<summary><b>Linux</b> (Debian/Ubuntu; ASTAP also offers .rpm, Arch and .tar.gz builds)</summary>
+
+1. Download `astap_amd64.deb` (or `astap_amd64_gtk3.deb`) and `w08_star_database_mag08_astap.deb`.
+2. Install both; they go to `/opt/astap`, where astro-id looks by default:
+   ```sh
+   sudo apt install ./astap_amd64.deb ./w08_star_database_mag08_astap.deb
+   ```
+</details>
+
+<details>
+<summary><b>macOS</b></summary>
+
+1. Download `astap.pkg` (Intel) or `astap_M1.pkg` (Apple silicon) and `w08_star_database_mag08_astap.pkg`.
+2. Right-click each `.pkg` and choose Install (on macOS 15.1 and later, allow it under System Settings, Privacy &
+   Security). The star database goes to `/usr/local/opt/astap/`. On Apple silicon, ASTAP asks you to sign it once:
+   ```sh
+   codesign --force -s - /Applications/ASTAP.app/Contents/MacOS/astap
+   ```
+3. Tell astro-id where both are:
+   ```sh
+   export ASTAP_PATH=/Applications/ASTAP.app/Contents/MacOS/astap
+   export ASTAP_DB=/usr/local/opt/astap
+   ```
+</details>
+
+For telephoto shots (fields under about 20 degrees, e.g. 85-200 mm on full frame) also install the **D50**
+database the same way.
+
+**3. Download the catalogs and check the setup** (once, needs internet):
+
+```sh
+uv run astro-id setup
+uv run astro-id check
+```
+
+**4. Solve the example photos**
+
+```sh
+uv run astro-id solve examples/
+```
+
+The terminal shows progress and how many objects each photo solved to. The labelled copies (`<name>_astro.jpg`)
+and `astro-id-report.csv`, one row per object with its confidence, land in `examples-annotated/`. Add `--json`
+for machine-readable output. Point it at your own photo or folder the same way.
+
+## Examples
+
+| | | |
+|---|---|---|
+| ![Example 1](docs/img/gallery-1.jpg) | ![Example 2](docs/img/gallery-2.jpg) | ![Example 3](docs/img/gallery-3.jpg) |
+| ![Example 4](docs/img/gallery-4.jpg) | ![Example 5](docs/img/gallery-5.jpg) | |
+
+The source photos are in [`examples/`](examples/).
+
+## Use it inside Facet
+
+[Facet](https://github.com/ncoevoet/facet) is a self-hosted photo library. **Add-on support is not in upstream
+Facet yet.** It lives on the [`wip/photo-page-layout`](https://github.com/raysalem/facet/tree/wip/photo-page-layout)
+branch of [raysalem/facet](https://github.com/raysalem/facet); use that build until it is merged upstream.
+
+Install the add-on once, pointing at Facet's data folder (the one that holds `scoring_config.json`):
+
+```sh
+uv run astro-id facet install --facet-data <facet data folder>
+```
+
+Then turn on `"addons": {"enabled": true}` in Facet's `scoring_config.json` and restart Facet; "Astro" appears on
+its Add-ons page. Open the Astro panel on a folder or a selection of photos, confirm the location and the time,
+and press solve: the objects become tags and the sky labels appear over each photo.
+
+With a Facet that has no add-on support, `astro-id facet serve` runs the same steps as a separate local web page
+over Facet's HTTP API. Details for both are under [Facet sidecar](#facet-sidecar-astro-id-facet-) and
+[Facet add-on](#facet-add-on-sidebar-inside-facet) below.
+
+## How confidence works
+
+astro-id first plate-solves the photo (matches its stars to a catalog), so it knows the sky position of every pixel.
+Each object's score multiplies how good that match is, how precisely its spot is pinned, whether it is bright enough
+to show in this frame, and how far it sits from the edge and the horizon.
+80+ is **high**, 65-79 **likely**, below 65 **candidate**; 65 is the default cut for reports and tags
+([details](#confidence-scale)).
+
+## Limits
+
+- **It needs stars.** Cloud, heavy light pollution, daylight or a frame filled by the Moon will not solve.
+- **Wide-angle shots need the W08 database**; telephoto shots need D50 as well.
+- **Time matters only for the planets, the Moon and the horizon.** Stars, constellations and deep-sky objects are
+  found from the stars alone. Without a clock offset, planets and the Moon are capped at *candidate*.
+- Wide fields are solved from a central crop and extended outward, so the extreme corners of very wide or
+  fisheye lenses may stay unlabelled.
+
+## Requirements
+
+| | Minimum |
+|---|---|
+| Python | 3.12 |
+| uv | any current release |
+| ASTAP | command-line solver plus the W08 star database (D50 for telephoto) |
+| Facet (optional) | a build with add-on support (see above) |
+
+Run `uv run astro-id check` to verify your setup. The full manual, with every option and the stated minimum
+ASTAP and Facet versions, is [docs/MANUAL.md](docs/MANUAL.md).
+
+Formats: [CONTRACT.md](CONTRACT.md) (JSON output, session events, Facet add-on wiring) and
+[ANNOTATIONS.md](ANNOTATIONS.md) (the overlay payload).
+
+## Data sources and credits
+
+astro-id stands on the work of others. **No catalog or third-party data file is stored in this repository.**
+The catalogs below are downloaded by `astro-id setup` (or on first use) into a per-user cache
+(`%LOCALAPPDATA%\astro-id\data` on Windows, `~/.cache/astro-id/data` elsewhere; override with `ASTRO_ID_DATA`).
+Each keeps its own license; full notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+| Source | What astro-id uses it for | By | License | How it gets to you |
+|---|---|---|---|---|
+| [ASTAP](https://www.hnsky.org/astap.htm) | plate solving | Han Kleijn | MPL-2.0 | you install it |
+| [ASTAP star databases](https://www.hnsky.org/astap.htm) (W08, D50) | ASTAP's reference stars | Han Kleijn | see the ASTAP site | you install them |
+| [Hipparcos Catalogue](https://www.cosmos.esa.int/web/hipparcos/catalogues) (CDS I/239) | star positions and magnitudes | ESA (1997), ESA SP-1200; served by [CDS VizieR](https://vizier.cds.unistra.fr/) | CC BY-NC 3.0 IGO, "Credit: ESA" | downloaded |
+| [JPL DE421](https://ssd.jpl.nasa.gov/planets/eph_export.html) ephemeris | Sun, Moon and planet positions | NASA JPL (Folkner et al. 2009) | no license stated; distributed freely by JPL | downloaded via Skyfield |
+| [OpenNGC](https://github.com/mattiaverga/OpenNGC) | Messier, NGC and IC objects | Mattia Verga | CC BY-SA 4.0 | downloaded |
+| [IAU Catalog of Star Names](https://www.iau.org/public/themes/naming_stars/) ([IAU-CSN.txt](https://www.pas.rochester.edu/~emamajek/WGSN/IAU-CSN.txt)) | star names | IAU Working Group on Star Names (WGSN) | CC BY (IAU) | downloaded |
+| [Stellarium](https://stellarium.org/) "modern" sky culture, `constellationship.fab` v23.4 | constellation stick figures | the Stellarium team | CC BY-SA 4.0 + Free Art License | downloaded |
+| [astrometry.net](https://nova.astrometry.net/) | optional online fallback solver (off unless you set an API key) | Lang, Hogg et al.; hosted by CANFAR / CADC | web service, their terms | online call |
+| [USGS Elevation Point Query Service](https://epqs.nationalmap.gov/) | site elevation (US) in `astro-id site` | U.S. Geological Survey | U.S. public domain, "Credit: U.S. Geological Survey" | online call |
+| [timezonefinder](https://github.com/jannikmi/timezonefinder) + data | time zone of the observing site | Jannik Kissinger; data from [timezone-boundary-builder](https://github.com/evansiroky/timezone-boundary-builder) | MIT (code), ODbL (data) | Python dependency |
+| [rawpy](https://github.com/letmaik/rawpy) / [LibRaw](https://www.libraw.org/) | decoding RAW files | Maik Riechert / LibRaw LLC | MIT / LGPL-2.1 or CDDL-1.0 | Python dependency |
+| [Skyfield](https://rhodesmill.org/skyfield/), [Astropy](https://www.astropy.org/), [NumPy](https://numpy.org/), [SciPy](https://scipy.org/), [Pillow](https://python-pillow.org/), [Requests](https://requests.readthedocs.io/), [MCP SDK](https://github.com/modelcontextprotocol/python-sdk), tzdata | astronomy, WCS, numerics, imaging, HTTP | their authors | MIT, BSD-3-Clause, MIT-CMU, Apache-2.0 | Python dependencies |
+
+The names of the 88 IAU constellations and the asterism definitions (lists of Hipparcos numbers, in
+`astro_id/tagpolicy.py`) are part of astro-id's own MIT-licensed code. Map links in the panel open Google Maps or
+Google Earth in your browser; astro-id does not fetch data from them.
+
+If you publish results made with astro-id, please credit ESA for Hipparcos, the IAU WGSN for star names,
+OpenNGC (Mattia Verga) for deep-sky objects and Stellarium for the constellation figures.
+
+---
+
+## Reference
+
+The sections below are the detailed reference. [docs/MANUAL.md](docs/MANUAL.md) is the user manual.
+
+#### Optional fallback: astrometry.net
 
 Only when ASTAP fails **and** the environment variable `ASTROMETRY_API_KEY` is set, a downscaled
 grayscale JPG is uploaded to nova.astrometry.net as a private submission
 (`publicly_visible: n`, `allow_commercial_use: n`). The key is read from the environment only and
 never written anywhere. `--no-fallback` disables it.
 
-### Reference data (downloaded on first run, not in this repo)
-
-Cached in `%LOCALAPPDATA%\astro-id\data` (override with `ASTRO_ID_DATA`).
-
-| Data | Source | License |
-|---|---|---|
-| Hipparcos main catalog (I/239) | CDS / VizieR (CfA mirror as fallback) | ESA, free for use with acknowledgement |
-| JPL DE421 ephemeris | via Skyfield loader | public domain (NASA/JPL) |
-| OpenNGC (NGC.csv, addendum.csv) | github.com/mattiaverga/OpenNGC | CC-BY-SA 4.0 |
-| IAU star names (WGSN, IAU-CSN.txt) | pas.rochester.edu/~emamajek/WGSN | IAU WGSN, cite the IAU |
-| Constellation lines (`constellationship.fab`, modern sky culture, v23.4) | Stellarium | GPL-2.0-or-later |
-
-None of these files are redistributed; the GPL and CC-BY-SA data stay outside the MIT-licensed code.
-
-## Usage
+### Command-line usage
 
 ```powershell
 uv run astro-id solve <file-or-folder> [--min-confidence 65] [--offset +2559d11h08m]
@@ -83,7 +230,7 @@ uv run astro-id setup             # download data, check ASTAP
 - `--json` prints one document `{"contract": 1, "results": [...]}` to stdout (see `CONTRACT.md`);
   logs go to stderr. Exit code is 0 when the run completed, even if some frames did not solve.
 
-### Per-folder settings: `astro-id.json`
+#### Per-folder settings: `astro-id.json`
 
 ```json
 {
@@ -103,7 +250,7 @@ The nearest `astro-id.json` walking up from each photo's folder applies; command
 the elevation from USGS EPQS (US only; you are asked otherwise), asks for a name, confirms, and
 writes/merges `astro-id.json` (keeping any clock offset, tolerance and timezone already there).
 
-### Time and tolerance
+#### Time and tolerance
 
 Camera clocks drift. Every time-dependent check (planet and Moon positions, above-horizon, horizon
 margin) is evaluated across `[t - tolerance, t + tolerance]` and the **worst case** is scored. When the
@@ -112,7 +259,7 @@ Moon is found in the frame its position pins the time (it moves ~0.5 deg per hou
 `astro-id.json` or `--offset`, EXIF time is used as-is (`time_source: "exif"`) and the Sun, Moon and
 planets are capped at *candidate*.
 
-## Annotations payload (for the Facet viewer)
+### Annotations payload (for the Facet viewer)
 
 Every solved frame result carries `annotations` (null when unsolved): the overlay as data, in the format fixed in
 `ANNOTATIONS.md`. All objects at all levels are in it (planets, Moon, Sun, Messier/NGC/IC, asterisms, constellations,
@@ -123,7 +270,7 @@ bends with the lens, clipped to the frame, in full-resolution pixels rounded to 
 the group item a star belongs to. The payload stays under 500 KB (lowest-confidence items are dropped first if not).
 The legend reads like `2026-11-07 21:57 PST +-15 min . ASTAP grade A . 2452 stars`.
 
-## Quality metrics and culling
+### Quality metrics and culling
 
 Every frame result carries `quality` (CONTRACT.md v1.1): detected and matched star counts, focus as the median
 half-flux diameter of isolated unsaturated stars (`fwhm_px`, full-resolution px; equals the FWHM for a sharp star
@@ -137,7 +284,7 @@ baseline (best-focus quartile, median star count). Defocused frames are `review`
 The rule is configurable: `{"enabled", "order": ["focus", "trailing", "stars", "solve"], "thresholds": {...}}`
 in `astro-id.json` `"cull"` or `--cull-rule`. Nothing writes a photo library's cull flags.
 
-## Astro session (`astro-id session`)
+### Astro session (`astro-id session`)
 
 The confirm-then-solve flow for a night's photos, as JSON lines on stdout (schema in CONTRACT.md v1.1):
 
@@ -154,7 +301,7 @@ verdicts and a suggested tighter tolerance when the Moon pinned the time. Per-ph
 (its GPS, a corrected capture time) are passed as `hints`; the session never reads a library itself. The same
 functions are importable (`astro_id.session`).
 
-## RAW as the solver input (`solve_source`)
+### RAW as the solver input (`solve_source`)
 
 `jpg` (default) solves the JPG. `raw` solves the same-stem RAW (linear demosaic, camera white balance, no
 auto-brightness, half size, channel mean), `auto` uses the RAW when a twin exists. Results always stay in the
@@ -165,7 +312,7 @@ camera crop) the JPG is solved instead and a warning is logged. A lone RAW is al
 DSC07625 (A7R IV, 14 mm): JPG 1889 matched stars, rms 0.34 px, grade A; RAW 481 stars, rms 0.34 px, grade A;
 same 77 objects (41 at >= 65), Jupiter within 0.2 px. RAW is slower (about 26 s vs 20 s) and not better here.
 
-## All options
+### All options
 
 One table for the engine and `astro-id.json`. Precedence: **command-line flag > nearest `astro-id.json` > default**.
 The Facet sidecar passes a photo's own GPS (`--site`) and a date corrected in Facet (`--time`), which override the
@@ -194,7 +341,7 @@ file's site and offset.
 | Cull rule | `--cull-rule` (session) | `cull` | built-in (CONTRACT.md) |
 | Quality metrics | `--no-quality` | - | on |
 
-## Facet sidecar (`astro-id facet ...`)
+### Facet sidecar (`astro-id facet ...`)
 
 astro-id runs beside Facet as its own process and uses only Facet's HTTP API, with its own credential. Nothing is
 installed into Facet and Facet's database is not opened (one temporary exception for annotations, below).
@@ -241,7 +388,7 @@ folder's astro-id.json), plate solve with live progress, then cull: per-frame qu
 reasons, an editable rule and re-cull without re-solving. Tagging review/reject frames `astro-review` is optional
 and off by default.
 
-## Facet add-on (sidebar inside Facet)
+### Facet add-on (sidebar inside Facet)
 
 With a Facet that supports add-ons (the add-on boundary spec, `PLUGIN_BOUNDARY.md` v0.2), the same session runs in a
 sidebar inside Facet. Facet starts and stops the astro-id process itself; you never run a command, set an env var
@@ -290,7 +437,7 @@ itself when Facet stops it or Facet exits. Details: `CONTRACT.md`, section "Face
 `astro-id facet serve` without `--addon` (the standalone page above) still works and is the way to use astro-id
 with a Facet that has no add-on support.
 
-## How it solves
+### How it solves
 
 1. The JPG is read at half size and converted to grayscale. Stars are detected at several smoothing
    scales (sharp stars and defocused discs both work).
@@ -303,7 +450,7 @@ with a Facet that has no add-on support.
 4. Grade: **A** = 100+ matched stars and RMS <= 1 px; **B** = 30+ stars and RMS <= 2 px; **C** otherwise
    (RMS in full-resolution pixels).
 
-## Confidence scale
+### Confidence scale
 
 `confidence = 100 x solve quality x position certainty x detectability x margin` (integer, capped at 100)
 
@@ -326,7 +473,7 @@ All objects are listed in the JSON and CSV whatever their tier; consumers apply 
 The overlay colors labels green (high), amber (likely) and gray (candidate); faint NGC/IC candidates
 are left off the picture to keep it readable.
 
-## Tag hierarchy and tag policy
+### Tag hierarchy and tag policy
 
 A 20 mm frame holds dozens of named stars; tagging all of them buries the interesting objects. Each
 object therefore carries a `level`, its `magnitude`, the constellation it lies in (`parent`), the group
@@ -353,7 +500,7 @@ that subsumes it (`member_of`) and a `taggable` flag computed from the tag polic
 
 Asterisms are defined in `astro_id/tagpolicy.py` as lists of Hipparcos ids, written for this project.
 
-## Stacking sequences
+### Stacking sequences
 
 Astro shooting comes in bursts. In a folder run, frames taken back to back (gap <= 120 s, same lens,
 focal length, exposure and size) form a sequence. The middle frame is plate-solved; every other frame is
@@ -364,10 +511,13 @@ diagonal it reuses the representative's objects, moved into its own pixel frame,
 `--stack-mode all` (or `"stack_mode": "all"` in `astro-id.json`) solves every frame; `--stack-gap`
 changes the 120 s window.
 
-## Development
 
-```powershell
+### Development
+
+```sh
 uv run pytest -q
+node --test tests/js/bridge.test.js
+node --test tests/js/panel.test.js
 ```
 
 Tests use synthetic frames rendered from Hipparcos through a known WCS (no ASTAP or photos needed,
@@ -375,4 +525,5 @@ but the reference data is downloaded on first run).
 
 ## License
 
-MIT, see `LICENSE`. Third-party data keeps its own license (table above).
+MIT, copyright (c) 2026 Ray Salem; see [LICENSE](LICENSE). Third-party data and tools keep their own licenses;
+see [Data sources and credits](#data-sources-and-credits) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

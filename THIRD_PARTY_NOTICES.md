@@ -1,0 +1,119 @@
+# Third-party notices
+
+astro-id is MIT-licensed (see [LICENSE](LICENSE)). It uses the data, tools and libraries below. **None of the data
+files or external tools are stored in this repository.** Catalogs are downloaded at first use (`astro-id setup`)
+into a per-user cache; ASTAP and its star databases are installed by you; Python libraries are installed by `uv sync`.
+Each item keeps its own license, and your use of it is governed by that license.
+
+Licenses were checked on each source's own page on 2026-11-15.
+
+## Data downloaded at first use
+
+### Hipparcos Catalogue (ESA 1997)
+
+- **Used for:** star positions, proper motions and magnitudes (`hip_main.dat`, CDS catalogue I/239).
+- **By:** European Space Agency. Reference: ESA, 1997, *The Hipparcos and Tycho Catalogues*, ESA SP-1200.
+- **Downloaded from:** CDS VizieR, https://cdsarc.cds.unistra.fr/ftp/cats/I/239/ (mirror:
+  https://vizier.cfa.harvard.edu/ftp/cats/I/239/).
+- **License:** Creative Commons Attribution-NonCommercial 3.0 IGO (CC BY-NC 3.0 IGO). Required credit: "Credit: ESA".
+  https://www.cosmos.esa.int/web/hipparcos/catalogues
+- **Note:** the non-commercial term applies to the catalogue itself. astro-id does not redistribute it; if you use
+  astro-id commercially, check ESA's terms for your use.
+- This research has made use of the VizieR catalogue access tool, CDS, Strasbourg, France.
+
+### JPL DE421 planetary and lunar ephemeris
+
+- **Used for:** positions of the Sun, Moon and planets (`de421.bsp`).
+- **By:** NASA Jet Propulsion Laboratory, Solar System Dynamics. Reference: Folkner, W. M., Williams, J. G.,
+  Boggs, D. H. (2009), *The Planetary and Lunar Ephemeris DE 421*, IPN Progress Report 42-178.
+- **Downloaded by:** the Skyfield loader, from JPL. https://ssd.jpl.nasa.gov/planets/eph_export.html
+- **License:** JPL states no license; the ephemerides are distributed freely by JPL.
+
+### OpenNGC
+
+- **Used for:** Messier, NGC and IC deep-sky objects (`NGC.csv`, `addendum.csv`).
+- **By:** Mattia Verga and contributors. https://github.com/mattiaverga/OpenNGC
+- **License:** Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0).
+  https://creativecommons.org/licenses/by-sa/4.0/
+- **Note:** downloaded, not redistributed. Anyone redistributing the OpenNGC files (or a database adapted from
+  them) must do so under CC BY-SA 4.0 with credit to OpenNGC.
+
+### IAU Catalog of Star Names (IAU-CSN)
+
+- **Used for:** proper names of bright stars (`IAU-CSN.txt`).
+- **By:** IAU Division C Working Group on Star Names (WGSN); file maintained by Eric Mamajek.
+  https://www.pas.rochester.edu/~emamajek/WGSN/IAU-CSN.txt
+- **License:** the file states that IAU-produced products are released under Creative Commons Attribution and may
+  be used as long as the source is mentioned; it asks users to cite the official IAU version at
+  https://www.iau.org/public/themes/naming_stars/
+
+### Stellarium "modern" sky culture: constellation lines
+
+- **Used for:** constellation stick figures (`constellationship.fab`, Stellarium v23.4).
+- **By:** the Stellarium team. https://stellarium.org/ ,
+  https://github.com/Stellarium/stellarium/tree/v23.4/skycultures/modern
+- **License:** "CC BY-SA 4.0 International Public License + Free Art License", as stated in that sky culture's
+  `info.ini`. (Stellarium's program code is GPL-2.0-or-later; the sky-culture data carries its own license.)
+- **Note:** downloaded, not redistributed. The overlay JPGs and annotation payloads astro-id draws contain the
+  figure lines projected onto your photo; if you publish them, credit Stellarium.
+
+## Tools you install
+
+### ASTAP, the Astrometric STAcking Program
+
+- **Used for:** plate solving (`astap_cli`), called as an external program.
+- **By:** Han Kleijn. https://www.hnsky.org/astap.htm , https://sourceforge.net/projects/astap-program/
+- **License:** Mozilla Public License 2.0 (MPL-2.0), as listed on the SourceForge project.
+
+### ASTAP star databases (W08, D50, ...)
+
+- **Used for:** the reference stars ASTAP matches against.
+- **By:** Han Kleijn, distributed with ASTAP. https://www.hnsky.org/astap.htm
+- **License:** not stated on the ASTAP download page; see the ASTAP site for their sources and terms.
+
+## Online services (only when used)
+
+### astrometry.net (optional fallback)
+
+- **Used for:** solving a frame ASTAP could not, only when `ASTROMETRY_API_KEY` is set and `--no-fallback` is not
+  given. A downscaled grayscale copy is uploaded as a private, non-commercial submission.
+- **By:** the Astrometry.net project (Dustin Lang, David W. Hogg et al.); nova.astrometry.net is hosted by the
+  Canadian Advanced Network for Astronomical Research (CANFAR), operated by the Canadian Astronomy Data Centre.
+  https://nova.astrometry.net/
+- **Terms:** the service's own terms apply. Reference: Lang, D., Hogg, D. W., Mierle, K., Blanton, M., Roweis, S.
+  (2010), *Astrometry.net: Blind astrometric calibration of arbitrary astronomical images*, AJ 139, 1782.
+
+### USGS Elevation Point Query Service
+
+- **Used for:** the elevation of an observing site in the United States (`astro-id site` and the panel's location step).
+- **By:** U.S. Geological Survey, The National Map. https://epqs.nationalmap.gov/
+- **License:** U.S. public domain. Credit: U.S. Geological Survey.
+  https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits
+
+### Google Maps and Google Earth
+
+The site picker and the panel open Google Maps or Google Earth in your browser so you can find a location. astro-id
+fetches no data from Google. Google's terms apply to your use of those sites.
+
+## Python libraries (installed by `uv sync`)
+
+| Package | License | Notes |
+|---|---|---|
+| [astropy](https://www.astropy.org/) | BSD-3-Clause | with pyerfa (BSD-3-Clause) |
+| [mcp](https://github.com/modelcontextprotocol/python-sdk) | MIT | |
+| [numpy](https://numpy.org/) | BSD-3-Clause (bundled parts 0BSD, MIT, Zlib, CC0-1.0) | |
+| [pillow](https://python-pillow.org/) | MIT-CMU | |
+| [rawpy](https://github.com/letmaik/rawpy) | MIT | its wheels bundle [LibRaw](https://www.libraw.org/), LGPL-2.1 or CDDL-1.0; rawpy ships LibRaw's license text |
+| [requests](https://requests.readthedocs.io/) | Apache-2.0 | |
+| [scipy](https://scipy.org/) | BSD-3-Clause | |
+| [skyfield](https://rhodesmill.org/skyfield/) | MIT | with jplephem and sgp4 (MIT), by Brandon Rhodes |
+| [timezonefinder](https://github.com/jannikmi/timezonefinder) | MIT | its data package `timezonefinder-data` is ODbL, from [timezone-boundary-builder](https://github.com/evansiroky/timezone-boundary-builder) (OpenStreetMap-derived) |
+| [tzdata](https://github.com/python/tzdata) | Apache-2.0 | IANA time zone database (public domain) |
+| [pytest](https://pytest.org/) (dev only) | MIT | |
+
+astro-id links these libraries at run time and does not modify or redistribute them.
+
+## Written for astro-id (MIT, part of this repository)
+
+- The names and abbreviations of the 88 IAU constellations (facts) in `astro_id/data.py`.
+- The asterism definitions (lists of Hipparcos numbers) in `astro_id/tagpolicy.py`.
