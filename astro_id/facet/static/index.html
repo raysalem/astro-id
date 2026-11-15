@@ -418,7 +418,7 @@ const NONCE = B.readNonce(location.search);
 const API = B.makeApi((u, o) => fetch(u, o), NONCE);
 // Must equal serve.py PAGE_VERSION. Facet reads this page from disk on every load but keeps the add-on process
 // running, so after an update the page can be newer than its server: the add-on then restarts itself (B.updatePlan).
-const PAGE_VERSION = "2026-11-15.2";
+const PAGE_VERSION = "2026-11-15.3";
 let serverStale = false;
 let updating = null;   // a Promise while Astro restarts itself on new code: every api() call waits for it
 async function api(path, body) {

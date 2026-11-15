@@ -67,7 +67,7 @@ EXPORT_KEYS = ("lines", "scores", "legend")   # Export's plain-language options 
 # an add-on process running while the page is read from disk on every load, so after an update the page can be newer
 # than its server. The panel then asks the server to restart itself on the new code (api/restart, keeper.py); only
 # a server too old for that gets the one-line "click Stop, then Open". Bump both together.
-PAGE_VERSION = "2026-11-15.2"
+PAGE_VERSION = "2026-11-15.3"
 PACKAGE = Path(__file__).resolve().parents[1]    # the astro_id package: its .py files are what a restart reloads
 UPDATING = "Astro is updating: try again in a moment"
 BUSY_WORDS = {"solve": "a plate solve is running: try again when it ends",
