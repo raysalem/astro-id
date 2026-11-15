@@ -1,4 +1,4 @@
-"""Command line: `astro-id solve|site|setup|session|cull` (contract v1.1, see CONTRACT.md) and `astro-id facet ...`."""
+"""Command line: `astro-id label|solve|site|setup|session|cull` (contract v1.1, see CONTRACT.md) and `astro-id facet ...`."""
 from __future__ import annotations
 
 import argparse
@@ -51,6 +51,9 @@ def build_parser() -> argparse.ArgumentParser:
     k.add_argument("--stack-gap", type=float, help="max seconds between frames of one sequence (default 120)")
     s.add_argument("-v", "--verbose", action="store_true")
     _add_session(sub)
+    from .label import add_parser as _add_label
+
+    _add_label(sub)
     from .facet.cli import add_parser as _add_facet
 
     _add_facet(sub)
@@ -74,6 +77,10 @@ def main(argv: list[str] | None = None) -> int:
         return run_site(Path(args.folder))
     if args.cmd == "setup":
         return cmd_setup()
+    if args.cmd == "label":
+        from .label import run as run_label
+
+        return run_label(args)
     if args.cmd == "session":
         return cmd_session(args)
     if args.cmd == "cull":
