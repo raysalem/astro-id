@@ -83,7 +83,8 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("-v", "--verbose", action="store_true")
     for name in ("check", "doctor"):
         c = sub.add_parser(name, help="check the minimum requirements (Python, uv, ASTAP + database, Facet); "
-                                      "exit 0 when all required ones pass")
+                                      "exit 0 when all required ones pass",
+                           formatter_class=argparse.RawDescriptionHelpFormatter, epilog=exit_epilog("check"))
         c.add_argument("--facet", metavar="URL", help="also check this Facet (set FACET_TOKEN for an add-on token)")
         c.add_argument("--offline", action="store_true", help="skip the internet check")
         c.add_argument("--json", action="store_true", help="machine-readable result")

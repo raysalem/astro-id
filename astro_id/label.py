@@ -27,8 +27,13 @@ TIME_NOTE = ("note: time and place only matter for planets and the Moon; stars, 
 
 
 def add_parser(sub) -> None:
+    import argparse
+
+    from .vocab import exit_epilog
+
     s = sub.add_parser("label", help="simplest way in: label a photo or folder (copy with names burned in, "
-                                     "and/or an annotations file)")
+                                     "and/or an annotations file)",
+                       formatter_class=argparse.RawDescriptionHelpFormatter, epilog=exit_epilog("label"))
     s.add_argument("target", help="photo or folder of photos")
     s.add_argument("--out", choices=OUT_CHOICES, default="labeled",
                    help="labeled (default): <name>_astro.jpg copy; sidecar: <name>.astro.json only; both")

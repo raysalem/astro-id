@@ -14,6 +14,9 @@ VOCAB = (
 EXIT_CODES: dict[str, dict[int, str]] = {
     "solve": {0: "the run completed (frames that did not solve are in the report, not an error)",
               2: "usage error: target not found, a bad flag value, or no images in the folder"},
+    "label": {0: "labeled (or every photo already had its output)", 1: "nothing labeled (no photo solved)",
+              2: "setup or usage problem: target not found, a bad option, no photos, or ASTAP not found"},
+    "check": {0: "all required checks passed", 1: "a required check failed (marked with x)"},
     "site": {0: "saved", 1: "not saved (you answered no at the Save? prompt)", 2: "the folder does not exist"},
     "setup": {0: "reference data is ready and ASTAP was found",
               3: "ASTAP was not found (set ASTAP_PATH) or a reference dataset is not ok"},

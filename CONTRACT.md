@@ -381,6 +381,11 @@ Every subcommand also exits 2 when the command line itself cannot be parsed. The
 |---|---|---|
 | `astro-id solve` | 0 | the run completed (frames that did not solve are in the report, not an error) |
 | `astro-id solve` | 2 | usage error: target not found, a bad flag value, or no images in the folder |
+| `astro-id label` | 0 | labeled (or every photo already had its output) |
+| `astro-id label` | 1 | nothing labeled (no photo solved) |
+| `astro-id label` | 2 | setup or usage problem: target not found, a bad option, no photos, or ASTAP not found |
+| `astro-id check` | 0 | all required checks passed |
+| `astro-id check` | 1 | a required check failed (marked with x) |
 | `astro-id site` | 0 | saved |
 | `astro-id site` | 1 | not saved (you answered no at the Save? prompt) |
 | `astro-id site` | 2 | the folder does not exist |
