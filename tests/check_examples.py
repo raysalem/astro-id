@@ -52,7 +52,7 @@ def main(argv):
             bl = {t: conf.get(t, "absent") for t in _tags(spec.get("borderline", []))}
             if bl:
                 print(f"{name}: borderline (not asserted) {bl}")
-        print(f"{name}: solved={r.get('solved')} grade={(r.get('quality') or {}).get('grade')} "
+        print(f"{name}: solved={r.get('solved')} grade={r.get('grade')} "
               f"objects={len(conf)} asserted={len(_tags(spec))}")
     for b in bad:
         print("FAIL", b)
