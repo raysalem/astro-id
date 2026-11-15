@@ -203,6 +203,65 @@ def test_unsaved_results_that_cannot_be_kept_block_the_restart(tmp_path):
     assert app.restart({}, {})["restart"] is True
 
 
+def _listing_stub(monkeypatch):
+    """App.listing without folder configs / ledger rows: the held photos and the extras, as the page gets them."""
+    def listing(self, photos, **extra):
+        self.photos = {p["path"]: p for p in photos}
+        return {"photos": [{"path": p["path"]} for p in photos], "folders": {}, **extra}
+    monkeypatch.setattr(SV.App, "listing", listing)
+
+
+def test_the_held_set_is_named_for_a_panel_opened_later(tmp_path, monkeypatch):
+    """B-P9: a panel opened (or reloaded) after a load must say "Loaded: <label>", so api/state names the set the
+    add-on holds and api/loaded hands it back without a new Facet query."""
+    _listing_stub(monkeypatch)
+    app = make_app(tmp_path)
+    album_photos = [{"path": P1}, {"path": "//nas/Photos/night/A2.JPG"}]
+    app.client.list_photos = lambda **kw: album_photos if kw.get("album_id") == 6 else []
+    assert app.state({}, {})["loaded"] is None
+    assert app.loaded_set({}, {}) == {"loaded": None}
+    body = {"album_id": 6, "loaded": {"key": "album:6", "label": "Album Astro test (fixed)",
+                                      "album": {"id": 6, "name": "Astro test (fixed)"}}}
+    app.list_photos({}, body)
+    assert app.state({}, {})["loaded"] == {"key": "album:6", "label": "Album Astro test (fixed)",
+                                           "album": {"id": 6, "name": "Astro test (fixed)"}, "count": 2}
+    app.client.list_photos = lambda **kw: pytest.fail("api/loaded must not query Facet again")
+    d = app.loaded_set({}, {})
+    assert [p["path"] for p in d["photos"]] == [P1, "//nas/Photos/night/A2.JPG"]
+    assert d["loaded"]["via"] == "photos" and d["loaded"]["body"] == {"album_id": 6}   # how Reload loads it again
+    assert "album_config" in d
+    # an older page sends no `loaded`: nothing is claimed (the page then shows "Nothing loaded yet." as before)
+    app.client.list_photos = lambda **kw: album_photos
+    app.list_photos({}, {"album_id": 6})
+    assert app.state({}, {})["loaded"] is None
+
+
+def test_loaded_meta_is_validated():
+    assert SV.loaded_meta({}, "photos") is None
+    assert SV.loaded_meta({"loaded": {"key": "", "label": "x"}}, "photos") is None
+    assert SV.loaded_meta({"loaded": {"key": "k", "label": 5}}, "photos") is None
+    m = SV.loaded_meta({"kind": "import", "run_id": "7", "loaded": {"key": "import:7", "label": "Import #7",
+                                                                  "album": {"id": True}}}, "scope")
+    assert m == {"key": "import:7", "label": "Import #7", "album": None, "via": "scope",
+                 "body": {"kind": "import", "run_id": "7"}}
+
+
+def test_the_held_set_and_its_name_survive_the_restart(tmp_path, monkeypatch):
+    """B-P9: after a self-update the new worker still names the set, so the reloaded panel says "Loaded: ..."."""
+    _listing_stub(monkeypatch)
+    app = make_app(tmp_path)
+    app.client.list_photos = lambda **kw: [{"path": P1}]
+    app.list_photos({}, {"path_prefix": "//nas/Photos/night/", "loaded": {"key": "folder://nas/Photos/night/",
+                                                                         "label": "Folder night", "album": None}})
+    assert app.restart({}, {})["restart"] is True
+    nxt = SV.App(_Client(), _Ledger(), _Ctx(), None, addon_id="astro-id")
+    nxt.update = SV.SelfUpdate(True, tmp_path / "handoff.json")
+    assert nxt.load_handoff() is True
+    assert nxt.state({}, {})["loaded"] == {"key": "folder://nas/Photos/night/", "label": "Folder night",
+                                           "album": None, "count": 1}
+    assert [p["path"] for p in nxt.loaded_set({}, {})["photos"]] == [P1]
+
+
 def test_a_broken_handoff_file_is_reported_not_silent(tmp_path):
     (tmp_path / "handoff.json").write_text("{not json", encoding="utf-8")
     app = SV.App(_Client(), _Ledger(), _Ctx(), None)

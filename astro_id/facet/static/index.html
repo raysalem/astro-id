@@ -208,7 +208,7 @@
 <main>
 
 <div class="loadbar" id="loadbar">
-  <div id="stLoaded" class="loadedline"><b id="stLoadedText">Nothing loaded yet.</b>
+  <div id="stLoaded" class="loadedline"><b id="stLoadedText">Checking what is loaded…</b>
     <button id="reload" class="link small" hidden>Reload</button></div>
   <div id="stShowing" class="showing" hidden>Facet is showing: <b id="stShowingText"></b></div>
   <button id="loadFacet" class="big" hidden></button>
@@ -224,7 +224,7 @@
 </div>
 
 <div class="loaded" id="loaded" hidden>
-  <div class="row"><span id="loadedName" class="muted small"></span> <span id="autosaved" class="muted small"></span></div>
+  <div class="row"><b id="loadedName" class="small"></b> <span id="autosaved" class="muted small"></span></div>
   <div id="folderinfo" class="small"></div>
   <details class="sub" id="photosBox"><summary id="photosSum">Photos</summary>
     <div class="row"><span>Solve from:</span>
@@ -387,7 +387,7 @@ const NONCE = B.readNonce(location.search);
 const API = B.makeApi((u, o) => fetch(u, o), NONCE);
 // Must equal serve.py PAGE_VERSION. Facet reads this page from disk on every load but keeps the add-on process
 // running, so after an update the page can be newer than its server: the add-on then restarts itself (B.updatePlan).
-const PAGE_VERSION = "2026-11-14.2";
+const PAGE_VERSION = "2026-11-15.1";
 let serverStale = false;
 let updating = null;   // a Promise while Astro restarts itself on new code: every api() call waits for it
 async function api(path, body) {
@@ -541,10 +541,25 @@ async function init() {
   $("rtname").textContent = state.review_tag;
   rule = JSON.parse(JSON.stringify(state.default_rule));
   drawRule(); drawExport();
+  await restoreLoaded();   // before the first status line: a set the add-on holds is "Loaded", not "Nothing loaded"
   initDone = true;
   fillAlbums().then(() => { if (lastCtx) drawFacetTarget(lastCtx); });
   drawStatus();
   if (lastCtx) onContext(lastCtx);
+}
+
+/* A panel opened, reloaded or restarted while the add-on already holds a set (loaded earlier, or kept through a
+   self-update): take that set over as if just loaded, so the top line says "Loaded: <label> · N photos" (B-P9). */
+async function restoreLoaded() {
+  if (!state.loaded) return;
+  let d;
+  try { d = await api("api/loaded"); } catch (e) { return; }
+  const r = B.restoredLoad(d && d.loaded);
+  if (!r || !Array.isArray(d.photos)) return;
+  loadedKey = r.loadedKey; loadedLabel = r.loadedLabel; loadedAlbum = r.loadedAlbum;
+  lastManual = r.lastManual; scopeReq = r.scopeReq;
+  if (r.lastAlbumId != null) lastAlbumId = r.lastAlbumId;
+  loaded(d);
 }
 
 function onContext(ctx) {
@@ -661,7 +676,7 @@ async function loadScope(req) {
   loadedKey = B.scopeKey(req);          // set now, so a context sent while loading is not "a change"
   $("loadinfo").textContent = "loading..."; loadingNow = true; drawStatus();
   try {
-    const d = await api("api/scope", req);
+    const d = await api("api/scope", Object.assign({}, req, {loaded: {key: B.scopeKey(req), label: scopeLabel(req), album: null}}));
     loadedKey = B.scopeKey(req); loadedLabel = scopeLabel(req);
     loaded(d);
   } catch (e) { loadedKey = ""; $("loadinfo").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
@@ -674,7 +689,7 @@ async function manualLoad(body, label, album, key) {
   lastManual = [body, label, album, key]; scopeReq = null;
   $("loadinfo").textContent = "loading..."; loadingNow = true; drawStatus();
   try {
-    const d = await api("api/photos", body);
+    const d = await api("api/photos", Object.assign({}, body, {loaded: {key: key, label: label, album: album}}));
     loadedKey = key; loadedAlbum = album; loadedLabel = label;
     loaded(d);
   } catch (e) { $("loadinfo").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
@@ -724,7 +739,7 @@ function loaded(d) {
   review = []; toSave = new Set(); timeFit = null; drawAuto(); drawResults(); drawExport();
   $("loadinfo").textContent = "";
   $("loaded").hidden = false;
-  $("loadedName").textContent = `About the loaded set (${loadedLabel}):`;
+  $("loadedName").textContent = `About the loaded set: ${loadedLabel} · ${plural(photos.length, "photo")}`;
   if (!photos.length) {
     $("loadinfo").innerHTML = `<span class="warn">Facet has no photos there. A new folder must be imported (scanned) in Facet first, then loaded here.</span>`;
     openOnly(0); return;

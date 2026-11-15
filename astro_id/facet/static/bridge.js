@@ -171,6 +171,22 @@
     return target.key === loadedKey ? "current" : "other";
   }
 
+  /* The set the add-on already holds (api/loaded .loaded: key, label, album, via "photos"|"scope", body), as the
+   * page's own load variables, so a panel opened, reloaded or restarted later starts at "Loaded: <label>" (B-P9).
+   * lastAlbumId: a held album is also "the album viewed last", so a photo of it opened next is that album. Null when
+   * nothing usable is held. */
+  function restoredLoad(meta) {
+    if (!meta || typeof meta !== "object" || typeof meta.key !== "string" || !meta.key) return null;
+    const label = typeof meta.label === "string" ? meta.label : "";
+    const a = meta.album && /^\d+$/.test(String(meta.album.id)) ? {id: Number(meta.album.id), name: String(meta.album.name || "")} : null;
+    const body = meta.body && typeof meta.body === "object" ? meta.body : {};
+    const out = {loadedKey: meta.key, loadedLabel: label, loadedAlbum: a, lastManual: null, scopeReq: null,
+                 lastAlbumId: a ? a.id : null};
+    if (meta.via === "scope") out.scopeReq = body;
+    else out.lastManual = [body, label, a, meta.key];
+    return out;
+  }
+
   /* annotation_view (PLUGIN_BOUNDARY.md §6c): how Facet draws this add-on's sky labels. Only the contract's keys,
    * with the right types, go out; `visible` defaults to false (labels start hidden). */
   const KEY_RE = /^[A-Za-z0-9_.-]{1,40}$/;
@@ -399,7 +415,7 @@
   return {V: V, MAP_SITES: MAP_SITES, readNonce: readNonce, constEq: constEq, sanitizeContext: sanitizeContext,
           scopeRequest: scopeRequest, scopeKey: scopeKey, createBridge: createBridge, makeApi: makeApi,
           sanitizeView: sanitizeView, compareVersions: compareVersions, makePoller: makePoller, STALE: STALE, folderOfPath: folderOfPath, facetTarget: facetTarget, albumOf: albumOf,
-          nextLastAlbum: nextLastAlbum, loadState: loadState, updatePlan: updatePlan, restartRefused: restartRefused,
+          nextLastAlbum: nextLastAlbum, loadState: loadState, restoredLoad: restoredLoad, updatePlan: updatePlan, restartRefused: restartRefused,
           waitForBoot: waitForBoot, reloadUrl: reloadUrl, UPDATE_NOTE: UPDATE_NOTE, UPDATE_MANUAL: UPDATE_MANUAL,
           UPDATE_REOPEN: UPDATE_REOPEN, UPDATE_WAIT: UPDATE_WAIT};
 });

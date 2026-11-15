@@ -66,7 +66,7 @@ EXPORT_KEYS = ("lines", "scores", "legend")   # Export's plain-language options 
 # an add-on process running while the page is read from disk on every load, so after an update the page can be newer
 # than its server. The panel then asks the server to restart itself on the new code (api/restart, keeper.py); only
 # a server too old for that gets the one-line "click Stop, then Open". Bump both together.
-PAGE_VERSION = "2026-11-14.2"
+PAGE_VERSION = "2026-11-15.1"
 PACKAGE = Path(__file__).resolve().parents[1]    # the astro_id package: its .py files are what a restart reloads
 UPDATING = "Astro is updating: try again in a moment"
 
@@ -110,6 +110,26 @@ def restart_decision(supported: bool, code_changed: bool, busy: str | None, forc
     if not (code_changed or force):
         return {"restart": False, "reason": "current"}
     return {"restart": True}
+
+
+def loaded_meta(body: dict, via: str) -> dict | None:
+    """What a load is, as the panel names it (its ``loaded`` field: key, label, album) plus how to load it again
+    (``via`` = "photos" | "scope" and the request body). Kept with the photo set, so a panel opened, reloaded or
+    restarted later can say "Loaded: <label>" for the set this add-on still holds (B-P9). None when the page sent
+    no valid ``loaded`` (an older page)."""
+    m = body.get("loaded") if isinstance(body, dict) else None
+    if not isinstance(m, dict):
+        return None
+    key, label = m.get("key"), m.get("label")
+    if not (isinstance(key, str) and key and len(key) <= 200_000 and isinstance(label, str) and len(label) <= 300):
+        return None
+    album = m.get("album")
+    if isinstance(album, dict) and str(album.get("id", "")).isdigit() and not isinstance(album.get("id"), bool):
+        album = {"id": int(album["id"]), "name": str(album.get("name") or "")[:300]}
+    else:
+        album = None
+    return {"key": key, "label": label, "album": album, "via": via,
+            "body": {k: v for k, v in body.items() if k != "loaded"}}
 
 
 def _plain(o):
@@ -331,6 +351,7 @@ class App:
         self.notes: list[str] = []          # start-up notes shown in the page (credential mode etc.)
         self.job = Job()
         self.photos: dict[str, dict] = {}   # last listing, by Facet path
+        self.loaded: dict | None = None     # what that listing is (loaded_meta), for a panel opened later
         self.elevation = _elevation         # (lat, lon) -> metres or None; replaced in tests
         self.export_job: dict = {}          # the last Export run (progress for the panel)
         self._export_lock = threading.Lock()  # one export at a time: the check and the start are one step
@@ -413,6 +434,8 @@ class App:
                 "names_as": "searchable" if self.ctx.model_d else "tags",
                 "transport": getattr(self.client, "mode", "api"), "last_site": self.last_site(),
                 "sky_vocab": self.sky_vocab(), "page_version": PAGE_VERSION,
+                # the set this add-on holds (B-P9): a panel opened now starts with "Loaded: <label> · N photos"
+                "loaded": self.loaded_summary(),
                 # self-update (keeper.py): the panel restarts an add-on whose code on disk changed
                 "update": {"supported": self.update.supported, "boot": self.update.boot,
                            "code_changed": self.update.supported and self.update.code_changed(),
@@ -459,7 +482,7 @@ class App:
             return
         job = self.job
         with job.lock:
-            doc = {"page_version": PAGE_VERSION, "photos": self.photos, "mount": self.mount,
+            doc = {"page_version": PAGE_VERSION, "photos": self.photos, "loaded": self.loaded, "mount": self.mount,
                    "job": {"events": job.events, "done": job.done, "reports": job.reports, "results": job.results,
                            "error": job.error, "saved": job.saved, "saved_paths": sorted(job.saved_paths),
                            "min_confidence": job.min_confidence},
@@ -488,6 +511,8 @@ class App:
             job.min_confidence = int(j.get("min_confidence") or 65)
             self.job = job
             self.photos = dict(doc.get("photos") or {})
+            ld = doc.get("loaded")
+            self.loaded = ld if isinstance(ld, dict) and isinstance(ld.get("key"), str) and self.photos else None
             self.export_job = dict(doc.get("export_job") or {})
             if doc.get("mount"):
                 self.mount = doc["mount"]
@@ -528,7 +553,29 @@ class App:
         extra = {}
         if b.get("album_id") not in (None, ""):
             extra["album_config"] = self.album_config(b["album_id"])
-        return self.listing(photos, scope={"kind": "manual"}, **extra)
+        out = self.listing(photos, scope={"kind": "manual"}, **extra)
+        self.loaded = loaded_meta(b, "photos")
+        return out
+
+    def loaded_summary(self) -> dict | None:
+        """``api/state.loaded``: the held set's key, label, album and photo count, or None."""
+        if not self.loaded:
+            return None
+        return {"key": self.loaded["key"], "label": self.loaded["label"], "album": self.loaded.get("album"),
+                "count": len(self.photos)}
+
+    def loaded_set(self, _q, _b):
+        """``GET api/loaded``: the set this add-on holds, as api/photos returned it (rows from the held photos, no
+        new Facet query, so a set restored after a restart is the same set), plus ``loaded`` (how to name it and
+        load it again). ``{"loaded": None}`` when nothing is held."""
+        if not self.loaded:
+            return {"loaded": None}
+        extra = {}
+        album = self.loaded.get("album")
+        if album:
+            extra["album_config"] = self.album_config(album["id"])
+        out = self.listing(list(self.photos.values()), scope={"kind": "restored"}, **extra)
+        return {**out, "loaded": self.loaded}
 
     # ------------------------------------------------------ album setup store ---
     @staticmethod
@@ -555,7 +602,12 @@ class App:
         self.ledger.set_meta(self.ctx.library, self._album_key(album_id), json.dumps(new, sort_keys=True))
         return True
 
-    def scope(self, _q, b):
+    def scope(self, q, b):
+        out = self._scope(q, b)
+        self.loaded = loaded_meta(b, "scope")
+        return out
+
+    def _scope(self, _q, b):
         """The step-1 photo set from the Facet scope the sidebar was opened with (bridge ``context.scope``):
         ``import`` -> ``GET /api/photos?scan_run=<run_id>`` (+ the page's category filter); ``view`` -> the
         gallery query; ``selection`` -> those paths (<= 500)."""
@@ -1007,7 +1059,7 @@ class App:
               ("POST", "api/review-tags"): "review_tags", ("POST", "api/save"): "save",
               ("GET", "api/annotations"): "annotations", ("POST", "api/count"): "count",
               ("POST", "api/export"): "export", ("GET", "api/export"): "export_state",
-              ("POST", "api/restart"): "restart"}
+              ("POST", "api/restart"): "restart", ("GET", "api/loaded"): "loaded_set"}
     BINARY = {("GET", "api/thumb"): "thumb"}
 
 
