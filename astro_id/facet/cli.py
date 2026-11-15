@@ -1,9 +1,12 @@
 """``astro-id facet sync | serve | status | undo | install | uninstall``: the Facet sidecar and add-on commands."""
 from __future__ import annotations
 
+import argparse
 import json
 import logging
 import sys
+
+from ..vocab import VOCAB, exit_epilog
 
 log = logging.getLogger("astro_id.facet")
 
@@ -21,20 +24,24 @@ def _legacy(p) -> None:
                    help="TEMPORARY: write annotations straight into this Facet database when the server has no "
                         "PUT /api/photo/annotations (needs --facet-dir / $FACET_DIR for db/annotations.py)")
     p.add_argument("--facet-dir", help="Facet checkout holding db/annotations.py (only with --legacy-db)")
-    p.add_argument("--no-annotations", action="store_true", help="write tags only")
+    p.add_argument("--no-annotations", action="store_true",
+                   help="write object tags and status tags only, no sky labels (annotations)")
 
 
 def add_parser(sub) -> None:
-    f = sub.add_parser("facet", help="Facet sidecar: solve the library's astro photos over Facet's HTTP API")
+    f = sub.add_parser("facet", help="Facet sidecar: solve the library's astro photos over Facet's HTTP API",
+                       formatter_class=argparse.RawDescriptionHelpFormatter, epilog=VOCAB)
     fs = f.add_subparsers(dest="facet_cmd", required=True)
 
-    s = fs.add_parser("sync", help="solve astro photos Facet holds and write tags + annotations back")
+    s = fs.add_parser("sync", help="solve astro photos Facet holds and write object tags, status tags and sky "
+                                   "labels back", formatter_class=argparse.RawDescriptionHelpFormatter,
+                      epilog=VOCAB + "\n\n" + exit_epilog("facet sync"))
     _common(s)
     _legacy(s)
     g = s.add_argument_group("which photos")
     g.add_argument("--path-prefix", help="only photos under this Facet path")
     g.add_argument("--category", default="astro", help="Facet category filter (default astro; '' = any)")
-    g.add_argument("--tag", help="only photos carrying this tag")
+    g.add_argument("--tag", help="only photos carrying this Facet tag")
     g.add_argument("--album", help="only photos in this album id")
     g.add_argument("--since", help="only photos captured on/after YYYY-MM-DD (Facet capture date), or 'last' = "
                                    "the newest capture date the previous sync saw")
@@ -49,8 +56,8 @@ def add_parser(sub) -> None:
     e.add_argument("--tz")
     e.add_argument("--source", choices=["jpg", "raw", "auto"])
     e.add_argument("--site", help="lat,lon[,elev] for photos without a position in Facet or astro-id.json")
-    e.add_argument("--overlay-dir")
-    e.add_argument("--no-overlay", action="store_true")
+    e.add_argument("--overlay-dir", help="where labeled JPGs (sky labels) go; the sync itself writes to Facet")
+    e.add_argument("--no-overlay", action="store_true", help="no labeled JPGs")
     e.add_argument("--no-fallback", action="store_true")
     e.add_argument("--stack-mode", choices=["representative", "all"])
     e.add_argument("--engine-flag", action="append", default=[], metavar="FLAG",
@@ -59,7 +66,8 @@ def add_parser(sub) -> None:
     s.add_argument("--json", action="store_true", help="JSON lines on stdout (session events + written reports)")
 
     v = fs.add_parser("serve", help="local web UI for an astro session (127.0.0.1, secret URL), or with --addon "
-                                    "the Facet add-on process Facet starts itself")
+                                    "the Facet add-on process Facet starts itself", formatter_class=argparse.RawDescriptionHelpFormatter,
+                      epilog=exit_epilog("facet serve"))
     _common(v)
     _legacy(v)
     v.add_argument("--port", type=int, default=0, help="port (default: a free one)")
@@ -69,7 +77,8 @@ def add_parser(sub) -> None:
                         "FACET_ADDON_ID, FACET_LAUNCH_SECRET; prints FACET_ADDON_PORT=<n>; UI under /ui/")
 
     i = fs.add_parser("install", help="write <facet data>/addons/astro-id/addon.json (the Facet add-on manifest) "
-                                      "and nothing else")
+                                      "and nothing else", formatter_class=argparse.RawDescriptionHelpFormatter,
+                      epilog="If Facet refuses the add-on, run again with --older-facet.\n\n" + exit_epilog("facet install"))
     i.add_argument("--facet-data", required=True, help="Facet's data folder (holds scoring_config.json)")
     i.add_argument("--uv", help="uv executable for the manifest (default $UV, else uv on PATH)")
     i.add_argument("--project", help="astro-id checkout for `uv run --project` (default: this one)")
@@ -77,21 +86,28 @@ def add_parser(sub) -> None:
                    help="leave out the manifest's `network` key (a Facet before the model D add-on contract refuses "
                         "keys it does not know)")
     i.add_argument("-v", "--verbose", action="store_true")
-    r = fs.add_parser("uninstall", help="delete <facet data>/addons/astro-id/addon.json")
+    r = fs.add_parser("uninstall", help="delete <facet data>/addons/astro-id/addon.json", formatter_class=argparse.RawDescriptionHelpFormatter,
+                      epilog=exit_epilog("facet uninstall"))
     r.add_argument("--facet-data", required=True, help="Facet's data folder")
     r.add_argument("-v", "--verbose", action="store_true")
 
-    a = fs.add_parser("adopt", help="TEMPORARY one-time migration: put the tags/annotations the removed in-process "
-                                    "plugin wrote (created_by='astro-id') into the ledger; reads the DB read-only")
+    a = fs.add_parser("adopt", help="TEMPORARY one-time migration: put the object tags, status tags and sky labels "
+                                    "the removed in-process plugin wrote (created_by='astro-id') into the ledger; "
+                                    "reads the DB read-only", formatter_class=argparse.RawDescriptionHelpFormatter,
+                      epilog=exit_epilog("facet adopt"))
     _common(a)
     a.add_argument("--legacy-db", metavar="PATH", required=True, help="the Facet database (opened read-only)")
     a.add_argument("--path-prefix", help="only photos under this path")
     a.add_argument("--dry-run", action="store_true")
 
-    t = fs.add_parser("status", help="what the ledger holds for a Facet library")
+    t = fs.add_parser("status", help="what the ledger holds for a Facet library (the object tags, status tags and "
+                                     "sky labels astro-id wrote)", formatter_class=argparse.RawDescriptionHelpFormatter,
+                      epilog=exit_epilog("facet status"))
     _common(t)
 
-    u = fs.add_parser("undo", help="remove astro-id's tags (and annotations) that the ledger records")
+    u = fs.add_parser("undo", help="remove the object tags and status tags (and sky labels) that the ledger "
+                                   "records astro-id wrote; tags anyone else added are never touched", formatter_class=argparse.RawDescriptionHelpFormatter,
+                      epilog=VOCAB + "\n\n" + exit_epilog("facet undo"))
     _common(u)
     _legacy(u)
     u.add_argument("--path-prefix", help="only ledger photos under this path")

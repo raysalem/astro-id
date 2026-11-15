@@ -131,6 +131,7 @@
    },
    "solve_source": "jpg",
    "best_fit_delta_min": null,
+   "warnings": [],
    "quality": {
     "version": 1,
     "detected": 2400,
@@ -215,6 +216,7 @@
    "annotations": null,
    "solve_source": "jpg",
    "best_fit_delta_min": null,
+   "warnings": [],
    "quality": {
     "version": 1,
     "detected": 2401,
@@ -253,6 +255,7 @@
    "annotations": null,
    "solve_source": null,
    "best_fit_delta_min": null,
+   "warnings": [],
    "quality": null
   }
  ]

@@ -8,14 +8,26 @@ import os
 import sys
 from pathlib import Path
 
+from .vocab import ARGPARSE_EXIT, VOCAB, exit_epilog
+
 CONTRACT_VERSION = 1
 log = logging.getLogger("astro_id")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="astro-id", description="Plate-solve night-sky photos and name the objects in them.")
+    p = argparse.ArgumentParser(prog="astro-id", formatter_class=argparse.RawDescriptionHelpFormatter,
+                                description="Plate-solve night-sky photos and name the objects in them.",
+                                epilog=VOCAB + "\n\n" + ARGPARSE_EXIT + " Per-command codes: astro-id <command> --help.")
     sub = p.add_subparsers(dest="cmd", required=True)
-    s = sub.add_parser("solve", help="solve a photo or every photo in a folder")
+    s = sub.add_parser("solve", help="solve a photo or every photo in a folder", formatter_class=argparse.RawDescriptionHelpFormatter,
+                       description="Solve a photo or every photo in a folder. Writes labeled JPGs (sky labels), "
+                                   "astro-id-report.csv and astro-id-results.json (every object, per frame) to "
+                                   "<folder>-annotated, or --overlay-dir.\n\nSun, Moon and planets: without a clock "
+                                   "offset (or --time) they are computed from the raw EXIF time and capped at "
+                                   "candidate; without a site they are computed without a horizon check and "
+                                   "without parallax. No default site is ever assumed. Both cases add a "
+                                   "'warnings' entry to the frame result.",
+                       epilog=VOCAB + "\n\n" + exit_epilog("solve"))
     s.add_argument("target", help="image file or folder")
     s.add_argument("--min-confidence", type=int, default=65,
                    help="report cut used by consumers (default 65); JSON always lists every object")
@@ -26,15 +38,19 @@ def build_parser() -> argparse.ArgumentParser:
                                   "time_source becomes 'facet')")
     s.add_argument("--timezone", help="IANA zone of the camera-local time (EXIF + offset) and of a naive --time "
                                       "(default: astro-id.json timezone, else inferred from the site, else system)")
-    s.add_argument("--overlay-dir", help="where overlays and the CSV report go (default: <folder>-annotated)")
-    s.add_argument("--no-overlay-lines", action="store_true", help="overlay JPG without constellation/asterism lines")
+    s.add_argument("--overlay-dir", help="where labeled JPGs, the CSV report and astro-id-results.json go (default: <folder>-annotated)")
+    s.add_argument("--no-overlay-lines", action="store_true",
+                   help="labeled JPG without constellation/asterism lines (sky labels only)")
     s.add_argument("--overlay-scores", action="store_true",
-                   help="print the confidence after each name on the overlay JPG (default: names only)")
+                   help="print the confidence after each sky label on the labeled JPG (default: names only)")
     s.add_argument("--solve-source", choices=["jpg", "raw", "auto"],
                    help="pixels the solver reads: jpg (default), raw (the same-stem RAW, cropped to the JPG frame), "
                         "auto (raw when a RAW twin exists, else jpg); results stay in JPG pixel space")
     s.add_argument("--json", action="store_true", help="print the contract JSON to stdout")
-    s.add_argument("--no-overlay", action="store_true")
+    s.add_argument("--no-results-file", action="store_true",
+                   help="do not write astro-id-results.json (the per-frame results, same shape as --json) next to "
+                        "the report")
+    s.add_argument("--no-overlay", action="store_true", help="no labeled JPGs (sky labels drawn over the photo)")
     s.add_argument("--no-fallback", action="store_true", help="never use nova.astrometry.net")
     s.add_argument("--no-quality", action="store_true", help="skip the per-frame quality metrics (focus, trailing...)")
     g = s.add_argument_group("tag policy (default: astro-id.json tag_policy, else levels 1-4, stars off)")
@@ -55,9 +71,11 @@ def build_parser() -> argparse.ArgumentParser:
     from .facet.cli import add_parser as _add_facet
 
     _add_facet(sub)
-    t = sub.add_parser("site", help="pick the observing site on Google Maps -> astro-id.json")
+    t = sub.add_parser("site", help="pick the observing site on Google Maps -> astro-id.json", formatter_class=argparse.RawDescriptionHelpFormatter,
+                       epilog=exit_epilog("site"))
     t.add_argument("folder")
-    d = sub.add_parser("setup", help="download reference data and check for ASTAP")
+    d = sub.add_parser("setup", help="download reference data and check for ASTAP", formatter_class=argparse.RawDescriptionHelpFormatter,
+                       epilog=exit_epilog("setup"))
     d.add_argument("-v", "--verbose", action="store_true")
     for name in ("check", "doctor"):
         c = sub.add_parser(name, help="check the minimum requirements (Python, uv, ASTAP + database, Facet); "
@@ -96,7 +114,8 @@ def main(argv: list[str] | None = None) -> int:
 
 def _add_session(sub) -> None:
     s = sub.add_parser("session", help="astro session: preview the time/site per photo, or solve a set of photos "
-                                       "with the session's choices; JSON lines on stdout")
+                                       "with the session's choices; JSON lines on stdout", formatter_class=argparse.RawDescriptionHelpFormatter,
+                     epilog=VOCAB + "\n\n" + exit_epilog("session"))
     s.add_argument("paths", nargs="*", help="photo files (or use --paths-file)")
     s.add_argument("--paths-file", help='JSON: a list of paths, or {"paths": [...], "hints": {path: {"site", "time"}}}')
     s.add_argument("--hints-file", help='JSON {path: {"site": "lat,lon[,elev]", "time": ISO}}: per-photo facts '
@@ -114,15 +133,16 @@ def _add_session(sub) -> None:
     s.add_argument("--cull-rule", help="cull rule as JSON text or @file (default astro-id.json \"cull\", else built-in)")
     s.add_argument("--results", action="store_true", help="include the full frame result in each photo event")
     s.add_argument("--overlay-dir")
-    s.add_argument("--no-overlay", action="store_true")
+    s.add_argument("--no-overlay", action="store_true", help="no labeled JPGs")
     s.add_argument("--no-fallback", action="store_true")
     s.add_argument("--no-quality", action="store_true")
-    s.add_argument("--no-overlay-lines", action="store_true", help="overlay JPG without constellation/asterism lines")
-    s.add_argument("--overlay-scores", action="store_true")
+    s.add_argument("--no-overlay-lines", action="store_true", help="labeled JPG without constellation/asterism lines")
+    s.add_argument("--overlay-scores", action="store_true", help="confidence after each sky label on the labeled JPG")
     s.add_argument("--stack-mode", choices=["representative", "all"])
     s.add_argument("--stack-gap", type=float)
     s.add_argument("-v", "--verbose", action="store_true")
-    c = sub.add_parser("cull", help="re-run only the culling on stored quality metrics; one JSON document on stdout")
+    c = sub.add_parser("cull", help="re-run only the culling on stored quality metrics; one JSON document on stdout",
+                       formatter_class=argparse.RawDescriptionHelpFormatter, epilog=exit_epilog("cull"))
     c.add_argument("--metrics-file", required=True,
                    help='JSON {path: quality} or {"metrics": {path: quality}, "solved": {path: bool}}')
     c.add_argument("--cull-rule", help="cull rule as JSON text or @file")
@@ -288,17 +308,39 @@ def cmd_solve(args) -> int:
         log.error("no images in %s", target)
         return 2
     results = solve_files(files, args, stack_cfg)
+    if not getattr(args, "no_results_file", False):
+        write_results_files(results, Path(args.overlay_dir) if args.overlay_dir else None)
     if args.json:
         sys.stdout.write(json.dumps({"contract": CONTRACT_VERSION, "results": results}, indent=1) + "\n")
     return 0
+
+
+def write_results_files(results: list[dict], overlay_dir: Path | None) -> list[Path]:
+    """One ``astro-id-results.json`` per output folder, beside ``astro-id-report.csv`` (CLI ``solve`` only: the
+    session / Facet add-on callers use ``solve_files`` directly and so never get this file)."""
+    from .pipeline import RESULTS_NAME, default_overlay_dir, write_results
+
+    by_dir: dict = {}
+    for fr in results:
+        od = overlay_dir or default_overlay_dir(Path(fr["file"]).parent)
+        by_dir.setdefault(od, []).append(fr)
+    written = []
+    for od, frames in by_dir.items():
+        try:
+            written.append(write_results(od / RESULTS_NAME, frames))
+            log.info("results: %s", written[-1])
+        except OSError as exc:
+            log.warning("could not write results in %s: %s", od, exc)
+    return written
 
 
 def solve_files(files: list[Path], args, stack_cfg, on_frame=None) -> list[dict]:
     """Solve ``files`` with the parsed ``solve`` flags ``args``; returns the frame results in ``files`` order.
 
     ``on_frame(result)`` (optional) is called as each frame finishes (sequence representatives first)."""
-    from .pipeline import CSV_NAME, default_overlay_dir, process, write_csv
+    from .pipeline import CSV_NAME, default_overlay_dir, process, reset_warnings, write_csv
 
+    reset_warnings()
     overlay_dir = Path(args.overlay_dir) if args.overlay_dir else None
     pf = policy_flags(args)
     by_file: dict = {}

@@ -32,6 +32,9 @@ NETWORK = ["epqs.nationalmap.gov", "nova.astrometry.net", "cdsarc.cds.unistra.fr
            "raw.githubusercontent.com", "www.pas.rochester.edu"]
 
 
+OLDER_FACET_HINT = "If Facet refuses the add-on, run again with --older-facet"
+
+
 def project_dir() -> Path:
     """This astro-id checkout (the folder holding pyproject.toml)."""
     root = Path(__file__).resolve().parents[2]
@@ -127,6 +130,8 @@ def run(args) -> int:
         print(json.dumps(doc, indent=2))
         print("Facet lists the add-on after a restart or a config reload, once addons.enabled is true in its "
               "scoring_config.json.", file=sys.stderr)
+        if "network" in doc:   # the Facet version is not knowable offline: say what to do if it refuses the key
+            print(OLDER_FACET_HINT, file=sys.stderr)
         return 0
     target, existed = uninstall(args.facet_data)
     print(f"removed {target}" if existed else f"nothing to remove: {target}")
