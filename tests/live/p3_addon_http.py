@@ -8,6 +8,7 @@ from <data>/p3-launch.json (X-Facet-Launch). Not a pytest module.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import time
@@ -15,7 +16,7 @@ from pathlib import Path
 
 import requests
 
-PFX = "\\\\192.168.1.90\\Photos and Videos\\2026\\tds-november\\astro\\"
+PFX = os.environ["ASTRO_ID_P3_PREFIX"]   # the photo folder as Facet stores it, with a trailing separator
 
 
 def main() -> int:

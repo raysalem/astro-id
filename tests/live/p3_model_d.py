@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -25,7 +26,7 @@ from astro_id.facet import sync as S
 from astro_id.facet.ledger import Ledger
 from astro_id.facet.mcp_client import McpFacetClient
 
-PFX = "\\\\192.168.1.90\\Photos and Videos\\2026\\tds-november\\astro\\"
+PFX = os.environ["ASTRO_ID_P3_PREFIX"]   # the photo folder as Facet stores it, with a trailing separator
 LEVEL = {"constellation": 1, "planet": 2, "catalog": 3, "asterism": 4, "star": 5}
 WRITES = ("batch_add_tag", "batch_remove_tag", "delete_tag", "put_annotation", "put_annotations_batch",
           "delete_annotation", "set_location")
