@@ -189,7 +189,8 @@ def test_migration_removes_the_old_per_object_tags_and_converges(new_fake, tmp_p
     ctx.ledger.record(ctx.library, P1, tags=["orion", "m42", "plate-solved", "jupiter"], payload_hash="old",
                       annotation_via="api", status="solved", facet_version="old")
     rep = S.apply_results(ctx, {P1: frame()})[0]
-    assert rep["migrated"] == ["jupiter", "m42", "orion", "plate-solved"]
+    # migrated = removed; someone else's jupiter is reported once, as not removed / legacy (P3 2026-11-15)
+    assert rep["migrated"] == ["m42", "orion", "plate-solved"] and rep["legacy"] == ["jupiter"]
     assert sorted(p["manual_tags"]) == ["jupiter", "night", "plate-solved"]   # someone else's jupiter stays
     assert p["plugin_rows"] == {"plate-solved"} and rep["not_removed"] == ["jupiter"]
     row = ctx.ledger.get(ctx.library, P1)
@@ -387,6 +388,7 @@ def test_f3_panel_save_reports_old_tags_that_are_the_users(new_fake, addon_d, mo
         time.sleep(0.02)
     st, s = req("POST", "/ui/api/save", {"min_confidence": 65})
     assert st == 200 and s["old_tags_yours"] == 2
+    assert s["old_tags_removed"] == 1                  # only plate-solved went; orion/m42 are counted once, as yours
 
 
 def test_f4_failed_status_is_not_remembered(new_fake):

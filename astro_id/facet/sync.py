@@ -552,6 +552,10 @@ def _record_photo(ctx, tags, path, p, annotation, info) -> dict:
         rep["legacy"] = legacy
         if left:
             rep["not_removed"] = left
+            # "migrated" = old rows actually removed: one Facet left (the user's) is counted once, as legacy.
+            # P3 2026-11-15: the panel said "232 old tags removed, 3 yours" when 229 were removed.
+            if rep.get("migrated"):
+                rep["migrated"] = [t for t in rep["migrated"] if t not in left]
     elif left:
         rep["not_removed"] = left        # another writer owns that row now: no longer ours to track
     kind = (prev or {}).get("tag_kind") if not tags else (TAG_KIND_PLUGIN if ctx.model_d else None)
