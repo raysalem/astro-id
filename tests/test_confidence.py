@@ -65,3 +65,9 @@ def test_full_score_crosses_tiers_as_expected():
     # the same object 1 deg above the horizon in the worst case of the window -> drops a tier
     low = C.combine(C.solve_quality("A"), C.position_certainty(1, 4), C.detectability(3, 8), C.horizon_margin(1))
     assert C.tier(hi) == "high" and C.tier(low) == "likely"
+
+
+def test_no_site_caps_sit_inside_likely():
+    assert C.LIKELY <= C.NO_SITE_MOON_CAP < C.NO_SITE_CAP < C.HIGH
+    assert C.tier(C.combine(1, 1, 1, 1, cap=C.NO_SITE_CAP)) == "likely"
+    assert C.tier(C.combine(1, 1, 1, 1, cap=C.NO_SITE_MOON_CAP)) == "likely"

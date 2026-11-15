@@ -9,6 +9,11 @@ import math
 HIGH = 80
 LIKELY = 65
 EXIF_TIME_CAP = 64  # time-dependent objects without a configured clock are at most "candidate"
+# Without a site the Sun/Moon/planets come from the geocentre with no horizon check. Planets and the Sun are capped
+# just under "high" (80) so they stay "likely" at best; the Moon, whose geocentric position can be ~1 deg off
+# (parallax, twice its disc), gets a stricter 70, only a little above the 65 "likely" floor.
+NO_SITE_CAP = 79
+NO_SITE_MOON_CAP = 70
 HORIZON_MARGIN_DEG = 3.0
 
 GRADE_QUALITY = {"A": 1.0, "B": 0.92, "C": 0.75}
