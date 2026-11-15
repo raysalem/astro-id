@@ -1,10 +1,20 @@
 # astro-id
 
-Plate-solve your night-sky photos and get every object named, with a confidence score, as labels on the picture.
+**Point your camera at the sky. astro-id tells you what you caught.**
+
+Every constellation, planet and galaxy in your photo, named and scored. Find Orion, Jupiter or the Pleiades in your
+own photos, automatically.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/) [![CI](https://github.com/raysalem/astro-id/actions/workflows/ci.yml/badge.svg)](https://github.com/raysalem/astro-id/actions/workflows/ci.yml)
 
 Works standalone from the command line, or as an add-on inside the [Facet](https://github.com/ncoevoet/facet) photo library.
+
+**Who it's for**
+
+- People who photograph the night sky with a camera on a tripod and want to know what they caught: no telescope or
+  star charts needed.
+- Photographers who keep a library ([Facet](#use-it-with-facet) users) and want to search photos by what is in the sky.
+- Tinkerers who want the results as files (labelled copies, a JSON per photo) or over a documented contract.
 
 <p align="center">
   <img src="docs/img/hero.jpg" width="860" alt="Two copies of a 20 mm night-sky photo of Orion rising over trees, side by side. Left: the plain photo. Right: the same photo with constellation stick figures for Orion, Taurus, Auriga, Gemini and Perseus, green and amber labels for the Pleiades, M42, Aldebaran, Capella and Uranus, and a legend with the solve time and grade.">
@@ -29,8 +39,7 @@ Works standalone from the command line, or as an add-on inside the [Facet](https
   </tr>
 </table>
 
-More: [the Milky Way through Cepheus](examples/annotated/02-milky-way-cepheus_astro.jpg) and all five
-[example photos](examples/README.md) with what astro-id found in each.
+More: [the Milky Way through Cepheus](examples/annotated/02-milky-way-cepheus_astro.jpg) and all five [examples](examples/README.md).
 
 ## Quick start
 
@@ -126,6 +135,8 @@ for coordinates (or a Google Maps link). Per-folder settings (clock offset, time
 
 ## Use it with Facet
 
+Name the sky in your photos. Search them by what's in them.
+
 **Add-on support is not in upstream Facet yet.** It lives on the
 [`wip/photo-page-layout`](https://github.com/raysalem/facet/tree/wip/photo-page-layout) branch of
 [raysalem/facet](https://github.com/raysalem/facet). Install the add-on once, pointing at Facet's data folder (the
@@ -139,7 +150,8 @@ uv run astro-id facet install --facet-data /path/to/facet/data             # Lin
 If Facet refuses the add-on, install again with `--older-facet` (for a Facet that does not know the manifest's
 `network` key; the install prints this hint too). Turn on `"addons": {"enabled": true}` in `scoring_config.json` and
 restart Facet. Open the Astro panel on a folder or selection, confirm location and time, and solve: objects become
-object tags, and sky labels appear on each photo. A Facet without add-ons can use the separate web page
+object tags, and sky labels appear on each photo. When its files change, the add-on tries the new version first and
+keeps running the previous one if it does not answer. A Facet without add-ons can use the separate web page
 `astro-id facet serve` ([Facet sidecar](docs/REFERENCE.md#facet-sidecar-astro-id-facet-)).
 
 ## How confidence works
@@ -165,15 +177,13 @@ Full factor table: [Confidence scale](docs/REFERENCE.md#confidence-scale). Which
 ## Limits
 
 - **It needs stars.** Cloud, a sky too bright to show stars or a frame filled by the Moon will not solve; few
-  stars give a grade C.
-- **Wide-angle shots need W08; telephoto shots need D50 too.**
+  stars give a grade C. Wide-angle shots need W08; telephoto shots need D50 too.
 - **Time and place only matter for the Sun, Moon and planets.** Stars, constellations and deep-sky objects come
   from the plate solve alone, whatever the clock or site says: a wrong clock never removes them. The bodies are
   always computed, but without a clock offset or a confirmed time they are capped at 64 (*candidate*), and without
   a site at 79 (*likely*; the Moon at 70). When a photo's own stars were below the horizon at the recorded time,
-  the frame gets a warning that the clock (or site) is wrong. No default site is ever assumed.
-- **Location and time can be approximate:** an estimated site and a clock offset with a tolerance are enough, and
-  stars, constellations and deep-sky objects are named without either.
+  the frame gets a warning that the clock (or site) is wrong. No default site is ever assumed; an estimated site and
+  a clock offset with a tolerance are enough.
 - **Photos need a long edge of at least about 2400 px**; smaller copies may not solve (details in
   [How it solves](docs/REFERENCE.md#how-it-solves)).
 - The extreme corners of very wide or fisheye frames may stay unlabelled.
@@ -213,5 +223,6 @@ node --test tests/js/bridge.test.js
 node --test tests/js/panel.test.js
 ```
 
-Code: MIT, copyright (c) 2026 Ray Salem, see [LICENSE](LICENSE). Example photos © Ray Salem. All rights reserved. They are included to demonstrate and test astro-id. (The MIT license does not
-cover them; see [examples/README.md](examples/README.md).) Third-party data and tools keep their own licenses.
+Code: MIT, copyright (c) 2026 Ray Salem, see [LICENSE](LICENSE). Example photos © Ray Salem. All rights reserved.
+They are included to demonstrate and test astro-id; the MIT license does not cover them (see
+[examples/README.md](examples/README.md)). Third-party data and tools keep their own licenses.

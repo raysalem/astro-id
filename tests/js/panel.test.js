@@ -224,15 +224,85 @@ test("update: an add-on too old to restart itself -> one sentence with the two c
   assert.equal(p.stale[0][0], "Astro needs one restart to update: on Facet's Add-ons page click Stop, then Open.");
 });
 
-test("update: the add-on never comes back -> the same one sentence, not a hang", async () => {
+test("update: the add-on never comes back -> one accurate sentence, not a hang", async () => {
   const p = updatePanel({states: [new Error("Failed to fetch")]});
   await p.page.checkVersion(st("2026-11-14.1", {code_changed: true}));
   assert.equal(p.calls[0], "api/restart");
   assert.ok(p.calls.length > 10, "kept asking until the timeout");
   assert.equal(p.page.updating, null);
   assert.equal(p.stale.length, 1);
-  assert.equal(p.stale[0][0], "Astro needs one restart to update: on Facet's Add-ons page click Stop, then Open.");
+  assert.equal(p.stale[0][0], "Astro did not come back after updating: on Facet's Add-ons page click Stop, then Open.");
+  assert.equal(p.stale[0][1], "", "no second, contradicting note");
   assert.equal(p.el.update.hidden, true);
+});
+
+// ------------------------------------------------------------- B-P10: safe self-update ---
+const FAILED = "An update to Astro is not ready yet; still running the previous version.";
+const BROKEN = "An update to Astro did not start; Astro will try again as soon as its files change.";
+const bad = {reason: "api/state answered HTTP 500: AttributeError: 'App' object has no attribute 'loaded_summary'", at: "2026-11-15T10:00:00"};
+
+test("B-P10: the new code failed its trial run -> one calm line, no restart, nothing locked, asks again every 10 s", async () => {
+  const p = updatePanel({});
+  await p.page.checkVersion(st("2026-11-14.2", {update_failed: bad}));
+  assert.deepEqual(p.calls, [], "no api/restart onto code that cannot serve");
+  assert.equal(p.el.update.textContent, FAILED);
+  assert.equal(p.el.update.hidden, false);
+  assert.deepEqual(p.stale, [], "no Stop/Open, no locked buttons");
+  assert.ok(!/Stop|Open/.test(p.el.update.textContent));
+  const slow = p.pollers.find((x) => x.ms === 10000);
+  assert.ok(slow && slow.running, "keeps an eye on it");
+  // also when this page is newer than the running add-on (the incident: page and server both edited)
+  const q = updatePanel({page: "2026-11-15.2"});
+  await q.page.checkVersion(st("2026-11-15.1", {update_failed: bad}));
+  assert.deepEqual(q.calls, []);
+  assert.equal(q.el.update.textContent, FAILED);
+  assert.deepEqual(q.stale, []);
+});
+
+test("B-P10: files fixed -> the line goes while it is tried, then the update runs by itself", async () => {
+  const p = updatePanel({states: [st("2026-11-14.2", {boot: "b0", pending: true}), st("2026-11-14.2", {boot: "b0", code_changed: true}), st("2026-11-14.2", {boot: "b1"})]});
+  await p.page.checkVersion(st("2026-11-14.2", {update_failed: bad}));
+  assert.equal(p.el.update.textContent, FAILED);
+  const slow = p.pollers.find((x) => x.ms === 10000), fast = p.pollers.find((x) => x.ms === 3000);
+  assert.equal(await slow.fn(), false, "pending: the slow poller hands over");     // api/state -> pending
+  assert.equal(p.el.update.hidden, true, "nothing shown while the new code settles and is tried");
+  assert.ok(fast.running);
+  assert.equal(await fast.fn(), false);                                              // api/state -> ready: restart
+  assert.deepEqual(p.calls, ["api/state", "api/state", "api/restart", "api/state"]);
+  assert.equal(p.page.state.update.boot, "b1");
+  assert.equal(p.el.update.hidden, true);
+  assert.deepEqual(p.stale, []);
+});
+
+test("B-P10: new code still settling (mid-edit) -> nothing shown, no restart, asks again in 3 s", async () => {
+  const p = updatePanel({page: "2026-11-15.2"});
+  await p.page.checkVersion(st("2026-11-15.1", {pending: true}));
+  assert.deepEqual(p.calls, []);
+  assert.equal(p.el.update.hidden, true);
+  assert.deepEqual(p.stale, [], "a newer page waits for the code instead of saying Stop/Open");
+  assert.ok(p.pollers.find((x) => x.ms === 3000).running);
+});
+
+test("B-P10: api/restart refuses (not ready / failed) -> the matching line, not an error", async () => {
+  const p = updatePanel({restart: {restart: false, reason: "update_failed", update_failed: bad}});
+  await p.page.checkVersion(st("2026-11-14.2", {code_changed: true}));
+  assert.deepEqual(p.calls, ["api/restart"]);
+  assert.equal(p.el.update.textContent, FAILED);
+  assert.deepEqual(p.stale, []);
+  const q = updatePanel({restart: {restart: false, reason: "pending"}});
+  await q.page.checkVersion(st("2026-11-14.2", {code_changed: true}));
+  assert.equal(q.el.update.hidden, true);
+  assert.ok(q.pollers.find((x) => x.ms === 3000).running);
+});
+
+test("B-P10: passed its trial but stopped after the switch -> the keeper answers; its line, no Stop/Open, no 45 s wait", async () => {
+  const fb = {page_version: "2026-11-14.2", fallback: true, update: {supported: true, fallback: true, boot: "fallback-1", code_changed: false, pending: false, update_failed: bad}};
+  const p = updatePanel({states: [fb]});
+  await p.page.checkVersion(st("2026-11-14.2", {boot: "b0", code_changed: true}));
+  assert.deepEqual(p.calls, ["api/restart", "api/state"], "the first answer after the restart is the keeper's");
+  assert.equal(p.el.update.textContent, BROKEN);
+  assert.deepEqual(p.stale, []);
+  assert.ok(p.pollers.find((x) => x.ms === 10000).running, "tries again when the files change");
 });
 
 test("update: same code everywhere -> nothing shown, nothing called", async () => {
@@ -248,6 +318,11 @@ test("one word for astro-id's per-object output: object tags (no 'searchable nam
   assert.match(ui, /Save object tags/);
   assert.match(ui, /<dt>Object tags<\/dt>/);
   assert.doesNotMatch(ui, /searchable name|Make names searchable|Astro tags/i);
+});
+
+test("B-P11: the save line says when tags were left because Facet does not say who wrote them", () => {
+  assert.match(html, /d\.tags_unknown_owner \?/);
+  assert.match(html, /this Facet does not say who wrote them, so they may be yours/);
 });
 
 // ------------------------------------------------- B-P9: a held set on open / reload / restart ---

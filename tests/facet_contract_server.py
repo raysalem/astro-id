@@ -35,11 +35,23 @@ def main() -> int:
     ap.add_argument("--facet-dir", required=True)
     ap.add_argument("--workdir", required=True)
     ap.add_argument("--port", type=int, required=True)
+    ap.add_argument("--addon", action="store_true",
+                    help="addons.enabled plus an EXTERNAL astro-id manifest (no start block) in <workdir>/addons, so "
+                         "a test can mint the add-on's token with POST /api/addons/astro-id/token (model D Facet)")
     a = ap.parse_args()
     db = os.path.join(a.workdir, "library.db")
     cfg = os.path.join(a.workdir, "scoring_config.json")
+    conf: dict = {"viewer": {"password": "", "edition_password": PASSWORD}}
+    if a.addon:
+        conf["addons"] = {"enabled": True}
+        folder = os.path.join(a.workdir, "addons", "astro-id")
+        os.makedirs(folder, exist_ok=True)
+        with open(os.path.join(folder, "addon.json"), "w", encoding="utf-8") as fh:
+            json.dump({"id": "astro-id", "name": "Astro", "version": "0.1.0", "icon": "star", "facet_api": 1,
+                       "ui": {"url": "http://127.0.0.1:9/"}, "slots": ["sidebar"],
+                       "permissions": ["photos.read", "tags.write", "annotations.write", "gps.write"]}, fh)
     with open(cfg, "w", encoding="utf-8") as fh:
-        json.dump({"viewer": {"password": "", "edition_password": PASSWORD}}, fh)
+        json.dump(conf, fh)
     os.environ["DB_PATH"] = db
     os.environ["FACET_CONFIG"] = cfg
     os.chdir(a.facet_dir)

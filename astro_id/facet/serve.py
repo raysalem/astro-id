@@ -67,7 +67,7 @@ EXPORT_KEYS = ("lines", "scores", "legend")   # Export's plain-language options 
 # an add-on process running while the page is read from disk on every load, so after an update the page can be newer
 # than its server. The panel then asks the server to restart itself on the new code (api/restart, keeper.py); only
 # a server too old for that gets the one-line "click Stop, then Open". Bump both together.
-PAGE_VERSION = "2026-11-15.4"
+PAGE_VERSION = "2026-11-15.5"
 PACKAGE = Path(__file__).resolve().parents[1]    # the astro_id package: its .py files are what a restart reloads
 UPDATING = "Astro is updating: try again in a moment"
 BUSY_WORDS = {"solve": "a plate solve is running: try again when it ends",
@@ -77,18 +77,8 @@ BUSY_WORDS = {"solve": "a plate solve is running: try again when it ends",
 
 
 def code_stamp(root: Path = PACKAGE) -> str:
-    """A fingerprint of the add-on's Python code on disk (every ``.py`` path, size and mtime): it changes when any
-    of it is edited, added or removed. The page and bridge are read from disk per request, so they are not in it."""
-    h = sha256()
-    for p in sorted(root.rglob("*.py")):
-        if "__pycache__" in p.parts:
-            continue
-        try:
-            st = p.stat()
-        except OSError:
-            continue
-        h.update(f"{p.relative_to(root).as_posix()}\0{st.st_size}\0{st.st_mtime_ns}\n".encode("utf-8"))
-    return h.hexdigest()
+    """A fingerprint of the add-on's Python code on disk (keeper.code_stamp: every ``.py`` path, size and mtime)."""
+    return keeper.code_stamp(root)
 
 
 START_STAMP = code_stamp()   # taken when this module loaded, i.e. on the code this process runs
@@ -104,14 +94,21 @@ def disk_page_version(path: Path | None = None) -> str | None:
     return m.group(1) if m else None
 
 
-def restart_decision(supported: bool, code_changed: bool, busy: str | None, force: bool = False) -> dict:
-    """Whether the running add-on restarts itself now. ``busy``: "solve" / "export" (a run in progress: never cut
-    it, the panel asks again when it ends). Without new code on disk a restart would change nothing (``current``),
-    unless ``force``."""
+def restart_decision(supported: bool, code_changed: bool, busy: str | None, force: bool = False,
+                     pending: bool = False, failed: dict | None = None) -> dict:
+    """Whether the running add-on restarts itself now. ``code_changed``: new code on disk that passed its probe
+    (keeper.UpdateGate). ``busy``: "solve" / "export" (a run in progress: never cut it, the panel asks again when it
+    ends). New code that is still settling or being tried (``pending``) or that failed its probe (``failed``) is
+    never restarted onto, not even with ``force`` (force only restarts on the code already running). Without new
+    code on disk a restart would change nothing (``current``), unless ``force``."""
     if not supported:
         return {"restart": False, "reason": "unsupported"}
     if busy:
         return {"restart": False, "reason": "busy", "busy": busy}
+    if failed:
+        return {"restart": False, "reason": "update_failed", "update_failed": failed}
+    if pending:
+        return {"restart": False, "reason": "pending"}
     if not (code_changed or force):
         return {"restart": False, "reason": "current"}
     return {"restart": True}
@@ -160,9 +157,26 @@ class SelfUpdate:
         self.boot = secrets.token_hex(6)       # changes on every restart: the panel waits for a new one
         self.stamp = START_STAMP if root == PACKAGE else code_stamp(root)
         self.exit = None                       # callable: stop serving and exit with keeper.RESTART_EXIT
+        self.gate: keeper.UpdateGate | None = None   # worker mode: settles and probes new code before offering it
 
     def code_changed(self) -> bool:
+        """The code on disk differs from the code this process runs (not yet: whether it can serve)."""
         return code_stamp(self.root) != self.stamp
+
+    def readiness(self) -> dict:
+        """{ready, pending, failed}: may the add-on restart onto the code on disk (keeper.UpdateGate)? Without a
+        gate (tests, standalone) any change counts as ready."""
+        if not self.supported:
+            return {"ready": False, "pending": False, "failed": None}
+        if self.gate is None:
+            return {"ready": self.code_changed(), "pending": False, "failed": None}
+        return self.gate.status()
+
+    def start_gate(self, argv: list[str], env: dict) -> None:
+        """Worker mode: watch the code on disk; settle, then probe each new version once (keeper.py)."""
+        self.gate = keeper.UpdateGate(self.stamp, lambda: keeper.probe(argv, env), settle=keeper.settle_seconds(env))
+        threading.Thread(target=self.gate.run_forever, args=(keeper.watch_seconds(env),),
+                         name="astro-update-watch", daemon=True).start()
 
 
 def export_options(v) -> dict | None:
@@ -440,6 +454,7 @@ class App:
     # ----------------------------------------------------------- handlers ---
     def state(self, _q, _b):
         self.ctx.refresh()
+        r = self.update.readiness()
         return {"facet": self.client.url, "version": self.ctx.version, "annotations": self.ctx.mode,
                 "warnings": self.ctx.warnings + self.notes, "can_write": self.client.can_login,
                 "ledger": str(self.ledger.path), "default_rule": DEFAULT_RULE, "review_tag": TAG_REVIEW,
@@ -453,8 +468,12 @@ class App:
                 # the set this add-on holds (B-P9): a panel opened now starts with "Loaded: <label> · N photos"
                 "loaded": self.loaded_summary(),
                 # self-update (keeper.py): the panel restarts an add-on whose code on disk changed
+                # code_changed = new code on disk that started and answered in a probe (B-P10); pending = new code
+                # still settling or being tried; update_failed = {reason, at}: the code on disk did not start, so
+                # this process keeps serving the previous version
                 "update": {"supported": self.update.supported, "boot": self.update.boot,
-                           "code_changed": self.update.supported and self.update.code_changed(),
+                           "code_changed": r["ready"], "pending": r["pending"], "update_failed": r["failed"],
+                           "fallback": False, "stamp": self.update.stamp,
                            "busy": self.busy(), "restarting": self.restarting,
                            "unsaved": bool(self.job.results) and not self.job.saved,
                            "disk_page_version": disk_page_version() if self.update.supported else None}}
@@ -482,8 +501,9 @@ class App:
         (loaded photos, the last solve's results whether saved or not, the last export) through the handoff file.
         Refused while a solve or export runs (``busy``); the panel asks again when it ends."""
         with self._export_lock:
-            d = restart_decision(self.update.supported, self.update.code_changed(), self.busy(),
-                                 bool(b.get("force")))
+            r = self.update.readiness()
+            d = restart_decision(self.update.supported, r["ready"], self.busy(), bool(b.get("force")),
+                                 pending=r["pending"], failed=r["failed"])
             if not d["restart"]:
                 return d
             try:
@@ -896,8 +916,12 @@ class App:
             self.job.saved_paths |= {r["path"] for r in reports if not r.get("error") and r.get("path")}
         ok = [r for r in reports if not r.get("error")]
         return {"reports": reports, "photos": len(ok), "errors": len(reports) - len(ok),
-                "tags_added": sum(len(r.get("add") or []) for r in ok),
-                "tags_removed": sum(len(r.get("remove") or []) for r in ok),
+                # what Facet now holds after the save (B-P11), not what was planned
+                "tags_added": sum(len(r.get("added", r.get("add")) or []) for r in ok),
+                "tags_removed": sum(len(r.get("removed", r.get("remove")) or []) for r in ok),
+                # an older Facet that does not say who wrote a tag: rows with an object's name astro-id has no
+                # record of were left alone (they may be the user's)
+                "tags_unknown_owner": sum(len(r.get("unknown_owner") or []) for r in ok),
                 "sky_labels": sum(1 for r in ok if r.get("annotation") in ("stored", "unchanged")),
                 "annotations": self.ctx.mode, "names_as": "searchable" if self.ctx.model_d else "tags",
                 # model D: names Facet made searchable (stored now) or that were already (unchanged payloads)
@@ -1385,7 +1409,7 @@ def finish_addon(args, box: dict, aenv: AddonEnv, update: SelfUpdate | None = No
     keeper's worker (it can restart itself; it takes over the session its predecessor left)."""
     client = box.get("client") or connect(aenv.url, **aenv.credentials)
     ledger = box.get("ledger") or Ledger(getattr(args, "ledger", None))
-    ctx = SyncContext(client=client, ledger=ledger, addon=True,
+    ctx = SyncContext(client=client, ledger=ledger, addon=True, addon_id=aenv.addon_id,
                       annotations=not getattr(args, "no_annotations", False)).prepare()
     app = App(client, ledger, ctx, parse_path_map(getattr(args, "path_map", None)), addon_id=aenv.addon_id)
     for problem in requirements_block(client)["problems"]:
@@ -1414,6 +1438,7 @@ def serve_addon(args, env: dict | None = None, out=None, lifeline: bool = True, 
         out.flush()
     else:
         update = SelfUpdate(True, keeper.handoff_path(e))
+        update.start_gate(list(getattr(args, "argv", None) or sys.argv[1:]), dict(e))
     if lifeline:
         from .lifeline import watch
 

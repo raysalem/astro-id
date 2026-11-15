@@ -216,8 +216,8 @@ def cmd_sync(args, client, ledger) -> int:
                       + (f"\n   error: {r['error']}" if r.get("error") else ""))
         _finish(args, ledger, ctx, info)
         out({"event": "sync_done", "solved": res.get("solved"), "failed": res.get("failed"),
-             "reports": len(res["reports"]), "tags_added": sum(len(r.get("add") or []) for r in res["reports"]),
-             "tags_removed": sum(len(r.get("remove") or []) for r in res["reports"]),
+             "reports": len(res["reports"]), "tags_added": sum(len(r.get("added", r.get("add")) or []) for r in res["reports"]),
+             "tags_removed": sum(len(r.get("removed", r.get("remove")) or []) for r in res["reports"]),
              "annotations": {k: sum(1 for r in res["reports"] if r.get("annotation") == k)
                              for k in sorted({r.get("annotation") for r in res["reports"] if r.get("annotation")})}})
         return 0

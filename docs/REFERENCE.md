@@ -224,6 +224,13 @@ uv run astro-id facet undo --path-prefix "D:\Photos\2026\trip\astro"            
   Facet URL and photo the tags astro-id added, the annotation hash and the Facet version. A re-run removes only
   those tags; a tag someone else put on the photo is never claimed or removed. Re-running on unchanged results
   writes nothing.
+- **When the ledger is behind** (no record, a record from an older version or another machine): a save first takes
+  back the rows astro-id wrote, so a save at a new confidence converges to exactly the object tags at that cut. A
+  Facet whose `get_photo` says who wrote each tag (`manual_tag_sources`) has those rows adopted; on model D the plain
+  rows with a name astro-id could have written are offered once to `remove_tags`, which removes only the add-on's
+  own. An older Facet that says neither keeps every unattributed row (its `remove_tags` would delete any row with
+  that text); the save reports them as `tags_unknown_owner`. Counts (`tags_added`, `tags_removed`,
+  `old_tags_removed`) are what Facet holds after the save, not what was planned.
 - **Annotations:** `PUT /api/photo/annotations` when Facet has it (feature-detected). On a local Facet stack that
   has the `photo_annotations` table but not the route yet, `--legacy-db <db> --facet-dir <facet checkout>` writes
   them with Facet's own `db/annotations.py` (TEMPORARY). Otherwise they are skipped with a warning.
@@ -233,7 +240,8 @@ uv run astro-id facet undo --path-prefix "D:\Photos\2026\trip\astro"            
   `sync --spool`; not needed.
 - **Moving from the old in-process plugin:** `astro-id facet adopt --legacy-db <db>` (TEMPORARY, read-only) puts
   the tags it wrote (`created_by='astro-id'`) and its annotation rows into the ledger once, so the sidecar can
-  replace or remove them.
+  replace or remove them. A photo the ledger already has keeps its record and gains only the rows it lacks
+  (`merged` in the summary).
 
 `astro-id facet serve` starts a page on `http://127.0.0.1:<port>/<secret>/` (loopback only, random secret per
 start): pick photos (Facet path prefix / album / tag), check each photo's location (Facet GPS, the folder's
@@ -293,6 +301,11 @@ manifest and its folder). The ledger and astro-id's tags stay; `astro-id facet u
   inline confirmation; your own tags and old tags written outside the add-on stay.
 - **Sky labels on this photo: Off/On** (step 5) shows or hides the labels while the panel is open (it starts Off);
   **Only names at confidence ≥** filters what is shown and exported, never what is saved.
+- **Updates:** the add-on restarts itself on new code (Facet never notices), keeping the session. It tries the new
+  version first: once the `.py` files have been unchanged for a few seconds, a throwaway probe starts them on a
+  private port and must answer; only then does the panel switch. If the probe fails, the add-on keeps running the
+  previous version and the panel says "An update to Astro is not ready yet; still running the previous version."
+  until the files change again. Details: `astro_id/facet/keeper.py` and [the manual](MANUAL.md#9-updating).
 
 **How it is wired (for the curious):** Facet passes `FACET_URL`, `FACET_TOKEN` (a per-launch add-on token),
 `FACET_ADDON_ID` and `FACET_LAUNCH_SECRET`. astro-id binds `127.0.0.1` on a free port, prints

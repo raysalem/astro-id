@@ -85,15 +85,26 @@ def adopt_plugin_rows(ledger, library: str, db_path: str, path_prefix: str | Non
         conn.close()
     pre = path_prefix.replace("\\", "/").rstrip("/").lower() + "/" if path_prefix else None
     paths = sorted(p for p in set(tags) | set(anns) if pre is None or p.replace("\\", "/").lower().startswith(pre))
-    adopted = 0
+    adopted = merged = 0
     for p in paths:
         prev = ledger.get(library, p)
         if prev is not None:
-            continue                       # the sidecar already owns this photo: never overwrite its record
+            # The sidecar already has a record: never overwrite it, but add the rows Facet itself says astro-id
+            # wrote (created_by='astro-id') that the record lacks. P3 2026-11-15: an old-contract save had recorded
+            # tags=[] for photos whose 232 old tags it took for the user's, so adopt skipped every photo and the
+            # model D migration could never remove them.
+            missing = sorted(set(tags.get(p, [])) - set(prev["tags"]))
+            if missing:
+                if not dry_run:
+                    ledger.record(library, p, tags=[*prev["tags"], *missing], payload_hash=prev["payload_hash"],
+                                  annotation_via=prev["annotation_via"], status=prev["status"],
+                                  facet_version=prev["facet_version"], tag_kind=prev["tag_kind"])
+                merged += 1
+            continue
         if not dry_run:
             ledger.record(library, p, tags=tags.get(p, []), payload_hash=anns.get(p),
                           annotation_via="legacy-db" if p in anns else None, status="adopted",
                           facet_version=facet_version)
         adopted += 1
-    return {"photos": len(paths), "adopted": adopted, "tags": sum(len(tags.get(p, [])) for p in paths),
+    return {"photos": len(paths), "adopted": adopted, "merged": merged, "tags": sum(len(tags.get(p, [])) for p in paths),
             "annotations": sum(1 for p in paths if p in anns), "dry_run": dry_run}

@@ -357,7 +357,12 @@ start unticked).
 The slider **Save object tags at confidence ≥** (default 65) decides what is saved: objects at or above it become
 object tags. Click **Save to Facet** to write the object tags, a `plate-solved` status tag and the sky labels for the
 ticked photos. Saving again is safe: it writes only what changed. Raise the slider and save again to remove the object
-tags now below it; lower it to add more. Only objects that also have a sky label get an object tag (very faint stars,
+tags now below it; lower it to add more. A save at a new confidence always ends with the photo holding exactly the
+object tags at that confidence, even when Astro's record of what it saved is behind (a record from an older version
+or another computer): it first takes back the old tags Astro wrote, then saves. The save line counts what Facet
+holds after the save ("old tags removed" are the ones actually removed). On an older Facet that does not say who
+wrote a tag, a tag with an object's name that Astro has no record of is left alone, since it may be yours; the save
+line says how many. Only objects that also have a sky label get an object tag (very faint stars,
 objects off the frame and names Facet refuses are left out). A star inside a saved constellation, cluster or asterism
 gets no tag of its own.
 
@@ -405,12 +410,22 @@ The add-on updates itself. After you `git pull` a newer astro-id, open or reload
 changed, the panel shows **Updating Astro…** for a moment, restarts the add-on and carries on where you were (loaded
 photos and the last solve are kept).
 
+The add-on tries the new version first and keeps running the previous one if it does not answer. While the new
+files settle and are tried (a few seconds) nothing changes; if the new version does not start, the panel shows one
+calm line, "An update to Astro is not ready yet; still running the previous version.", and you keep working. It
+switches by itself once the files are fixed (for example after the next `git pull`).
+
 - If a solve or export is running, it says "Astro will update after this solve." (or export) and updates when it ends.
 - If you have unsaved results and the panel itself is old, it says "Astro will update after you save these results to
   Facet." Save, and it updates.
 - If it says "Astro needs one restart to update: on Facet's Add-ons page click Stop, then Open", do exactly that. It
   appears when the running add-on is too old to restart itself.
 - If it says "Astro was updated: close and reopen the Astro panel", close and reopen it.
+- If it says "An update to Astro did not start; Astro will try again as soon as its files change.", the new version
+  passed its trial but stopped right after the switch. The add-on stays up (the panel keeps its place but cannot
+  solve or save) and starts the next version that passes its trial; fix or `git pull` the files and wait a moment.
+- If it says "Astro did not come back after updating: on Facet's Add-ons page click Stop, then Open", do that. It
+  only happens with an add-on started before this safe update existed.
 
 ## 10. Troubleshooting
 

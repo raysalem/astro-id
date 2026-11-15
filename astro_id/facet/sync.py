@@ -17,6 +17,13 @@ detections. No per-object tags. The first model D save of a photo removes the pe
 earlier (the ledger lists them; ``remove_tags`` only ever deletes this add-on's own rows), so re-saving converges.
 An older Facet keeps the per-object tags exactly as before.
 
+When the ledger is behind Facet (B-P11: a record with ``tags=[]``, no record, a ledger from another version or
+machine) a save first takes back the rows astro-id wrote: on any Facet whose ``get_photo`` carries
+``manual_tag_sources`` (``{tag: add-on id}``) those rows are adopted; on model D (which lists only plugin rows)
+the plain rows with a name astro-id could have written are offered once to ``remove_tags``, which removes only
+the add-on's own. On an older Facet that says neither, nothing unattributed is removed (its ``remove_tags`` deletes
+any row with that text) and the report lists those rows as ``unknown_owner``.
+
 Nothing here writes Facet's reject/cull flags or ``stats_cache`` (the tag route refreshes its own caches).
 """
 from __future__ import annotations
@@ -283,6 +290,7 @@ class SyncContext:
     model_d: bool = False                # summary plugin tags + indexed detections (see the module docstring)
     annotations_batch: bool = False      # set_annotations_batch available (model D)
     uncertain: bool = False              # the client could not tell old from model D yet: asked again on use
+    addon_id: str | None = None          # the id Facet records as created_by for this add-on (default astro-id)
     _legacy: object = None
 
     def prepare(self) -> "SyncContext":
@@ -417,30 +425,125 @@ def _adopt(photo: dict) -> set[str]:
             if isinstance(t, dict) and t.get("tag") and t.get("source") == ANNOTATION_SOURCE}
 
 
+def _owner_ids(ctx) -> set[str]:
+    return {ANNOTATION_SOURCE} | ({ctx.addon_id} if ctx.addon_id else set())
+
+
+def _sources(photo: dict, owners: set[str]) -> set[str] | None:
+    """The manual tags Facet says this add-on wrote (``manual_tag_sources`` ``{tag: add-on id}`` on ``get_photo``,
+    Facet local/photo-page-layout and later), or None when this Facet does not say (the key is absent)."""
+    src = photo.get("manual_tag_sources")
+    if not isinstance(src, dict):
+        return None
+    return {t for t, who in src.items() if isinstance(t, str) and who in owners}
+
+
+def candidate_tags(result: dict, extra: list[str] | tuple = ()) -> set[str]:
+    """Every tag astro-id could have written for this frame at ANY cut: the status/review tags, ``extra`` and the
+    tag of every object the engine named (taggable or not, any confidence: an earlier version or policy may have
+    tagged it). Used only to decide which rows to ask about, never as proof of ownership."""
+    out = {TAG_SOLVED, TAG_FAILED, TAG_REVIEW}
+    for t in [*extra, *(o.get("tag") for o in result.get("objects") or [])]:
+        n = normalize_tag(t)
+        if n:
+            out.add(n)
+    return out
+
+
+def _ledger_behind(prev: dict | None) -> bool:
+    """Model D: the ledger has never recorded a model D save of this photo (no record, or one from an older
+    contract / an earlier version), so rows astro-id wrote may be missing from it."""
+    return prev is None or prev.get("tag_kind") != TAG_KIND_PLUGIN
+
+
+def _probe_own_rows(ctx, looked: dict[str, dict]) -> dict[str, list[str]]:
+    """Model D, ledger behind (B-P11): ``get_photo`` lists only plugin summary rows, so the old plain rows astro-id
+    wrote (per-object tags, a plain ``plate-solved``) look like anyone's. Model D's ``remove_tags`` removes only the
+    add-on's own rows and leaves the others (``skipped_foreign``), so the plain rows with a name astro-id could
+    have written are offered to it once: what Facet removes was astro-id's; what stays is the user's (or another
+    writer's) and is never touched. Re-reads the photos it changed. ``{path: [removed tags]}``."""
+    by_tag: dict[str, list[str]] = {}
+    asked: dict[str, set[str]] = {}
+    for path, it in looked.items():
+        photo, prev = it["photo"], it["prev"]
+        if not _ledger_behind(prev):
+            continue
+        plugin = {t.get("tag") for t in photo.get("plugin_tags") or [] if isinstance(t, dict)}
+        ledger_tags = set(prev["tags"]) if prev else set()
+        # ledger tags are already removed by the migration below; the AI's tags are not manual rows
+        ask = (set(photo.get("manual_tags") or []) - plugin - ledger_tags) & it["candidates"]
+        if ask:
+            asked[path] = ask
+            for t in ask:
+                by_tag.setdefault(t, []).append(path)
+    if not by_tag:
+        return {}
+    for t, paths in sorted(by_tag.items()):
+        done = ctx.client.batch_remove_tag(t, paths) or {}
+        if done.get("skipped_foreign"):
+            log.info("%r: %d row(s) are not astro-id's (the user's): left in place", t, done["skipped_foreign"])
+    removed: dict[str, list[str]] = {}
+    for path, ask in asked.items():
+        after = ctx.client.photo(path)
+        if after is None:
+            continue
+        gone = sorted(ask - manual_tags(after))
+        looked[path]["photo"] = after
+        if gone:
+            removed[path] = gone
+            log.info("%s: removed astro-id's old rows the ledger did not list: %s", path, gone)
+    return removed
+
+
 def _apply_results(ctx, results, extra_tags, emit, tags) -> list[dict]:
     plans: dict[str, dict] = {}
     reports: list[dict] = []
+    owners = _owner_ids(ctx)
+    looked: dict[str, dict] = {}
     for path, fr in results.items():
         prev = ctx.ledger.get(ctx.library, path)
         photo = ctx.client.photo(path)
         if photo is None:
             reports.append({"path": path, "error": "not in Facet (or not visible)"})
             continue
+        looked[path] = {"photo": photo, "prev": prev, "result": fr,
+                        "candidates": candidate_tags(fr, extra_tags.get(path, ()))}
+    probed: dict[str, list[str]] = {}
+    if ctx.model_d and tags and not ctx.dry_run:
+        probed = _probe_own_rows(ctx, looked)
+    for path, it in looked.items():
+        photo, prev, fr = it["photo"], it["prev"], it["result"]
         ledger_tags = set(prev["tags"]) if prev else set()
         present = manual_tags(photo)
         mine = set(ledger_tags)
+        # B-P11: rows Facet itself says astro-id wrote are astro-id's even when the ledger lost them (an earlier
+        # save that took them for the user's recorded tags=[], a ledger from another machine or version).
+        sources = _sources(photo, owners)
+        adopted = sorted((sources or set()) & present - ledger_tags)
+        mine |= set(adopted)
         if ctx.model_d:
             mine |= _adopt(photo) & present
         if not tags:
             plan = {"keep": sorted(mine & present), "add": [], "remove": [], "skipped": [], "dropped": []}
         elif ctx.model_d:
-            migrate = bool(ledger_tags & present) and (prev or {}).get("tag_kind") != TAG_KIND_PLUGIN
+            plain = (ledger_tags if (prev or {}).get("tag_kind") != TAG_KIND_PLUGIN else set()) | set(adopted)
+            plain -= _adopt(photo)
+            migrate = bool(plain & present)
             plan = plan_photo(summary_tags(fr, extra_tags.get(path, ())), present, ai_tags(photo), mine,
                               cap=MAX_PLUGIN_TAGS, plugin=True, migrate=migrate)
-            plan["migrated"] = sorted(ledger_tags & present) if migrate else []
+            plan["migrated"] = sorted(plain & present) if migrate else []
         else:
             plan = plan_photo(desired_tags(fr, ctx.min_confidence, extra_tags.get(path, ())), present,
                               ai_tags(photo), mine)
+            if sources is None:
+                # This Facet does not say who wrote a row, and its remove_tags deletes any row with that text: a
+                # tag with an object's name astro-id has no record of may be the user's, so it is left alone.
+                plan["unknown_owner"] = sorted((present - mine) & it["candidates"])
+        if adopted:
+            plan["adopted"] = adopted
+        if probed.get(path):
+            plan["probed"] = probed[path]
+            plan["migrated"] = sorted(set(plan.get("migrated") or []) | set(probed[path]))
         plans[path] = {"plan": plan, "prev": prev, "result": fr}
     # What a photo's annotation is worth if its write never happens: the ledger's own previous state.
     ann: dict[str, tuple] = {}
@@ -526,8 +629,9 @@ def _record_photo(ctx, tags, path, p, annotation, info) -> dict:
     rep = {"path": path, "status": "solved" if fr.get("solved") else "failed", "add": plan["add"],
            "remove": plan["remove"], "kept": plan["keep"], "skipped": plan["skipped"],
            "dropped": plan["dropped"], "dry_run": ctx.dry_run}
-    if plan.get("migrated"):
-        rep["migrated"] = plan["migrated"]
+    for k in ("migrated", "adopted", "unknown_owner"):
+        if plan.get(k):
+            rep[k] = plan[k]
     if ctx.model_d:
         rep["names"] = sorted({o["name"] for o in fr.get("objects") or []
                                if isinstance(o.get("name"), str) and searchable(o, ctx.min_confidence)})
@@ -537,6 +641,9 @@ def _record_photo(ctx, tags, path, p, annotation, info) -> dict:
         return rep
     after = ctx.client.photo(path) or {}
     present = manual_tags(after)
+    # What Facet actually did (B-P11: the panel's "+n -m" are these, not the plan)
+    rep["added"] = [t for t in plan["add"] if t in present]
+    rep["removed"] = [t for t in plan["remove"] if t not in present and t not in plan["keep"]]
     owned = [t for t in plan["keep"] if t in present]
     missing = [t for t in plan["keep"] if t not in present]
     if missing:
@@ -552,6 +659,10 @@ def _record_photo(ctx, tags, path, p, annotation, info) -> dict:
         rep["legacy"] = legacy
         if left:
             rep["not_removed"] = left
+            # "migrated" = old rows actually removed: one Facet left (the user's) is counted once, as legacy.
+            # P3 2026-11-15: the panel said "232 old tags removed, 3 yours" when 229 were removed.
+            if rep.get("migrated"):
+                rep["migrated"] = [t for t in rep["migrated"] if t not in left]
     elif left:
         rep["not_removed"] = left        # another writer owns that row now: no longer ours to track
     kind = (prev or {}).get("tag_kind") if not tags else (TAG_KIND_PLUGIN if ctx.model_d else None)

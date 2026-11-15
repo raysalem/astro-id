@@ -158,6 +158,9 @@ def build_server(fake):
         v = view(r)
         if fake.model_d:
             v["plugin_tags"] = [{"tag": t, "source": fake.addon_id} for t in sorted(r.get("plugin_rows") or ())]
+        if fake.tag_sources:     # gallery.py _addon_tag_sources_async: only rows an installed add-on wrote
+            owners = r.get("tag_created_by") or {}
+            v["manual_tag_sources"] = {t: owners[t] for t in r["manual_tags"] if owners.get(t) == fake.addon_id}
         return _env(v)
 
     async def filter_options(kind: str = "categories") -> str:
