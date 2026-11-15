@@ -34,8 +34,30 @@ tolerance, timezone America/Los_Angeles and the site (32.6064, -116.3239, 1100 m
 [How it solves](../docs/REFERENCE.md#how-it-solves)); the set is rebuilt with `tools/make_examples.py`
 (steps in [docs/TESTING.md](../docs/TESTING.md)).
 
+## Moon photos (`moon/`)
+
+For `astro-id moon` ([Moon features](../docs/REFERENCE.md#moon-features-astro-id-moon)). `moon/annotated/` holds what
+it drew. Frames 01-04 are four frames of one lunar eclipse, 2000 x 1333 px, with no EXIF at all (no time, no lens),
+so their orientation cannot be computed; the disc is only about 67 px across.
+
+| File | What astro-id finds |
+|---|---|
+| `01-eclipse-partial.jpg` | disc 67 px (fit quality 1.0), `eclipse-partial` (bright cap at the top, red umbra visible); orientation fit fails (margin 0.18 < 0.25), so no names |
+| `02-eclipse-deep.jpg` | disc 68 px, `eclipse-partial` (most of the disc red); fit fails, no names |
+| `03-eclipse-totality.jpg` | disc 67 px, `eclipse-partial` (a near-white edge at the upper left keeps it from `eclipse-total`); fit fails, no names |
+| `04-eclipse-ending.jpg` | disc 67 px, `crescent`: the umbra is black at this exposure, so it looks like a phase (the message says `--time` tells them apart); fit fails, no names |
+| `05-nasa-svs-full-moon.jpg` | disc 690 px, `full`; with `--time 2026-11-24T12:00Z --north-angle 0` (the frame is drawn north up) 83 features at 65-100 (75 of them 80+): Tycho, Copernicus, Plato, Grimaldi, the Apollo sites in place; with no time at all the maria fit finds the pole at 348 deg (true 347.2, certainty 0.64), so the same names at up to 64 |
+
+Reproduce: `uv run astro-id moon examples/moon --to examples/moon/annotated`, and for 05
+`uv run astro-id moon examples/moon/05-nasa-svs-full-moon.jpg --time 2026-11-24T12:00Z --north-angle 0 --to examples/moon/annotated`.
+
 ## License
 
 Example photos © Ray Salem. All rights reserved. They are included to demonstrate and test astro-id. This covers the JPGs in this folder,
-`annotated/` and `docs/img/` (including the demo video and GIF). The code is MIT (see [LICENSE](../LICENSE)); the MIT
-license does not cover the photos.
+`moon/` frames 01-04, `annotated/`, `moon/annotated/` 01-04 and `docs/img/` (including the demo video and GIF). The
+code is MIT (see [LICENSE](../LICENSE)); the MIT license does not cover the photos.
+
+`moon/05-nasa-svs-full-moon.jpg` is not Ray Salem's: it is a frame of *Moon Phase and Libration, 2026* by NASA's
+Scientific Visualization Studio (https://svs.gsfc.nasa.gov/5587, frame 7861, 2026-11-24 12:00 UTC), public domain;
+credit NASA's Scientific Visualization Studio. Its labeled copy in `moon/annotated/` adds feature names from the
+public-domain IAU/USGS Gazetteer of Planetary Nomenclature (see [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)).

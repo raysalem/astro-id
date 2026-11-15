@@ -412,6 +412,9 @@ Every subcommand also exits 2 when the command line itself cannot be parsed. The
 | `astro-id session` | 2 | a bad option or no photos (after an error event on stdout) |
 | `astro-id cull` | 0 | verdicts printed |
 | `astro-id cull` | 2 | bad metrics file or cull rule |
+| `astro-id moon` | 0 | a Moon disc was found in at least one photo |
+| `astro-id moon` | 1 | no Moon disc found in any photo |
+| `astro-id moon` | 2 | usage error: target not found, no photos, or a bad --time/--site |
 | `astro-id facet sync` | 0 | the run completed |
 | `astro-id facet sync` | 2 | usage, login or connection error |
 | `astro-id facet status` | 0 | ledger printed |

@@ -22,6 +22,8 @@ astro-id-results.json
 # ...except the example set and the docs images (photos © Ray Salem, all rights reserved, see examples/README.md)
 !examples/*.jpg
 !examples/annotated/*.jpg
+!examples/moon/*.jpg
+!examples/moon/annotated/*.jpg
 !examples/astro-id.json
 !docs/img/*.jpg
 !docs/img/demo.mp4
