@@ -571,7 +571,7 @@ def test_adopt_takes_over_old_plugin_rows_read_only(fake, ledger, tmp_path):
     before = db.read_bytes()
     lib = library_key(fake.url)
     out = adopt_plugin_rows(ledger, lib, str(db), path_prefix=ROOT)
-    assert out == {"photos": 1, "adopted": 1, "tags": 2, "annotations": 1, "dry_run": False}
+    assert out == {"photos": 1, "adopted": 1, "merged": 0, "tags": 2, "annotations": 1, "dry_run": False}
     assert ledger.tags(lib, P1) == ["orion", "plate-solved"] and ledger.get(lib, P1)["annotation_via"] == "legacy-db"
     assert db.read_bytes() == before
     fake.photos[P1]["manual_tags"] = ["my trip", "orion", "plate-solved"]
@@ -579,6 +579,33 @@ def test_adopt_takes_over_old_plugin_rows_read_only(fake, ledger, tmp_path):
     S.apply_results(ctx, {P1: frame(objs=[obj("taurus")])})      # adopted tags are now astro-id's to replace
     assert fake.photos[P1]["manual_tags"] == ["my trip", "plate-solved", "taurus"]
     assert adopt_plugin_rows(ledger, lib, str(db))["adopted"] == 1    # P1 is owned now; only the other path
+
+
+def test_adopt_merges_old_rows_into_an_existing_empty_record(ledger, tmp_path):
+    """Regression (P3 2026-11-15, real model D Facet on the astro-e2e copy): an old-contract save had recorded
+    tags=[] for all 18 photos (it took the old plugin's rows for the user's), so adopt skipped every photo, the
+    model D save migrated nothing and the 232 old per-object tags stayed for good."""
+    import sqlite3
+
+    from astro_id.facet.legacy import adopt_plugin_rows
+
+    db = tmp_path / "lib.db"
+    with sqlite3.connect(db) as c:
+        c.execute("CREATE TABLE photo_manual_tags (photo_path TEXT, tag TEXT, source TEXT, created_by TEXT)")
+        c.executemany("INSERT INTO photo_manual_tags VALUES (?, ?, 'user', ?)",
+                      [(P1, "orion", "astro-id"), (P1, "plate-solved", "astro-id"), (P1, "perseus", None)])
+    lib = "http://facet"
+    ledger.record(lib, P1, tags=[], payload_hash="h1", annotation_via="api", status="solved", facet_version="v",
+                  legacy_tags=["m42"])
+    assert adopt_plugin_rows(ledger, lib, str(db), dry_run=True)["merged"] == 1
+    assert ledger.tags(lib, P1) == []                                  # dry run writes nothing
+    out = adopt_plugin_rows(ledger, lib, str(db))
+    assert (out["adopted"], out["merged"]) == (0, 1)
+    row = ledger.get(lib, P1)
+    assert row["tags"] == ["orion", "plate-solved"]                    # never the user's 'perseus'
+    assert (row["payload_hash"], row["annotation_via"], row["status"], row["legacy_tags"]) == \
+        ("h1", "api", "solved", ["m42"])                               # the rest of the record is kept
+    assert adopt_plugin_rows(ledger, lib, str(db))["merged"] == 0      # idempotent
 
 
 def test_legacy_writer_works_from_another_thread(tmp_path):
