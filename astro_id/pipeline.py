@@ -50,7 +50,7 @@ def empty_frame(path: Path) -> dict:
         "center_ra_deg": None, "center_dec_deg": None, "fov_deg": None, "true_time": None,
         "time_tolerance_min": None, "time_source": "exif", "best_fit_time": None, "time_flag": None,
         "overlay": None, "error": None, "stack_of": None, "objects": [], "annotations": None, "solve_source": None,
-        "best_fit_delta_min": None, "quality": None, "warnings": [],
+        "best_fit_delta_min": None, "quality": None, "warnings": [], "time_hint": None,
     }
 
 
@@ -61,6 +61,10 @@ WARN_NO_SITE = ("no site (position): Sun, Moon and planets are computed from the
                 "no default site is assumed")
 WARN_NO_EXIF_TIME = ("no EXIF DateTimeOriginal: Sun, Moon and planets were computed for the current clock time "
                      "and are capped at candidate")
+WARN_SKY_BELOW = ("this frame's sky was below the horizon at the recorded time ({time}, field centre {alt:+.0f} deg): "
+                  "the camera clock or the site is probably wrong; set a clock offset (or use Auto). Stars, "
+                  "constellations and deep-sky objects come from the plate solve and are kept at full confidence; "
+                  "Sun, Moon and planets are capped at candidate")
 _warned: set[str] = set()   # each distinct message is logged once per run; every frame still carries it
 
 
@@ -139,6 +143,11 @@ def process(path: Path, offset_flag, tol_flag, site_flag, overlay_dir: Path | No
         if ident.best_fit_time and fr["true_time"]:
             fr["best_fit_delta_min"] = round((ident.best_fit_time - t_true).total_seconds() / 60, 1)
         fr["time_flag"] = ident.time_flag
+        if ident.sky and ident.sky["below_horizon"]:
+            fr["time_hint"] = {"code": "sky_below_horizon", "time": iso(t_true),
+                               "field_alt_deg": ident.sky["field_alt_deg"],
+                               "stars_below_fraction": ident.sky["stars_below_fraction"]}
+            _warn(fr, WARN_SKY_BELOW.format(time=iso(t_true), alt=ident.sky["field_alt_deg"]))
         fr["annotations"] = _annotations(ident.objects, sol, sol.width, sol.height, legend_text(
             t_true if fr["true_time"] else None, fr["time_tolerance_min"], sol.solver, sol.grade, fr["stars"]))
         if make_overlay:

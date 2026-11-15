@@ -364,10 +364,27 @@ Every frame result gains `warnings`: a list of strings (empty when there is noth
 - `no clock offset configured: ...`: `time_source` is `"exif"`, so the EXIF time is used as is and Sun, Moon and planets are capped at candidate.
 - `no site (position): ...`: see the next section.
 - `no EXIF DateTimeOriginal: ...`: the current clock time is used (see below).
+- `this frame's sky was below the horizon at the recorded time (<time>, field centre <alt> deg): ...`: see `time_hint`.
+
+### Frame `time_hint` (2026-11-15, non-breaking)
+
+`null`, or `{"code": "sky_below_horizon", "time": "<ISO time used>", "field_alt_deg": -47.2, "stars_below_fraction": 1.0}`
+when a site is known and the frame's own solved stars were below the horizon at the time used: 25% or more of the
+stars the fit matched are below -2 deg at every sampled time (fewer than 3 matched stars: the field centre below
+-10 deg). The clock (or the site) is wrong for that frame. Effects: a `warnings` entry; no horizon check at all
+(stars, constellations, asterisms and deep-sky objects keep exactly the confidence they get with no site); the Sun,
+Moon and planets are capped at 64 even with a configured offset. The session `photo` event carries it too, and the
+add-on's `time_fit` (job `done`) adds `sky_below` (count) and `sky_below_files`.
+
+**Horizon rule (all frames).** Objects placed by the plate solve are never dropped or lowered because of a time that
+is not confirmed: the horizon check runs only with a confirmed time (`time_source` `config` or `facet`), a site, and
+no `time_hint`. Even then a star the fit matched is never dropped or lowered (it is in the photo); unmatched catalog
+objects below the horizon are dropped (behind the ground) and those within 3 deg of it lowered, and bodies below it
+are dropped. `alt_min_deg` (CSV) is empty when the horizon is not checked.
 
 ### Sun, Moon and planets: what happens without a trustworthy time or a site (verified in `identify.py`, `config.py`)
 
-- **No clock offset** (no `--offset`, no `clock_offset` in `astro-id.json`, no `--time`; `time_source` `"exif"`): Sun, Moon and planets are still identified, at the raw EXIF time, and their confidence is capped at 64, i.e. tier `candidate`. They stay in the JSON, the CSV and the labeled JPG; with the default `--min-confidence 65` they never become object tags. Any `clock_offset` key counts as configured, even a blank one ("the camera clock is right"), and then the cap is lifted. `--time` (`time_source` `"facet"`) also lifts it.
+- **No clock offset** (no `--offset`, no `clock_offset` in `astro-id.json`, no `--time`; `time_source` `"exif"`): Sun, Moon and planets are still identified, at the raw EXIF time, without a horizon check, and their confidence is capped at 64, i.e. tier `candidate`. The cap is a ceiling: a body with no source at its predicted spot has its detectability halved and scores 50 at most, which is what a wrong clock usually gives. They stay in the JSON, the CSV and the labeled JPG; with the default `--min-confidence 65` they never become object tags. Any `clock_offset` key counts as configured, even a blank one ("the camera clock is right"), and then the cap is lifted. `--time` (`time_source` `"facet"`) also lifts it.
 - **No EXIF capture time and no `--time`**: the frame is solved and the same bodies are computed for the current clock time of the machine (they are not dropped), with the candidate cap. Both a `warnings` entry and `error` say so.
 - **No site** (no `--site`, no `site` in `astro-id.json`, no per-photo position from Facet): the bodies are computed from the geocentre, so the Moon can be up to about 1 degree off, and no altitude or horizon check is made (a body below the horizon is not ruled out; the horizon margin counts as 1). Because of that their confidence is capped: **planets and the Sun at 79, the Moon at 70**, i.e. tier `likely` at best, never `high`, so they cannot become a certain object tag. 79 is the top of the `likely` band (high starts at 80); the Moon gets the stricter 70, close to the 65 floor, because its parallax (up to about 1 degree, twice its disc) is the one error that can put it in the wrong place. The caps combine with the clock cap (the lower wins, so no offset still means 64). The `no site (position)` warning stays and now mentions the cap. Stars, constellations, asterisms and deep-sky objects are unaffected. With a site (`--site`, `astro-id.json`, or the per-photo position the Facet add-on passes) nothing changes: full confidence. Additive in v1.1: confidence values for bodies in site-less runs are lower than before; no field was added or renamed.
 - **No default site is ever assumed or written** (changed: the old Tierra del Sol suggestion is gone). `astro-id site <folder>` suggests, in order: the folder's own saved site, then the site this user last saved on this machine (`last_site.json` in the per-user data folder, `ASTRO_ID_DATA` or `%LOCALAPPDATA%\astro-id\data`, written only after a confirmed save), else nothing: the coordinates prompt then requires coordinates or a Maps URL and Enter alone saves nothing. The map opens on a neutral world view when no site is known.

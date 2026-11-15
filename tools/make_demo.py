@@ -299,8 +299,17 @@ def build(R):
     # what the captions say must still be true
     assert J["full"] >= 80 and M["full"] >= 80, J
     assert J["nosite"] is not None and J["nosite"] < 80 and M["nosite"] is not None and M["nosite"] < 80, (J, M)
-    assert not no5["objects"], "site + raw clock: expected nothing named on the dawn frame"
     assert J["neither"] is None and M["neither"] is None, "wrong date: expected Jupiter/Mars out of the frame"
+    # site + raw clock: every plate-solved name stays (same as with no site), a warning says the clock is wrong,
+    # and Jupiter / Mars are missing or uncertain (looked for at the wrong date)
+    plate5 = {o["name"]: o["confidence"] for o in no5["objects"] if o["kind"] not in ("planet", "moon")}
+    assert plate5 == {o["name"]: o["confidence"] for o in ne5["objects"] if o["kind"] not in ("planet", "moon")}
+    assert len(plate5) > 50, len(plate5)
+    assert (J["nooffset"] or 0) < 65 and (M["nooffset"] or 0) < 65, (J, M)
+    hint = no5["time_hint"]
+    assert hint and hint["code"] == "sky_below_horizon", hint
+    assert any("sky was below the horizon" in w for w in no5["warnings"]), no5["warnings"]
+    assert full5["time_hint"] is None
     s = Site(SITE["lat"], SITE["lon"], SITE.get("elev_m", 0.0))
     raw_alt = float(altitudes([no5["center_ra_deg"]], [no5["center_dec_deg"]],
                               [datetime.fromisoformat(no5["true_time"])], s)[0][0])
@@ -339,7 +348,7 @@ def build(R):
         "objects_04": tot4, "stars_matched_04": full4["stars"],
         "jupiter": J, "mars": M, "objects_05": {k: len(R[k][F5]["objects"]) for k in RUNS},
         "camera_time_05": hm(no5["true_time"]), "true_time_05": hm(full5["true_time"]),
-        "raw_clock_field_alt_deg": round(raw_alt, 1),
+        "raw_clock_field_alt_deg": round(raw_alt, 1), "raw_clock_time_hint": no5["time_hint"],
         "neither_04": {"objects": len(ne4["objects"]), "same_confidence": same4, "uranus": ura},
         "neither_05": {"objects": len(ne5["objects"])},
         "confidence_steps": {c: k for c, _, k in conf_steps},
@@ -356,12 +365,20 @@ def build(R):
         ])
 
     def time_card(state):
-        return panel("2. Time", [
+        rows = [
             ("field", "Camera clock (EXIF)", hm(no5["true_time"]), "set"),
             ("field", "Offset", offset_txt if state else "(empty: clock right)", "changed" if state else "empty"),
             ("field", "Real time", hm(full5["true_time"] if state else no5["true_time"]), "changed" if state else "set"),
             ("note", f"Location: {SITE['name']} (set)"),
-            ("big", f"{len(full5['objects']) if state else 0} objects", GOOD if state else WARN),
+        ]
+        if state:
+            return panel("2. Time", rows + [("big", f"{len(full5['objects'])} objects", GOOD),
+                                            ("note", f"Jupiter {J['full']} · Mars {M['full']}", GOOD)])
+        return panel("2. Time", rows + [
+            ("big", f"{len(no5['objects'])} objects", GOOD),
+            ("note", "This photo's sky was below the horizon at the camera's time: the clock is probably wrong. "
+                     "Set the offset, or use Auto.", WARN),
+            ("note", "Jupiter, Mars: not found (looked for on the wrong date)", HI),
         ])
 
     def fuzzy_card():
@@ -416,9 +433,10 @@ def build(R):
         yield from xfade(a, b, 0.5)
         yield from hold(b, 2.2)
         loc_end = b
-        a = layout(d_raw, time_card(False), f"Camera clock as recorded ({hm(no5['true_time'])}): 0 objects",
-                   f"then, the centre of this field was {abs(round(raw_alt))}° below the horizon at the site",
-                   "same detail, nothing named")
+        a = layout(d_raw, time_card(False),
+                   f"Camera clock as recorded ({hm(no5['true_time'])}): {len(no5['objects'])} objects still named",
+                   f"the field was {abs(round(raw_alt))}° below the horizon then: a warning says the clock is wrong;"
+                   " planets wait for the offset", "same detail, no planets")
         b = layout(d_full, time_card(True), f"Clock offset {CFG['clock_offset']}: Jupiter {J['full']} · Mars {M['full']}",
                    f"real time {hm(full5['true_time'])} · {len(full5['objects'])} objects in the frame",
                    "detail, Jupiter and Mars")

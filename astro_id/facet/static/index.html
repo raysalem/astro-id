@@ -189,7 +189,9 @@
       allow for not knowing it exactly: every time-sensitive check is tried across that whole window and the worst
       case is used, so a wide window lowers confidence for planets and objects near the horizon.</dd>
     <dt id="h-auto">Auto (time)</dt><dd>Plate solving itself does not need the time: the stars fix the pointing on
-      their own. The time only matters for the Moon, the planets and the horizon. After a solve, a frame where the
+      their own, so stars, constellations and deep-sky objects are named whatever the clock says. The time only
+      matters for the Sun, Moon and planets. When a photo's own stars were below the horizon at the camera's time,
+      the clock (or the location) is wrong and this step says so. After a solve, a frame where the
       Moon was found tells how far its position is from where your clock says it should be; Astro then offers the
       corrected offset with a &plusmn; that covers the spread between those frames. Planets and the horizon do not
       pin the time yet, so on a night without the Moon in a solved frame there is no Auto suggestion. Applying it
@@ -420,7 +422,7 @@ const NONCE = B.readNonce(location.search);
 const API = B.makeApi((u, o) => fetch(u, o), NONCE);
 // Must equal serve.py PAGE_VERSION. Facet reads this page from disk on every load but keeps the add-on process
 // running, so after an update the page can be newer than its server: the add-on then restarts itself (B.updatePlan).
-const PAGE_VERSION = "2026-11-15.3";
+const PAGE_VERSION = "2026-11-15.4";
 let serverStale = false;
 let updating = null;   // a Promise while Astro restarts itself on new code: every api() call waits for it
 async function api(path, body) {
@@ -952,17 +954,22 @@ function drawTime(f) {
 function drawAuto() {
   const tf = timeFit, row = $("autoRow");
   row.hidden = true;
+  /* A frame whose own solved stars were below the horizon at the camera's time: the clock (or site) is wrong. Its
+   * stars and constellations are kept; only the Sun, Moon and planets wait for the right time. */
+  const below = tf && tf.sky_below ? `<div class="warn">This photo's sky was below the horizon at the camera's time: the clock is probably wrong. Set the offset, or use Auto.`
+    + (tf.sky_below > 1 ? ` (${plural(tf.sky_below, "photo")})` : "") + `</div>` : "";
   if (!tf) {
     $("autoInfo").innerHTML = `Auto is offered after a plate solve, from frames that pin the time (today: the Moon). <button class="link" data-help="h-auto">How</button>`;
     return;
   }
   if (!tf.frames || !tf.offset) {
-    $("autoInfo").innerHTML = `No solved frame pins the time (only the Moon does today; planets and the horizon do not yet), so the sky cannot check this clock. Keep your offset. <button class="link" data-help="h-auto">How</button>`;
+    $("autoInfo").innerHTML = below + (below ? `No solved frame pins the time (only the Moon does today), so Auto cannot suggest an offset yet. <button class="link" data-help="h-auto">How</button>`
+      : `No solved frame pins the time (only the Moon does today; planets and the horizon do not yet), so the sky cannot check this clock. Keep your offset. <button class="link" data-help="h-auto">How</button>`);
     return;
   }
   const cur = $("offset").value.trim(), files = tf.files.slice(0, 3).join(", ") + (tf.files.length > 3 ? "..." : "");
   const same = tf.offset === cur || (Math.abs(tf.delta_min) < 1 && cur);
-  $("autoInfo").innerHTML = `${esc(tf.pinned_by[0].toUpperCase() + tf.pinned_by.slice(1))} in ${plural(tf.frames, "solved frame")} (${esc(files)}) suggests the clock is <b>${esc(tf.offset)} ±${esc(tf.tolerance_min)} min</b>`
+  $("autoInfo").innerHTML = below + `${esc(tf.pinned_by[0].toUpperCase() + tf.pinned_by.slice(1))} in ${plural(tf.frames, "solved frame")} (${esc(files)}) suggests the clock is <b>${esc(tf.offset)} ±${esc(tf.tolerance_min)} min</b>`
     + ` (${tf.delta_min >= 0 ? "+" : ""}${esc(tf.delta_min)} min from the offset used).` + (same ? " That matches your offset." : "");
   if (!same || Number($("tol").value) > tf.tolerance_min) {
     row.hidden = false; $("autoApply").textContent = `Use ${tf.offset} ±${tf.tolerance_min} min`;

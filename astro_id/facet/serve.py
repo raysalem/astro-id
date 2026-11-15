@@ -67,7 +67,7 @@ EXPORT_KEYS = ("lines", "scores", "legend")   # Export's plain-language options 
 # an add-on process running while the page is read from disk on every load, so after an update the page can be newer
 # than its server. The panel then asks the server to restart itself on the new code (api/restart, keeper.py); only
 # a server too old for that gets the one-line "click Stop, then Open". Bump both together.
-PAGE_VERSION = "2026-11-15.3"
+PAGE_VERSION = "2026-11-15.4"
 PACKAGE = Path(__file__).resolve().parents[1]    # the astro_id package: its .py files are what a restart reloads
 UPDATING = "Astro is updating: try again in a moment"
 BUSY_WORDS = {"solve": "a plate solve is running: try again when it ends",
@@ -178,7 +178,11 @@ def time_fit(results: dict, offset) -> dict:
     """Auto time: what the sky says about the camera clock, from the frames whose result pins the time
     (``best_fit_delta_min``; today only the Moon does). The median shift is added to the offset the solve used and
     rounded to whole minutes; the tolerance covers the spread between those frames plus 2 min. Nothing is
-    suggested when no frame pins the time."""
+    suggested when no frame pins the time.
+
+    ``sky_below`` counts the solved frames whose own stars were below the horizon at the time used (result
+    ``time_hint.code == "sky_below_horizon"``): the clock (or the site) is wrong there. It does not pin a time; the
+    panel's Time step shows it so the user sets the offset or uses Auto."""
     import math
     from datetime import timedelta
     from statistics import median
@@ -190,6 +194,10 @@ def time_fit(results: dict, offset) -> dict:
                   and isinstance(fr.get("best_fit_delta_min"), (int, float)))
     out = {"frames": len(pins), "pinned_by": "the Moon", "files": [f for f, _ in pins][:20], "offset": None,
            "delta_min": None, "spread_min": None, "tolerance_min": None}
+    below = sorted(_base(p) for p, fr in (results or {}).items()
+                   if isinstance(fr, dict) and fr.get("solved") and isinstance(fr.get("time_hint"), dict)
+                   and fr["time_hint"].get("code") == "sky_below_horizon")
+    out.update(sky_below=len(below), sky_below_files=below[:20])
     if not pins:
         return out
     try:

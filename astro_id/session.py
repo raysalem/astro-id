@@ -296,7 +296,8 @@ def photo_event(path: str, index: int, fr: dict, opts: SessionOptions) -> dict:
           "solve_source": fr.get("solve_source"), "stack_of": fr.get("stack_of"), "true_time": fr.get("true_time"),
           "time_source": fr.get("time_source"), "tolerance_min": fr.get("time_tolerance_min"),
           "best_fit_time": fr.get("best_fit_time"), "best_fit_delta_min": fr.get("best_fit_delta_min"),
-          "time_flag": fr.get("time_flag"), "quality": fr.get("quality"), "overlay": fr.get("overlay"),
+          "time_flag": fr.get("time_flag"), "time_hint": fr.get("time_hint"), "quality": fr.get("quality"),
+          "overlay": fr.get("overlay"),
           "error": fr.get("error")}
     if opts.include_results:
         ev["result"] = fr

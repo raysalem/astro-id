@@ -93,7 +93,15 @@ assumed or written.
 ### Time and tolerance
 
 Camera clocks drift. Every time-dependent check (planet and Moon positions, above-horizon, horizon
-margin) is evaluated across `[t - tolerance, t + tolerance]` and the **worst case** is scored. When the
+margin) is evaluated across `[t - tolerance, t + tolerance]` and the **worst case** is scored.
+The horizon is checked only when the time is confirmed (an offset, even `+0m`, `--time` or a Facet-corrected date),
+a site is known and the photo agrees: a solved frame is its own proof that the stars the fit matched were up, so if
+25% or more of them are more than 2 deg below the horizon at every sampled time (fewer than 3 matched: the field
+centre below -10 deg), the clock or the site is wrong. Then the frame gets a `warnings` entry ("this frame's sky
+was below the horizon at the recorded time ...") and `time_hint` (`code` `sky_below_horizon`, `time`,
+`field_alt_deg`, `stars_below_fraction`), no horizon check is made, and the Sun, Moon and planets are capped at
+*candidate*. A star the fit matched is never dropped or lowered by the horizon; with a trusted time the check still
+rules out unmatched catalog objects below the horizon (behind the ground) and lowers them within 3 deg of it. When the
 Moon is found in the frame its position pins the time (it moves ~0.5 deg per hour against the stars):
 `best_fit_time` is reported and `time_flag` is set if it falls outside the tolerance. Without a clock
 offset (`--offset`, or a `clock_offset` key in `astro-id.json`, even `0`) or a true time (`--time`, or a date
@@ -101,7 +109,9 @@ corrected in Facet), EXIF time is used as-is (`time_source: "exif"`) and the Sun
 *candidate* (confidence 64; `EXIF_TIME_CAP` in `astro_id/confidence.py`). They are still identified, never
 dropped. Without a site (no `--site`, no `site` in `astro-id.json`, no per-photo position from Facet) the bodies are
 computed from the geocentre with no horizon check, and capped at 79 (the Moon at 70): *likely* at best. The lower
-cap wins when both apply. Stars, constellations and deep-sky objects are unaffected by either.
+cap wins when both apply. Stars, constellations and deep-sky objects are unaffected by either. The caps are
+ceilings: a body predicted in the frame with no source at that spot has its detectability halved, so it scores 50
+at most (with a wrong clock, the usual case).
 
 ## Annotations payload (for the Facet viewer)
 
@@ -325,7 +335,7 @@ drop out). A failed solve below 2400 px says so: "too few stars at this size ...
 | Solve quality | grade A 1.00, B 0.92, C 0.75 |
 | Position certainty | fit residual of the nearest matched stars at that spot (inflated when extrapolating) versus the object's size: `exp(-0.5 (err/size)^2)` |
 | Detectability | object magnitude versus the frame's limiting magnitude (the faintest 0.25-mag bin where half the catalog stars are detected), logistic with 0.6 mag softness. Extended objects are dimmed by 2.5 mag per decade of size beyond the star image plus 1.5 mag. A star the fit actually matched scores 1. |
-| Margin | partly out of frame (down to 0.4) and worst-case altitude within 3 deg of the horizon (0.6 at 0 deg, 0.4 below) |
+| Margin | partly out of frame (down to 0.4) and worst-case altitude within 3 deg of the horizon (0.6 at 0 deg, 0.4 below; only with a confirmed time and site that the photo agrees with, never for a star the fit matched) |
 | Planets / Moon | x1.1 bonus when a bright source sits at the predicted spot; halved detectability when none does |
 | Constellations | in frame when 2+ stick-figure stars are; confidence = solve quality x share of all figure stars detected |
 

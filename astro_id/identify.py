@@ -77,6 +77,35 @@ class Identification:
     best_fit_time: datetime | None = None
     time_flag: str | None = None
     checks: dict = field(default_factory=dict)
+    sky: dict | None = None  # sky_check(): does the solved field agree with the time and site? None without a site
+
+
+# The solved frame is its own proof that the stars the fit matched were above the horizon when it was taken. When a
+# good share of them sits below the horizon at the time used, the clock (or the site) is wrong, not the sky.
+SKY_BELOW_DEG = -2.0        # refraction (~0.5 deg) plus ~150 km of site error: a matched star below this was not up
+SKY_BELOW_FRACTION = 0.25   # this share of the matched stars below SKY_BELOW_DEG over the whole time window
+SKY_BELOW_CENTRE_DEG = -10.0  # fewer than 3 matched stars: judge by the field centre (a frame may hold foreground)
+
+
+def sky_check(sol, cra, cdec, hip_index, matched: set[int], times: list[datetime], site: Site | None) -> dict | None:
+    """Is the solved field above the horizon at ``times`` from ``site``? ``None`` without a site (nothing to check).
+
+    ``below_horizon`` is True when at least SKY_BELOW_FRACTION of the stars the fit matched are below SKY_BELOW_DEG at
+    every sampled time (or, with fewer than 3 matched stars, the field centre is below SKY_BELOW_CENTRE_DEG)."""
+    if site is None or sol.center is None:
+        return None
+    _, cmax = altitude_window([sol.center[0]], [sol.center[1]], times, site)
+    centre = float(cmax[0])
+    ii = [hip_index[h] for h in matched if h in hip_index]
+    frac = None
+    if len(ii) >= 3:
+        _, amax = altitude_window(cra[ii], cdec[ii], times, site)
+        frac = float(np.mean(amax < SKY_BELOW_DEG))
+        below = frac >= SKY_BELOW_FRACTION
+    else:
+        below = centre < SKY_BELOW_CENTRE_DEG
+    return {"below_horizon": bool(below), "field_alt_deg": round(centre, 1),
+            "stars_below_fraction": None if frac is None else round(frac, 2)}
 
 
 # ---------------------------------------------------------------- sky helpers
@@ -179,8 +208,18 @@ def identify(sol: Solution, t_true: datetime, tol_min: float, site: Site | None,
     center_scale = local_scale_deg(sol, sol.width / 2, sol.height / 2)
     psf_arcmin = psf * center_scale * 60
 
+    # Horizon checks need a time we can trust. Stars, constellations, asterisms and deep-sky objects are placed by the
+    # plate solve, not by the clock, so a wrong or unconfirmed clock must never drop or lower them; a star the fit
+    # matched is never dropped or lowered at all (it is in the photo). The check is used only when the time is
+    # confirmed (an offset, even +0m, --time or Facet's corrected time), a site is known and the solved field agrees
+    # with them; then it rules out catalog objects the fit did not see that sit below the horizon (behind the ground)
+    # and the Sun, Moon and planets below it.
+    sky = sky_check(sol, cra, cdec, hip_index, matched, times, site)
+    sky_wrong = bool(sky and sky["below_horizon"])
+    trust_horizon = site is not None and time_source in ("config", "facet") and not sky_wrong
+
     def alt_window(ra, dec):
-        return altitude_window(ra, dec, times, site)
+        return altitude_window(ra, dec, times, site) if trust_horizon else (None, None)
 
     # ---- named stars
     names = data.star_names()
@@ -191,14 +230,15 @@ def identify(sol: Solution, t_true: datetime, tol_min: float, site: Site | None,
         inf = in_frame(sol, x, y)
         amin, amax = alt_window(cra[ii], cdec[ii])
         for k in np.nonzero(inf)[0]:
-            if amax is not None and amax[k] < 0:
-                continue
             h = hips[k]
+            seen = h in matched
+            if amax is not None and amax[k] < 0 and not seen:
+                continue
             name, vmag = names[h]
             err = sol.local_error(x[k], y[k])
             p = C.position_certainty(err, psf)
-            dd = 1.0 if h in matched else C.detectability(vmag, lim)
-            m = C.horizon_margin(None if amin is None else float(amin[k]))
+            dd = 1.0 if seen else C.detectability(vmag, lim)
+            m = C.horizon_margin(None if amin is None or seen else float(amin[k]))
             objs.append(Obj(name, "star", C.combine(q, p, dd, m), float(x[k]), float(y[k]),
                             alt_min=None if amin is None else float(amin[k]), mag=vmag, level=TP.LEVEL_STAR,
                             ra=float(cra[ii[k]]), dec=float(cdec[ii[k]]), hips=(h,)))
@@ -230,10 +270,13 @@ def identify(sol: Solution, t_true: datetime, tol_min: float, site: Site | None,
     bx, by, _ = bright_sources(sol)
     checks: dict = {}
     best_fit = None
-    cap = C.EXIF_TIME_CAP if time_source not in ("config", "facet") else None
+    # unconfirmed clock, or a clock the photo itself contradicts: bodies are at most "candidate"
+    cap = C.EXIF_TIME_CAP if (time_source not in ("config", "facet") or sky_wrong) else None
     mid = len(times) // 2
     for name, key, kind, mag_fb in PLANETS:
         ra, dec, alt = body_positions(key, times, site)
+        if not trust_horizon:
+            alt = None  # topocentric position kept; no horizon verdict at a time we cannot trust
         x, y = project(sol, ra, dec)
         if not in_frame(sol, x[mid:mid + 1], y[mid:mid + 1])[0]:
             continue
@@ -284,9 +327,9 @@ def identify(sol: Solution, t_true: datetime, tol_min: float, site: Site | None,
         ii = np.array([hip_index[h] for h in figure_hips])
         x, y = project(sol, cra[ii], cdec[ii])
         inf = in_frame(sol, x, y)
-        if site is not None:
+        if trust_horizon:
             amin, amax = alt_window(cra[ii], cdec[ii])
-            inf &= amax >= 0
+            inf &= (amax >= 0) | np.array([h in matched for h in figure_hips])
         if inf.sum() < 2:
             continue
         pos = {h: (x[n], y[n]) for n, h in enumerate(figure_hips)}
@@ -312,14 +355,16 @@ def identify(sol: Solution, t_true: datetime, tol_min: float, site: Site | None,
         x, y = project(sol, cra[ii], cdec[ii])
         inf = in_frame(sol, x, y)
         amin = None
-        if site is not None:
+        fit = np.array([h in matched for h in members])
+        if trust_horizon:
             amin, amax = alt_window(cra[ii], cdec[ii])
-            inf &= amax >= 0
+            inf &= (amax >= 0) | fit
         seen = [bool(inf[n]) and _star_seen(sol, h, matched, x[n], y[n], bx, by) for n, h in enumerate(members)]
         frac = sum(seen) / len(ahips)
         if frac < TP.ASTERISM_MIN_FRACTION:
             continue
-        m = C.horizon_margin(None if amin is None else float(np.min(amin)))
+        unfit = None if amin is None or fit.all() else amin[~fit]   # the margin judges only members the fit missed
+        m = C.horizon_margin(None if unfit is None else float(np.min(unfit)))
         conf = C.combine(q, 1.0, frac, m)
         vis = [n for n in range(len(members)) if inf[n]]
         order = list(range(len(members))) + ([0] if aname in TP.ASTERISM_CLOSED else [])
@@ -342,7 +387,7 @@ def identify(sol: Solution, t_true: datetime, tol_min: float, site: Site | None,
     if best_fit is not None and abs((best_fit - t_true).total_seconds()) > tol_min * 60:
         time_flag = "best_fit_outside_tolerance"
     objs.sort(key=lambda o: (-o.confidence, o.name))
-    return Identification(objs, best_fit, time_flag, checks)
+    return Identification(objs, best_fit, time_flag, checks, sky)
 
 
 def _hierarchy(objs: list[Obj], cra, cdec, hip_index, policy: TP.TagPolicy, min_confidence: int) -> None:

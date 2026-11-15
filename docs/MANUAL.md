@@ -133,7 +133,9 @@ all of them are in [CONTRACT.md](../CONTRACT.md#exit-codes-read-from-the-code-th
 | candidate | below 65 | possible; check it yourself |
 
 Confidence combines how well the frame solved, how precisely the object's position is known at that spot, how bright
-the object is against the faintest stars the photo caught, and whether it is cut by the frame edge or near the horizon.
+the object is against the faintest stars the photo caught, and whether it is cut by the frame edge. Near the horizon
+lowers it only for objects the fit did not match, and only when the time and location are confirmed and the photo
+agrees with them.
 The full formula is in the [reference](REFERENCE.md#confidence-scale).
 
 On the labeled copies, names are green (high), amber (likely) and gray (candidate).
@@ -141,7 +143,8 @@ On the labeled copies, names are green (high), amber (likely) and gray (candidat
 ## 4. A wrong camera clock
 
 Camera clocks drift or were never set. A wrong clock does not stop the solve (the stars fix the pointing on their
-own), but it spoils the Sun, Moon and planets and the horizon check. They are still identified, but with only the
+own) and never removes stars, constellations or deep-sky objects: those come from the plate solve. It spoils only
+the Sun, Moon and planets. They are still identified, but with only the
 camera's own time (no offset set) their confidence is capped at 64, "candidate", so they never become object tags at
 the default cut. Any offset in `astro-id.json`, even an empty one ("the clock was right"), lifts the cap.
 
@@ -162,9 +165,15 @@ uv run astro-id solve D:\photos\2026\trip\astro --offset +2559d11h08m --time-tol
   the zone of the site, else your computer's zone.
 - **The Moon helps.** When the Moon is found in a frame, its position pins the true time. astro-id then reports a
   `best_fit_time` and sets `time_flag` if it falls outside your tolerance.
-- **Approximate is fine.** An offset with a tolerance that covers your doubt is enough; with neither an offset nor
-  a site, stars, constellations and deep-sky objects are still named, but with a site set, set the offset too: the
-  horizon check uses the time, and the camera's raw time can put the whole field below the horizon.
+- **Approximate is fine.** An offset with a tolerance that covers your doubt is enough, and with neither an offset
+  nor a site, stars, constellations and deep-sky objects are still named, all of them, at full confidence. The
+  horizon is checked only with a confirmed time and a site. If a photo's own stars were below the horizon at the
+  recorded time, the clock (or the site) is wrong: the frame gets the warning "this frame's sky was below the
+  horizon at the recorded time" (and `time_hint` in the results), its stars stay named, and the Sun, Moon and
+  planets stay *candidate* until you set the offset.
+- **A body not seen where it should be scores at most 50.** A planet or the Moon predicted in the frame with no
+  matching source there has its detectability halved, so it lands at 50 or less whatever the caps say: with a wrong
+  clock that is the usual case (it is looked for in the wrong place).
 
 ### Remember it per folder: `astro-id.json`
 
@@ -184,8 +193,8 @@ are in the [reference "All options" table](REFERENCE.md#all-options).
 
 ## 5. Your location
 
-The location matters only for the Sun, Moon and planets and the horizon: where they were in the sky at that time from
-that spot. Constellations, stars and deep-sky objects do not depend on it.
+The location matters only for the Sun, Moon and planets: where they were in the sky at that time from that spot.
+Constellations, stars and deep-sky objects do not depend on it (a wrong location never removes them).
 
 No default location is ever assumed. Without one, the bodies are computed from the Earth's centre (the Moon can be
 about 1 degree off) and no horizon check is made, so their confidence is capped: the Sun and planets at 79, the Moon

@@ -150,7 +150,8 @@ Each object's score is `100 x solve quality x position certainty x detectability
 - **Solve quality:** grade A (100+ matched stars, error under 1 px), B or C.
 - **Position certainty:** how well the stars around that spot fit, against the object's size.
 - **Detectability:** is the object bright enough to show in this frame's sky?
-- **Margin:** partly out of frame, or near the horizon, lowers it.
+- **Margin:** partly out of frame lowers it; so does sitting near the horizon, but only for objects the fit did not
+  match, and only when the time and site are confirmed and the photo agrees with them.
 
 | Tier | Confidence |
 |---|---|
@@ -166,9 +167,11 @@ Full factor table: [Confidence scale](docs/REFERENCE.md#confidence-scale). Which
 - **It needs stars.** Cloud, a sky too bright to show stars or a frame filled by the Moon will not solve; few
   stars give a grade C.
 - **Wide-angle shots need W08; telephoto shots need D50 too.**
-- **Time and place only matter for the Sun, Moon and planets.** Stars and deep-sky objects come from the stars
-  alone. The bodies are always computed, but without a clock offset or a confirmed time they are capped at 64
-  (*candidate*), and without a site at 79 (*likely*; the Moon at 70). No default site is ever assumed.
+- **Time and place only matter for the Sun, Moon and planets.** Stars, constellations and deep-sky objects come
+  from the plate solve alone, whatever the clock or site says: a wrong clock never removes them. The bodies are
+  always computed, but without a clock offset or a confirmed time they are capped at 64 (*candidate*), and without
+  a site at 79 (*likely*; the Moon at 70). When a photo's own stars were below the horizon at the recorded time,
+  the frame gets a warning that the clock (or site) is wrong. No default site is ever assumed.
 - **Location and time can be approximate:** an estimated site and a clock offset with a tolerance are enough, and
   stars, constellations and deep-sky objects are named without either.
 - **Photos need a long edge of at least about 2400 px**; smaller copies may not solve (details in
