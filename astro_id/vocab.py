@@ -23,6 +23,8 @@ EXIT_CODES: dict[str, dict[int, str]] = {
     "session": {0: "the session ran (frames may have failed; see the events)",
                 2: "a bad option or no photos (after an error event on stdout)"},
     "cull": {0: "verdicts printed", 2: "bad metrics file or cull rule"},
+    "moon": {0: "a Moon disc was found in at least one photo", 1: "no Moon disc found in any photo",
+             2: "usage error: target not found, no photos, or a bad --time/--site"},
     "facet sync": {0: "the run completed", 2: "usage, login or connection error"},
     "facet status": {0: "ledger printed", 2: "usage, login or connection error"},
     "facet undo": {0: "done (or dry run)", 2: "usage, login or connection error"},

@@ -72,6 +72,9 @@ def build_parser() -> argparse.ArgumentParser:
     from .label import add_parser as _add_label
 
     _add_label(sub)
+    from .moon import add_parser as _add_moon
+
+    _add_moon(sub)
     from .facet.cli import add_parser as _add_facet
 
     _add_facet(sub)
@@ -110,6 +113,10 @@ def main(argv: list[str] | None = None) -> int:
         from .label import run as run_label
 
         return run_label(args)
+    if args.cmd == "moon":
+        from .moon import run as run_moon
+
+        return run_moon(args)
     if args.cmd == "session":
         return cmd_session(args)
     if args.cmd == "cull":

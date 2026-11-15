@@ -12,6 +12,7 @@
 5. [Your location](#5-your-location)
 6. [JPG or RAW](#6-jpg-or-raw)
 7. [Labeled copies](#7-labeled-copies)
+   - [Photos of the Moon: astro-id moon](#photos-of-the-moon-astro-id-moon)
 8. [Inside Facet, end to end](#8-inside-facet-end-to-end)
 9. [Updating](#9-updating)
 10. [Troubleshooting](#10-troubleshooting)
@@ -257,6 +258,32 @@ uv run astro-id solve D:\photos\2026\trip\astro --overlay-scores --no-overlay-li
 Inside Facet the same thing is the Export step (see [section 8](#export-labeled-copies)).
 
 ![Labeled copies](img/gallery-1.jpg)
+
+### Photos of the Moon: astro-id moon
+
+A close-up of the Moon has no stars, so `solve` cannot place it. `astro-id moon` reads the Moon itself: it finds the
+disc, tells a phase from an eclipse, works out how the Moon is turned, and names its maria, large craters, mountain
+ranges and Apollo landing sites, each with a confidence. First version; details and limits:
+[Moon features](REFERENCE.md#moon-features-astro-id-moon) and [the plan](PLAN-moon.md).
+
+```powershell
+uv run astro-id moon D:\photos\2026\moon\IMG_0412.jpg                          # orientation fitted from the maria
+uv run astro-id moon D:\photos\2026\moon --site 32.6,-116.3                     # EXIF time + site, camera held level
+uv run astro-id moon IMG_0412.jpg --time 2026-11-24T04:00-08:00 --north-angle 0 # you know north is straight up
+```
+
+- Each photo gets `<name>_moon.jpg` next to it (or in `--to DIR`): the fitted limb as a dashed circle, the names in
+  the usual colours, and a legend with the disc size, the phase or eclipse, and how the orientation was found. A
+  small Moon is drawn on an enlarged crop around it.
+- **Size matters most.** At about 65 px across only the largest maria are big enough to name, and the command says
+  so: "the Moon is 65 px across here: only the largest maria can be named; craters like Tycho need about 245 px".
+  The disc in pixels is about `focal length (mm) x 9.1 / pixel pitch (um)`: for craters use at least ~250 px
+  (e.g. 105 mm on a 3.76 um sensor, at full resolution, not a downscaled copy), ~550 px for 40 km craters.
+- **How the Moon is turned** comes from, in order: `--north-angle` (where celestial north points, degrees
+  counter-clockwise from up; add `--mirror` for a star diagonal), the photo's time plus the site with the camera
+  assumed level, or a fit of the dark maria (works without time or site on a clean disc; it says when it fails).
+- `--json` prints everything (disc, state, orientation, features with pixel positions and confidence, and the
+  annotations payload). `--tag-style kind` spells the tags `moon/tycho`.
 
 ## 8. Inside Facet, end to end
 
