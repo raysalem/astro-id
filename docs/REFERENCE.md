@@ -28,7 +28,9 @@ astro-id finds ASTAP through the `ASTAP_PATH` environment variable (the executab
 or the folder of the executable (a database is present when its `*_0101.*` file is there). On macOS set both:
 `ASTAP_PATH=/Applications/ASTAP.app/Contents/MacOS/astap` and `ASTAP_DB=/usr/local/opt/astap`.
 
-`uv run astro-id setup` downloads the reference catalogs and reports the ASTAP path and databases. They are cached in
+`uv run astro-id setup` downloads the reference catalogs and reports the ASTAP path and databases (exit 3 when ASTAP
+or a dataset is missing); `uv run astro-id check` compares the whole setup with the stated minimums
+([REQUIREMENTS.md](REQUIREMENTS.md)) and exits 0 when every required check passes. The catalogs are cached in
 `%LOCALAPPDATA%\astro-id\data` on Windows and `~/.cache/astro-id/data` elsewhere (override with `ASTRO_ID_DATA`).
 Sources and licenses: [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
 
@@ -37,23 +39,32 @@ Sources and licenses: [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
 ```powershell
 uv run astro-id solve <file-or-folder> [--min-confidence 65] [--offset +2559d11h08m]
                      [--time-tolerance 15m] [--site lat,lon[,elev_m]]
-                     [--overlay-dir DIR] [--json] [--no-overlay] [--no-fallback] [-v]
+                     [--overlay-dir DIR] [--json] [--no-overlay] [--no-fallback] [--no-results-file] [-v]
                      [--tag-levels 1,2,3,4] [--star-mag-limit M] [--max-catalog-mag 6.0]
                      [--tag-style plain|kind] [--stack-mode representative|all] [--stack-gap 120]
                      [--solve-source jpg|raw|auto] [--overlay-scores]
+uv run astro-id label <photo-or-folder> [--out labeled|sidecar|both] [--to DIR]   # the simplest way
 uv run astro-id site <folder>     # pick the observing site on Google Maps -> astro-id.json
 uv run astro-id setup             # download data, check ASTAP
+uv run astro-id check             # check the minimum requirements (--facet URL, --offline, --json)
 ```
+
+`astro-id label` ([SIMPLE.md](SIMPLE.md)) writes `<name>_astro.jpg` next to each photo (or `--to DIR`), or with
+`--out sidecar` a `<name>.astro.json`; `astro-label.cmd` (drag and drop, Windows) and `astro-label.sh` wrap it.
+Exit codes of every command: [CONTRACT.md](../CONTRACT.md#exit-codes-read-from-the-code-that-returns-them).
 
 - A folder is scanned for JPG/JPEG/TIF/PNG and RAW. A RAW file is replaced by its same-stem JPG when
   there is one (RAW+JPG pairs count once); a lone RAW is decoded.
 - Overlay labels are plain names ("Uranus"); `--overlay-scores` adds the confidence ("Uranus 100"). The legend keeps
   the tier colour key. The live, filterable overlay is drawn by the Facet viewer from the `annotations` payload
   (see below); the JPG is the static copy.
-- Overlays (`<stem>_astro.jpg`, 3000 px wide) and `astro-id-report.csv` go to `--overlay-dir`, default
-  the sibling folder `<folder>-annotated`. Originals are never written to.
+- Overlays (`<stem>_astro.jpg`, 3000 px wide), `astro-id-report.csv` and `astro-id-results.json` (the `--json`
+  document, merged across runs per file; `--no-results-file` skips it) go to `--overlay-dir`, default the sibling
+  folder `<folder>-annotated`. Originals are never written to. Facet add-on and sidecar runs do not write the
+  results file.
 - `--json` prints one document `{"contract": 1, "results": [...]}` to stdout (see [CONTRACT.md](../CONTRACT.md));
-  logs go to stderr. Exit code is 0 when the run completed, even if some frames did not solve.
+  logs go to stderr. Each frame carries `warnings` (no clock offset, no site, no EXIF time). Exit code is 0 when
+  the run completed, even if some frames did not solve.
 
 ### Per-folder settings: `astro-id.json`
 
@@ -70,10 +81,14 @@ The nearest `astro-id.json` walking up from each photo's folder applies; command
 `clock_offset` is added to EXIF `DateTimeOriginal` (camera local time) to get the true local time in
 `timezone` (system zone when absent). Offsets read like `+2559d11h08m`, `-1h30m`, `90m` or `2559d 11:08`.
 
-`astro-id site <folder>` opens Google Maps in Chrome at the folder's site, asks you to paste
+`astro-id site <folder>` opens Google Maps in Chrome at the folder's site (a neutral world view when none is
+known), asks you to paste
 `lat, lon` (right-click the spot in Maps and click the first line to copy it) or a Maps URL, looks up
 the elevation from USGS EPQS (US only; you are asked otherwise), asks for a name, confirms, and
-writes/merges `astro-id.json` (keeping any clock offset, tolerance and timezone already there).
+writes/merges `astro-id.json` (keeping any clock offset, tolerance and timezone already there). The suggested
+site is the folder's own, else the last site saved on this machine (`last_site.json` in the data folder, written
+only after a confirmed save); with neither it suggests nothing and asks for coordinates. No default site is ever
+assumed or written.
 
 ### Time and tolerance
 
@@ -83,7 +98,10 @@ Moon is found in the frame its position pins the time (it moves ~0.5 deg per hou
 `best_fit_time` is reported and `time_flag` is set if it falls outside the tolerance. Without a clock
 offset (`--offset`, or a `clock_offset` key in `astro-id.json`, even `0`) or a true time (`--time`, or a date
 corrected in Facet), EXIF time is used as-is (`time_source: "exif"`) and the Sun, Moon and planets are capped at
-*candidate* (confidence 64; `EXIF_TIME_CAP` in `astro_id/confidence.py`). The site does not affect the cap.
+*candidate* (confidence 64; `EXIF_TIME_CAP` in `astro_id/confidence.py`). They are still identified, never
+dropped. Without a site (no `--site`, no `site` in `astro-id.json`, no per-photo position from Facet) the bodies are
+computed from the geocentre with no horizon check, and capped at 79 (the Moon at 70): *likely* at best. The lower
+cap wins when both apply. Stars, constellations and deep-sky objects are unaffected by either.
 
 ## Annotations payload (for the Facet viewer)
 
@@ -151,7 +169,8 @@ file's site and offset.
 | True time of one frame | `--time`, `--timezone` | - | EXIF |
 | Time tolerance | `--time-tolerance` | `time_tolerance_min` | 15 min |
 | Timezone | `--timezone` (also for EXIF + offset, v1.1) | `timezone` | inferred from the site, else system |
-| Site | `--site lat,lon[,elev]` | `site` | none |
+| Site | `--site lat,lon[,elev]` | `site` | none (never assumed) |
+| Results file | `--no-results-file` | - | on (`astro-id-results.json`) |
 | Overlay folder | `--overlay-dir` | - | `<folder>-annotated` |
 | Overlay scores | `--overlay-scores` | - | off |
 | Skip overlay JPG | `--no-overlay` | - | off |
@@ -190,7 +209,7 @@ uv run astro-id facet undo --path-prefix "D:\Photos\2026\trip\astro"            
 - **What is written:** tags through `POST /api/photos/batch_manual_tags` (`plate-solved` or `plate-solve failed`
   plus the taggable objects, under Facet's 50-tag cap, other tags counted first), stale astro-id tags removed with
   `DELETE /api/photo/manual_tags`, and the annotation payload (`ANNOTATIONS.md`). Facet's reject/cull flags are
-  never written. Until Facet has plugin-owned tags, these are stored as ordinary user tags.
+  never written. A Facet without object tags stores the objects as ordinary tags; the meaning is the same.
 - **Ledger:** `%LOCALAPPDATA%\astro-id\facet-ledger.sqlite` (Windows) or `$XDG_DATA_HOME/astro-id/` records per
   Facet URL and photo the tags astro-id added, the annotation hash and the Facet version. A re-run removes only
   those tags; a tag someone else put on the photo is never claimed or removed. Re-running on unchanged results
@@ -252,13 +271,18 @@ manifest and its folder). The ledger and astro-id's tags stay; `astro-id facet u
   filtered to category `astro` by default; clear the category box and Reload for every photo of the run).
 - **By hand:** open Astro from the Add-ons page or the sidebar; it works on the current view, or on the selected
   photos (up to 500). Step 1 also keeps the manual folder / album / tag loader.
-- **The five steps** collapse as you go (location, time ± tolerance and RAW/JPG, plate solve, culling) so they fit
-  the narrow sidebar; hover a row for detail. "In Facet" links and the "Show keep / review / reject" buttons ask
+- **The steps** collapse as you go (location, time ± tolerance and RAW/JPG, plate solve, results and Save to
+  Facet, sky labels, export, culling) so they fit the narrow sidebar; hover a row for detail. A requirements line
+  under the title names anything missing (the same checks as `astro-id check`). "In Facet" links and the "Show keep / review / reject" buttons ask
   Facet to open or show those photos. After every write, Facet refreshes the photos that changed.
-- **What it writes:** tags (as manual tags + astro-id's ledger, until Facet's plugin tags arrive; when Facet
-  already has them the sidebar says so), the annotation overlay if Facet has `PUT /api/photo/annotations` (else a
+- **What it writes:** object tags and status tags (with astro-id's ledger; an older Facet without object tags
+  stores them as ordinary tags and the sidebar says so), the sky labels if Facet has `PUT /api/photo/annotations` (else a
   note in the sidebar says annotations are skipped; there is no `--legacy-db` in add-on mode), and GPS through
-  `PUT /api/photo/gps`. Never Facet's cull or reject flags.
+  `PUT /api/photo/gps`. Never Facet's cull or reject flags. **Undo what Astro saved…** (step 4) removes
+  astro-id's object tags, status tags and sky labels from the ticked or all loaded photos after a dry run and one
+  inline confirmation; your own tags and old tags written outside the add-on stay.
+- **Sky labels on this photo: Off/On** (step 5) shows or hides the labels while the panel is open (it starts Off);
+  **Only names at confidence ≥** filters what is shown and exported, never what is saved.
 
 **How it is wired (for the curious):** Facet passes `FACET_URL`, `FACET_TOKEN` (a per-launch add-on token),
 `FACET_ADDON_ID` and `FACET_LAUNCH_SECRET`. astro-id binds `127.0.0.1` on a free port, prints
