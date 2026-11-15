@@ -32,7 +32,7 @@ module-name = "astro_id"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["facet_contract: talks to a real Facet viewer API (skipped when no Facet checkout is found)"]
+markers = ["real_gate: uses the real ASTAP gate", "facet_contract: talks to a real Facet viewer API (skipped when no Facet checkout is found)"]
 
 [dependency-groups]
 dev = [

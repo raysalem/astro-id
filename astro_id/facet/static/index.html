@@ -86,6 +86,7 @@
     <button id="helpBtn" class="secondary" aria-expanded="false">Help</button></div>
   <div id="facet" class="err small"></div>
   <div id="update" class="muted small" role="status" hidden></div>
+  <div id="reqLine" class="muted small" role="status" hidden></div>
   <details class="sub small" id="notesBox" hidden><summary id="notesSum">Notes</summary>
     <div id="warnings" class="muted small"></div></details>
 </header>
@@ -387,7 +388,7 @@ const NONCE = B.readNonce(location.search);
 const API = B.makeApi((u, o) => fetch(u, o), NONCE);
 // Must equal serve.py PAGE_VERSION. Facet reads this page from disk on every load but keeps the add-on process
 // running, so after an update the page can be newer than its server: the add-on then restarts itself (B.updatePlan).
-const PAGE_VERSION = "2026-11-15.1";
+const PAGE_VERSION = "2026-11-15.2";
 let serverStale = false;
 let updating = null;   // a Promise while Astro restarts itself on new code: every api() call waits for it
 async function api(path, body) {
@@ -532,6 +533,8 @@ async function init() {
   $("facet").textContent = state.can_write ? "" : "Read-only: Astro has no Facet credential, so nothing can be written.";
   if (state.page_version !== PAGE_VERSION || (state.update && state.update.code_changed)) checkVersion(state);
   versionPoller.start();
+  const reqProblems = (state.requirements && state.requirements.problems) || [];
+  $("reqLine").hidden = !reqProblems.length; $("reqLine").textContent = reqProblems.join(" ");
   const notes = state.warnings || [];
   $("notesBox").hidden = !notes.length; $("notesSum").textContent = `Notes (${notes.length})`;
   $("warnings").innerHTML = notes.map((n) => `<div>${esc(n)}</div>`).join("");
