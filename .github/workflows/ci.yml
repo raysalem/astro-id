@@ -29,6 +29,9 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --frozen
+      - name: Docs links and personal text
+        if: runner.os == 'Linux'
+        run: uv run python tools/check_docs.py
       - run: uv run pytest -q -rs
       - uses: actions/setup-node@v7.1.0
         with:
