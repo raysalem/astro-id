@@ -12,22 +12,25 @@ Works standalone from the command line, or as an add-on inside the [Facet](https
 </p>
 
 <p align="center">
-  <a href="docs/img/demo.mp4"><img src="docs/img/demo.webp" width="800" alt="20-second animation: an astro-id title card; the plain photo of Orion rising over trees, which then gains its labels and constellation figures; a slow zoom onto the Pleiades (M45) label; a montage of the other example frames, ending on Jupiter and Mars in morning twilight; an end card."></a>
-  <br><sub>From a plain photo to named objects. Animation not playing? <a href="docs/img/demo.mp4">Watch the video (MP4)</a>.</sub>
+  <a href="docs/img/demo.mp4"><img src="docs/img/demo.gif" width="640" alt="Looping animation: the plain photo of Orion rising, the same photo gaining its labels and constellation figures, then a zoom onto the Pleiades label with the caption 'M45 Pleiades, confidence 99'."></a>
+  <br><sub>From a plain photo to named objects. <a href="docs/img/demo.mp4">Full 20 s video (MP4)</a>.</sub>
 </p>
 
 <table>
   <tr>
-    <td width="33%"><img src="docs/img/gallery-1.jpg" width="100%" alt="Before and after of a wide-field photo above a power line: Cassiopeia's W, Cepheus, Perseus and the Double Cluster labelled, the Little Dipper outlined in pink."></td>
-    <td width="33%"><img src="docs/img/gallery-2.jpg" width="100%" alt="Before and after of the autumn Milky Way: Cygnus, Cepheus, Lacerta and Draco outlined, with the North America Nebula region and M39 marked."></td>
-    <td width="33%"><img src="docs/img/gallery-3.jpg" width="100%" alt="Before and after of Perseus down to Taurus: Pleiades, Double Cluster, Auriga's clusters and the planet Uranus labelled, Andromeda at the top edge."></td>
+    <td width="33%"><img src="docs/img/gallery-1.jpg" width="100%" alt="Before and after of a wide-field photo above a power line: Cassiopeia's W, Cepheus, Perseus, Auriga and the Double Cluster labelled, the Little Dipper outlined in pink, the Pleiades at the right edge."></td>
+    <td width="33%"><img src="docs/img/gallery-2.jpg" width="100%" alt="Before and after of a deep-blue pre-dawn sky over trees and a power pole: the Winter Triangle in pink, Canis Major with Sirius and M41, Orion's Belt and Sword, Lepus and Puppis labelled."></td>
+    <td width="33%"><img src="docs/img/gallery-3.jpg" width="100%" alt="Before and after of a bright morning-twilight sky with only a few stars: Jupiter and Mars labelled beside the Sickle of Leo, with Leo, Cancer and Hydra outlined."></td>
   </tr>
   <tr>
     <td><sub>Cassiopeia, Perseus and the Double Cluster.</sub></td>
-    <td><sub>The Milky Way through Cepheus and Cygnus.</sub></td>
-    <td><sub>Taurus, Auriga and the planet Uranus.</sub></td>
+    <td><sub>Sirius and Orion before dawn.</sub></td>
+    <td><sub>Jupiter and Mars in morning twilight.</sub></td>
   </tr>
 </table>
+
+More: [the Milky Way through Cepheus](examples/annotated/02-milky-way-cepheus_astro.jpg) and all five
+[example photos](examples/README.md) with what astro-id found in each.
 
 ## Quick start
 
@@ -118,10 +121,8 @@ full per-photo results, the same document `--json` prints) go to `<folder>-annot
 JSON file. Runs from the Facet add-on do not write it. Formats and exit codes: [CONTRACT.md](CONTRACT.md).
 
 `astro-id site` suggests the folder's saved site, else the last site you saved on this machine; with neither it asks
-for coordinates (or a Google Maps link). No default site is ever assumed.
-
-Settings that belong to a folder (clock offset, time tolerance, timezone, site) go in an `astro-id.json` next to the
-photos; command-line flags override it. Every option: [All options](docs/REFERENCE.md#all-options).
+for coordinates (or a Google Maps link). Per-folder settings (clock offset, time tolerance, timezone, site) live in
+`astro-id.json` next to the photos; flags override it. Every option: [All options](docs/REFERENCE.md#all-options).
 
 ## Use it with Facet
 
@@ -130,20 +131,16 @@ photos; command-line flags override it. Every option: [All options](docs/REFEREN
 [raysalem/facet](https://github.com/raysalem/facet). Install the add-on once, pointing at Facet's data folder (the
 one holding `scoring_config.json`):
 
-```powershell
-uv run astro-id facet install --facet-data "$env:LOCALAPPDATA\Facet\data"   # Windows
-```
-
 ```sh
+uv run astro-id facet install --facet-data "$env:LOCALAPPDATA\Facet\data"   # Windows (PowerShell)
 uv run astro-id facet install --facet-data /path/to/facet/data             # Linux / macOS
 ```
 
-If Facet refuses the add-on, run the install again with `--older-facet` (for a Facet that does not know the
-manifest's `network` key); the install prints this hint too. Turn on
-`"addons": {"enabled": true}` in Facet's `scoring_config.json` and restart Facet. Then open the Astro panel on a
-folder or selection, confirm location and time, and solve: objects become object tags, and sky labels appear on each photo.
-A Facet without add-ons can use the separate web page `astro-id facet serve`
-([Facet sidecar](docs/REFERENCE.md#facet-sidecar-astro-id-facet-)).
+If Facet refuses the add-on, install again with `--older-facet` (for a Facet that does not know the manifest's
+`network` key; the install prints this hint too). Turn on `"addons": {"enabled": true}` in `scoring_config.json` and
+restart Facet. Open the Astro panel on a folder or selection, confirm location and time, and solve: objects become
+object tags, and sky labels appear on each photo. A Facet without add-ons can use the separate web page
+`astro-id facet serve` ([Facet sidecar](docs/REFERENCE.md#facet-sidecar-astro-id-facet-)).
 
 ## How confidence works
 
@@ -166,7 +163,8 @@ Full factor table: [Confidence scale](docs/REFERENCE.md#confidence-scale). Which
 
 ## Limits
 
-- **It needs stars.** Cloud, bright twilight or a frame filled by the Moon will not solve; few stars give a grade C.
+- **It needs stars.** Cloud, a sky too bright to show stars or a frame filled by the Moon will not solve; few
+  stars give a grade C.
 - **Wide-angle shots need W08; telephoto shots need D50 too.**
 - **Time and place only matter for the Sun, Moon and planets.** Stars and deep-sky objects come from the stars
   alone. The bodies are always computed, but without a clock offset or a confirmed time they are capped at 64
@@ -179,13 +177,8 @@ Full factor table: [Confidence scale](docs/REFERENCE.md#confidence-scale). Which
 
 - [Simplest way](docs/SIMPLE.md): `astro-id label` in five lines. [Manual](docs/MANUAL.md): a guided walk-through.
   [Requirements](docs/REQUIREMENTS.md): minimum versions and `astro-id check`. [Testing](docs/TESTING.md): the suites and CI.
-- [Reference](docs/REFERENCE.md): [all options](docs/REFERENCE.md#all-options), [astro-id.json](docs/REFERENCE.md#per-folder-settings-astro-idjson),
-  [time and tolerance](docs/REFERENCE.md#time-and-tolerance), [how it solves](docs/REFERENCE.md#how-it-solves),
-  [confidence](docs/REFERENCE.md#confidence-scale), [tags](docs/REFERENCE.md#tag-hierarchy-and-tag-policy),
-  [quality and culling](docs/REFERENCE.md#quality-metrics-and-culling), [astro session](docs/REFERENCE.md#astro-session-astro-id-session),
-  [RAW input](docs/REFERENCE.md#raw-as-the-solver-input-solve_source), [stacking](docs/REFERENCE.md#stacking-sequences),
-  [Facet sidecar](docs/REFERENCE.md#facet-sidecar-astro-id-facet-), [Facet add-on](docs/REFERENCE.md#facet-add-on-sidebar-inside-facet),
-  [astrometry.net fallback](docs/REFERENCE.md#optional-fallback-astrometrynet).
+- [Reference](docs/REFERENCE.md): every option, `astro-id.json`, time and tolerance, how it solves, confidence, tags,
+  quality and culling, astro sessions, RAW input, stacking, the Facet sidecar and add-on, the astrometry.net fallback.
 - Formats: [CONTRACT.md](CONTRACT.md) (JSON output, session events, add-on wiring), [ANNOTATIONS.md](ANNOTATIONS.md) (overlay payload).
 
 ## Data sources and licenses
@@ -206,8 +199,8 @@ Labelled copies carry Stellarium figures and OpenNGC names: credit them if you p
 
 ## Development and license
 
-Tests need no ASTAP or photos (reference data downloads on first run); CI and the example check:
-[docs/TESTING.md](docs/TESTING.md).
+Tests need no ASTAP or photos (reference data downloads on first run); CI, the example check and how the example
+set is rebuilt (`tools/make_examples.py`, `tools/make_demo.py`): [docs/TESTING.md](docs/TESTING.md).
 
 ```sh
 uv run pytest -q

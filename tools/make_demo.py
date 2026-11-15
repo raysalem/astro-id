@@ -1,10 +1,11 @@
-"""Build docs/img/demo.mp4, demo.webp and demo-poster.jpg from the example photos.
+"""Build docs/img/demo.mp4 and demo.gif from the example photos.
 
 Run from the repo root:
     uv run --with imageio-ffmpeg python tools/make_demo.py
 (ffmpeg on PATH is used if imageio-ffmpeg is not installed.)
-Captions come from examples/expected.json only. It stores no per-object score, so the
-confidence shown is its stated assert threshold: tags >= 85, planets/Moon >= 80.
+Captions and the confidence numbers come from examples/expected.json ("scores": the confidence each
+listed tag had when the example set was solved). demo.gif is a short loop (original -> labeled -> zoom)
+for inline display in the README; demo.mp4 is the full 20 s clip.
 """
 import json, shutil, subprocess, sys
 from pathlib import Path
@@ -14,8 +15,15 @@ ROOT = Path(__file__).resolve().parent.parent
 EX, OUT = ROOT / "examples", ROOT / "docs" / "img"
 W, H, FPS = 1280, 720, 24
 SRC_W = 3200  # working width for sharp zooms
+LEGEND = (0.215, 0.86)  # legend box of a labeled copy: x < 21.5 % of the width, y > 86 % of the height
 
 exp = json.loads((EX / "expected.json").read_text(encoding="utf-8"))["files"]
+
+
+def score(k, tag):
+    """Confidence of an asserted tag in example k, from expected.json (fails loudly if it is not asserted)."""
+    assert tag in exp[k]["tags"], (k, tag)
+    return exp[k]["scores"][tag]
 
 
 def ffmpeg_exe():
@@ -38,8 +46,12 @@ def font(size, bold=False):
     return ImageFont.load_default()
 
 
-def load(path):
+def load(path, under=None):
     im = Image.open(path).convert("RGB")
+    if under is not None:  # cover the solver's legend box (bottom-left) with the same pixels of the original
+        o = Image.open(under).convert("RGB")
+        box = (0, round(im.height * LEGEND[1]), round(im.width * LEGEND[0]), im.height)
+        im.paste(o.crop(box), box[:2])
     return im.resize((SRC_W, round(im.height * SRC_W / im.width)), Image.LANCZOS)
 
 
@@ -85,23 +97,25 @@ def mix(a, b, t):
 
 f4 = "04-orion-rising.jpg"
 orig = {k: load(EX / k) for k in exp}
-lab = {k: load(EX / "annotated" / (Path(k).stem + "_astro.jpg")) for k in exp}
+lab = {k: load(EX / "annotated" / (Path(k).stem + "_astro.jpg"), under=EX / k) for k in exp}
 
 M45 = (0.445, 0.278)  # M45 Pleiades in frame 04, normalised
 BASE = (0.5, 0.62)
 
+# montage: (label, tag) per frame, and the view (cx, cy, zoom) to show it at
 CAP = {
-    "01-cassiopeia-perseus.jpg": "Cassiopeia · Perseus · Auriga",
-    "02-milky-way-cepheus.jpg": "Cepheus · M39 · Triangulum",
-    "03-taurus-perseus-uranus.jpg": "M45 Pleiades · Uranus · Perseus",
-    "05-dawn-jupiter-mars.jpg": "Jupiter · Mars",
+    "01-cassiopeia-perseus.jpg": ([("Cassiopeia", "cassiopeia"), ("Perseus", "perseus"),
+                                   ("h Persei", "ngc 869 h persei cluster")], (0.5, 0.5, 1.0)),
+    "02-milky-way-cepheus.jpg": ([("Cepheus", "cepheus"), ("M39", "m39"),
+                                  ("North America Neb.", "ngc 7000 north america nebula")], (0.5, 0.5, 1.0)),
+    "03-dawn-orion-sirius.jpg": ([("Canis Major", "canis major"), ("Winter Triangle", "winter triangle"),
+                                  ("Orion's Belt", "orion's belt")], (0.6, 0.45, 1.25)),
+    "05-dawn-jupiter-mars.jpg": ([("Jupiter", "jupiter"), ("Mars", "mars"),
+                                  ("Sickle of Leo", "sickle of leo")], (0.47, 0.42, 2.0)),
 }
-for k, v in CAP.items():  # truth check: every caption item must be a tag in expected.json
-    tags = " ".join(exp[k]["tags"] + exp[k]["borderline"]).lower()
-    for part in v.split(" · "):
-        assert part.lower().split()[0] in tags, (k, part)
-assert "m45 pleiades" in exp[f4]["tags"]
-THR_TAG, THR_PLANET = "confidence ≥ 85", "confidence ≥ 80"
+CAPTION = {k: " · ".join(f"{lbl} {score(k, tag)}" for lbl, tag in items) for k, (items, _) in CAP.items()}
+M45_TEXT = f"M45 Pleiades · confidence {score(f4, 'm45 pleiades')}"
+CONF_SUB = "confidence 0-100, from the solved star field"
 
 
 def frames():
@@ -126,20 +140,38 @@ def frames():
         t = ease(i / n(4))
         cx = BASE[0] + (M45[0] - BASE[0]) * t
         cy = BASE[1] + (M45[1] - BASE[1]) * (0.25 + 0.75 * t)
-        yield bar(view(lab[f4], cx, cy, 1.25 + 2.55 * t), "M45 Pleiades", THR_TAG)
-    for k in ["01-cassiopeia-perseus.jpg", "02-milky-way-cepheus.jpg",
-              "03-taurus-perseus-uranus.jpg", "05-dawn-jupiter-mars.jpg"]:  # 14-18 montage
-        thr = THR_PLANET if k.startswith("05") else THR_TAG
+        yield bar(view(lab[f4], cx, cy, 1.25 + 2.55 * t), M45_TEXT, CONF_SUB)
+    for k, (_, (vx, vy, vz)) in CAP.items():  # 14-18 montage
         for i in range(n(1)):
             t = i / n(1)
-            z = 1.0 + 0.05 * t
-            a, b = view(orig[k], 0.5, 0.5, z), view(lab[k], 0.5, 0.5, z)
-            yield bar(mix(a, b, (t - 0.25) / 0.35), CAP[k], thr if t > 0.5 else "")
+            z = vz * (1.0 + 0.05 * t)
+            a, b = view(orig[k], vx, vy, z), view(lab[k], vx, vy, z)
+            yield bar(mix(a, b, (t - 0.25) / 0.35), CAPTION[k] if t > 0.3 else "", CONF_SUB if t > 0.5 else "")
     end = [("astro-id", font(72, True), (255, 255, 255)),
            ("MIT · github.com/raysalem/astro-id", font(40), (170, 215, 255))]
     bg = view(lab[f4], *BASE, 1.0)
     for i in range(n(2)):  # 18-20 end card
         yield card(bg, end, ease(i / n(0.4)))
+
+
+def gif_frames():
+    """Short loop for the README: original -> labeled -> zoom on M45 -> hold (7.5 s)."""
+    n = lambda s: int(s * FPS)
+    for i in range(n(1.5)):
+        yield bar(view(orig[f4], *BASE, 1.0), "A night-sky photo, no labels")
+    for i in range(n(1.0)):
+        yield bar(mix(view(orig[f4], *BASE, 1.0), view(lab[f4], *BASE, 1.0), i / n(1.0)),
+                  "astro-id names what is in it")
+    for i in range(n(1.0)):
+        yield bar(view(lab[f4], *BASE, 1.0), "astro-id names what is in it")
+    for i in range(n(2.5)):
+        t = ease(i / n(2.5))
+        cx = BASE[0] + (M45[0] - BASE[0]) * t
+        cy = BASE[1] + (M45[1] - BASE[1]) * t
+        yield bar(view(lab[f4], cx, cy, 1.0 + 2.8 * t), M45_TEXT, CONF_SUB)
+    last = bar(view(lab[f4], *M45, 3.8), M45_TEXT, CONF_SUB)
+    for i in range(n(1.5)):
+        yield last
 
 
 def encode(ff, args, out, raw):
@@ -161,11 +193,11 @@ def main():
     print(len(fr), "frames,", len(fr) / FPS, "s")
     encode(ff, ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "24", "-preset", "slow",
                 "-movflags", "+faststart", "-an"], OUT / "demo.mp4", fr)
-    # animated WebP (a GIF of this star field is ~20-48 MB, far over budget)
-    encode(ff, ["-vf", "fps=12,scale=900:-1:flags=lanczos", "-c:v", "libwebp", "-quality", "60",
-                "-loop", "0", "-an"], OUT / "demo.webp", fr)
-    Image.frombytes("RGB", (W, H), fr[int(10.5 * FPS)]).save(OUT / "demo-poster.jpg", quality=88)
-    for f in ("demo.mp4", "demo.webp", "demo-poster.jpg"):
+    # GIF: 640 px, 8 fps, 64 colours, no dithering (dithered star-field noise does not compress)
+    encode(ff, ["-vf", "fps=8,scale=640:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=64:stats_mode=diff[p];"
+                "[b][p]paletteuse=dither=none:diff_mode=rectangle", "-loop", "0"],
+           OUT / "demo.gif", [f.tobytes() for f in gif_frames()])
+    for f in ("demo.mp4", "demo.gif"):
         print(f, round((OUT / f).stat().st_size / 1e6, 2), "MB")
 
 

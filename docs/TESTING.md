@@ -13,3 +13,8 @@
 9. Run the check locally as CI does: `uv run astro-id solve examples/ --json --no-fallback --overlay-dir <scratch> > solve.json`,
    then `uv run python tests/check_examples.py solve.json examples/expected.json`.
 10. Trigger CI by hand: `gh workflow run ci.yml --ref <branch>`.
+11. Rebuild the example set (the source photos are not in the repo): `uv run python tools/make_examples.py prep
+    <source-folder>` (2400 px copies, EXIF stripped to what astro-id reads), solve as in step 9 with
+    `--overlay-dir examples/annotated`, then `make_examples.py expected solve.json` (writes `expected.json` with each
+    listed tag's `scores`) and `make_examples.py composites` (hero and gallery images). Then
+    `uv run --with imageio-ffmpeg python tools/make_demo.py` rebuilds `docs/img/demo.mp4` and `demo.gif`.

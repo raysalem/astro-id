@@ -2,7 +2,7 @@
   "generated_by": "uv run astro-id solve examples/ --json --no-fallback --overlay-dir examples/annotated",
   "astro_id_contract": 1,
   "min_confidence": 80,
-  "note": "tags: taggable objects (default tag policy) at confidence >= 85, plus planets/Moon/Sun at >= 80 (a grade-C solve caps a planet near 82); assert these. borderline: other tags at 80-84, informational only, may move across the 80 line with a different ASTAP or catalog build.",
+  "note": "tags: taggable objects (default tag policy) at confidence >= 85, plus planets/Moon/Sun at >= 80 (a grade-C solve caps a planet near 82); assert these. borderline: other tags at 80-84, informational only, may move across the 80 line with a different ASTAP or catalog build. scores: the confidence each listed tag had in this run (informational).",
   "files": {
     "01-cassiopeia-perseus.jpg": {
       "solved": true,
@@ -20,17 +20,32 @@
         "ursa minor",
         "w of cassiopeia"
       ],
-      "borderline": []
+      "borderline": [],
+      "scores": {
+        "auriga": 100,
+        "camelopardalis": 100,
+        "cassiopeia": 100,
+        "cepheus": 100,
+        "little dipper": 100,
+        "m45 pleiades": 86,
+        "ngc 869 h persei cluster": 97,
+        "ngc 884 chi persei cluster": 96,
+        "perseus": 100,
+        "ursa minor": 100,
+        "w of cassiopeia": 100
+      }
     },
     "02-milky-way-cepheus.jpg": {
       "solved": true,
       "grade": "A",
       "tags": [
-        "camelopardalis",
         "cassiopeia",
         "cepheus",
         "little dipper",
+        "m34",
         "m39",
+        "ngc 7000 north america nebula",
+        "ngc 7686",
         "ngc 869 h persei cluster",
         "ngc 884 chi persei cluster",
         "triangulum",
@@ -38,39 +53,87 @@
         "w of cassiopeia"
       ],
       "borderline": [
+        "camelopardalis",
         "lacerta",
         "perseus"
-      ]
+      ],
+      "scores": {
+        "camelopardalis": 80,
+        "cassiopeia": 100,
+        "cepheus": 100,
+        "lacerta": 83,
+        "little dipper": 100,
+        "m34": 85,
+        "m39": 95,
+        "ngc 7000 north america nebula": 87,
+        "ngc 7686": 91,
+        "ngc 869 h persei cluster": 99,
+        "ngc 884 chi persei cluster": 99,
+        "perseus": 82,
+        "triangulum": 100,
+        "ursa minor": 100,
+        "w of cassiopeia": 100
+      }
     },
-    "03-taurus-perseus-uranus.jpg": {
+    "03-dawn-orion-sirius.jpg": {
       "solved": true,
       "grade": "A",
       "tags": [
-        "aries",
-        "auriga",
-        "m45 pleiades",
-        "ngc 869 h persei cluster",
-        "ngc 884 chi persei cluster",
-        "perseus",
-        "triangulum",
-        "uranus"
+        "canis major",
+        "canis minor",
+        "ic 2391 omi vel cluster",
+        "ic 2395",
+        "lepus",
+        "m41",
+        "m47",
+        "ngc 1788",
+        "ngc 1980 lower sword",
+        "ngc 1981 upper sword",
+        "ngc 2232",
+        "ngc 2239",
+        "ngc 2264 christmas tree cluster",
+        "ngc 2547",
+        "orion's belt",
+        "pyxis",
+        "winter triangle"
       ],
       "borderline": [
-        "andromeda",
-        "cassiopeia",
-        "m37",
-        "w of cassiopeia"
-      ]
+        "orion"
+      ],
+      "scores": {
+        "canis major": 100,
+        "canis minor": 100,
+        "ic 2391 omi vel cluster": 97,
+        "ic 2395": 94,
+        "lepus": 85,
+        "m41": 94,
+        "m47": 88,
+        "ngc 1788": 91,
+        "ngc 1980 lower sword": 100,
+        "ngc 1981 upper sword": 98,
+        "ngc 2232": 98,
+        "ngc 2239": 93,
+        "ngc 2264 christmas tree cluster": 98,
+        "ngc 2547": 92,
+        "orion": 80,
+        "orion's belt": 100,
+        "pyxis": 100,
+        "winter triangle": 100
+      }
     },
     "04-orion-rising.jpg": {
       "solved": true,
       "grade": "A",
       "tags": [
         "auriga",
+        "m35",
+        "m36",
+        "m37",
         "m45 pleiades",
         "ngc 1788",
         "ngc 1980 lower sword",
         "ngc 1981 upper sword",
+        "ngc 2169",
         "ngc 2239",
         "ngc 2264 christmas tree cluster",
         "orion",
@@ -79,17 +142,51 @@
         "uranus"
       ],
       "borderline": [
-        "m37"
-      ]
+        "m42 great orion nebula"
+      ],
+      "scores": {
+        "auriga": 100,
+        "m35": 85,
+        "m36": 89,
+        "m37": 93,
+        "m42 great orion nebula": 82,
+        "m45 pleiades": 99,
+        "ngc 1788": 97,
+        "ngc 1980 lower sword": 100,
+        "ngc 1981 upper sword": 99,
+        "ngc 2169": 90,
+        "ngc 2239": 98,
+        "ngc 2264 christmas tree cluster": 99,
+        "orion": 95,
+        "orion's belt": 100,
+        "taurus": 92,
+        "uranus": 100
+      }
     },
     "05-dawn-jupiter-mars.jpg": {
       "solved": true,
-      "grade": "C",
+      "grade": "A",
       "tags": [
+        "cancer",
+        "canis minor",
         "jupiter",
-        "mars"
+        "leo",
+        "leo minor",
+        "mars",
+        "sextans",
+        "sickle of leo"
       ],
-      "borderline": []
+      "borderline": [],
+      "scores": {
+        "cancer": 100,
+        "canis minor": 100,
+        "jupiter": 100,
+        "leo": 100,
+        "leo minor": 100,
+        "mars": 100,
+        "sextans": 100,
+        "sickle of leo": 100
+      }
     }
   }
 }
