@@ -304,3 +304,147 @@ test("B-P9: init restores the held set before the first status line and before c
   assert.doesNotMatch(html.split("<main>")[1].split("</main>")[0], /<b id="stLoadedText">Nothing loaded yet\.<\/b>/,
     "the static placeholder must not claim nothing is loaded before init knows");
 });
+
+// ------------------------------------------------- Undo what Astro saved (api/undo) ---
+// The page's own undo block against stub elements and a scripted api/undo: dry run -> one inline confirmation line ->
+// Confirm -> the save line reports what was removed, Facet refreshes, the sky-label controls re-read.
+function undoPanel(opts) {
+  const el = {};
+  const $ = (id) => (el[id] = el[id] || {hidden: id === "undoBox" || id === "undoGo", textContent: "", innerHTML: "", disabled: false, checked: id === "undoScopeTicked"});
+  const pagePlural = (n, one, many) => `${n} ${n === 1 ? one : (many || one + "s")}`;
+  const esc = (s) => String(s ?? "");
+  const calls = [], refreshed = [], sky = [];
+  const api = async (p, body) => {
+    calls.push([p, body]);
+    if (p !== "api/undo") throw new Error("unexpected " + p);
+    const a = body.dry_run ? opts.dry : opts.done;
+    if (a instanceof Error) throw a;
+    return a;
+  };
+  const bridge = {refresh: (paths) => refreshed.push(paths)};
+  const src = between("/* ---- undo (start)", "/* ---- undo (end) */");
+  const mk = new Function("$", "api", "esc", "plural", "bridge", "S", "skyContext",
+    "let state = S.state, photos = S.photos, review = S.review || [], toSave = new Set(S.toSave || []), serverStale = !!S.stale,"
+    + " lastCtx = {photo: S.photos[0] && S.photos[0].path}, skyPhoto = 'x';\n"
+    + "const selected = () => photos.filter((p) => p._on).map((p) => p.path);\n" + src
+    + "\nreturn {drawUndo, undoAsk, undoConfirm, undoQuestion, undoDone, undoMark, get pending() { return undoPending; }};");
+  const page = mk($, api, esc, pagePlural, bridge, opts, (p) => sky.push(p));
+  return {page, el, calls, refreshed, sky};
+}
+const uPhotos = (led) => ["a.jpg", "b.jpg", "c.jpg"].map((p, i) => ({path: p, _on: i < 2, ledger: led[i] ? {status: "solved"} : null}));
+const dry = {dry_run: true, photos: 3, object_tags: 32, status_tags: 3, sky_labels: 3, errors: 0,
+             not_removed: {yours: 0, other_writer: 0, failed: 0, no_route: 0, total: 0}, reports: []};
+
+test("undo: the confirmation line, word for word", () => {
+  const p = undoPanel({state: {can_write: true}, photos: uPhotos([1, 1, 1])});
+  assert.equal(p.page.undoQuestion(dry), "Remove 32 object tags, 3 status tags and the sky labels from 3 photos? Your own tags stay.");
+  assert.equal(p.page.undoQuestion({photos: 1, object_tags: 0, status_tags: 1, sky_labels: 0}), "Remove 1 status tag from 1 photo? Your own tags stay.");
+  assert.equal(p.page.undoQuestion({photos: 2, object_tags: 0, status_tags: 2, sky_labels: 2}), "Remove 2 status tags and the sky labels from 2 photos? Your own tags stay.");
+  assert.equal(p.page.undoQuestion({photos: 0, object_tags: 0, status_tags: 0, sky_labels: 0}), null);
+});
+
+test("undo: nothing recorded for the loaded set -> disabled with the reason; read-only -> its own reason", () => {
+  const p = undoPanel({state: {can_write: true}, photos: uPhotos([0, 0, 0])});
+  p.page.drawUndo();
+  assert.equal(p.el.undoBtn.disabled, true);
+  assert.equal(p.el.undoWhy.textContent, "Nothing Astro saved is recorded for the loaded photos.");
+  assert.equal(p.el.undoRow.hidden, false);
+  const q = undoPanel({state: {can_write: false}, photos: uPhotos([1, 0, 0])});
+  q.page.drawUndo();
+  assert.equal(q.el.undoBtn.disabled, true);
+  assert.equal(q.el.undoWhy.textContent, "Read-only: Astro has no Facet credential.");
+  const r = undoPanel({state: {can_write: true}, photos: uPhotos([0, 1, 0])});
+  r.page.drawUndo();
+  assert.equal(r.el.undoBtn.disabled, false);
+  assert.equal(r.el.undoWhy.textContent, "");
+  const s = undoPanel({state: {can_write: true}, photos: []});
+  s.page.drawUndo();
+  assert.equal(s.el.undoRow.hidden, true, "nothing loaded: no undo line at all");
+  // saved in this session (not in the listing) enables it; undone in this session disables it again
+  r.page.undoMark.set("b.jpg", false); r.page.drawUndo();
+  assert.equal(r.el.undoBtn.disabled, true);
+  r.page.undoMark.set("a.jpg", true); r.page.drawUndo();
+  assert.equal(r.el.undoBtn.disabled, false);
+});
+
+test("undo: click -> dry run of the ticked photos -> one line with Confirm / Cancel; nothing written yet", async () => {
+  const p = undoPanel({state: {can_write: true}, photos: uPhotos([1, 1, 1]), dry});
+  p.page.drawUndo();
+  p.el.undoBtn.onclick();
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(p.calls, [["api/undo", {paths: ["a.jpg", "b.jpg"], dry_run: true}]], "ticked photos by default");
+  assert.equal(p.el.undoBox.hidden, false);
+  assert.equal(p.el.undoQ.textContent, "Remove 32 object tags, 3 status tags and the sky labels from 3 photos? Your own tags stay.");
+  assert.equal(p.el.undoGo.hidden, false);
+  // Cancel: closed, nothing sent
+  p.el.undoCancel.onclick();
+  assert.equal(p.el.undoBox.hidden, true);
+  assert.equal(p.page.pending, null);
+  assert.equal(p.calls.length, 1);
+});
+
+test("undo: 'everything loaded' asks for every loaded photo; after a solve 'ticked' = the Results ticks", async () => {
+  const p = undoPanel({state: {can_write: true}, photos: uPhotos([1, 1, 1]), dry});
+  p.el.undoScopeAll.checked = true; p.el.undoScopeTicked.checked = false;
+  await p.page.undoAsk();
+  assert.deepEqual(p.calls[0][1].paths, ["a.jpg", "b.jpg", "c.jpg"]);
+  const q = undoPanel({state: {can_write: true}, photos: uPhotos([1, 1, 1]), review: [{path: "c.jpg"}], toSave: ["c.jpg"], dry});
+  await q.page.undoAsk();
+  assert.deepEqual(q.calls[0][1].paths, ["c.jpg"]);
+});
+
+test("undo: Confirm -> the same paths, the save line says what was removed, Facet refreshes, sky labels re-read", async () => {
+  const done = Object.assign({}, dry, {dry_run: false, not_removed: {yours: 2, other_writer: 0, failed: 0, no_route: 0, total: 2},
+    reports: [{path: "a.jpg", changed: true, not_removed: []}, {path: "b.jpg", changed: true, not_removed: []}]});
+  const p = undoPanel({state: {can_write: true}, photos: uPhotos([1, 1, 0]), dry, done});
+  await p.page.undoAsk();
+  await p.page.undoConfirm();
+  assert.deepEqual(p.calls[1], ["api/undo", {paths: ["a.jpg", "b.jpg"]}]);
+  assert.equal(p.el.saveinfo.innerHTML.includes("Removed 32 object tags, 3 status tags and the sky labels from 3 photos."), true);
+  assert.match(p.el.saveinfo.innerHTML, /2 old tags written outside the add-on stay/);
+  assert.match(p.el.saveinfo.innerHTML, /Save to Facet writes them again/);
+  assert.deepEqual(p.refreshed, [["a.jpg", "b.jpg"]]);
+  assert.deepEqual(p.sky, ["a.jpg"]);
+  assert.equal(p.el.saveFacet.textContent, "Save to Facet");
+  assert.equal(p.el.undoBtn.disabled, true, "nothing recorded any more for the loaded photos");
+  assert.equal(p.el.undoWhy.textContent, "Nothing Astro saved is recorded for the loaded photos.");
+});
+
+test("undo: dry run finds nothing -> says so, no Confirm; an error shows, no Confirm", async () => {
+  const none = Object.assign({}, dry, {photos: 0, object_tags: 0, status_tags: 0, sky_labels: 0});
+  const p = undoPanel({state: {can_write: true}, photos: uPhotos([1, 1, 1]), dry: none});
+  await p.page.undoAsk();
+  assert.equal(p.el.undoQ.textContent, "Nothing Astro saved is recorded for the ticked photos.");
+  assert.equal(p.el.undoGo.hidden, true);
+  await p.page.undoConfirm();
+  assert.equal(p.calls.length, 1, "Confirm without a dry-run answer sends nothing");
+  const q = undoPanel({state: {can_write: true}, photos: uPhotos([1, 1, 1]), dry: new Error("a plate solve is running: try again when it ends")});
+  await q.page.undoAsk();
+  assert.match(q.el.undoQ.innerHTML, /a plate solve is running/);
+  assert.equal(q.el.undoGo.hidden, true);
+});
+
+test("undo: a removal Facet did not answer stays undoable (Undo again)", async () => {
+  const done = Object.assign({}, dry, {dry_run: false, photos: 1, object_tags: 0, status_tags: 0, sky_labels: 1,
+    not_removed: {yours: 0, other_writer: 0, failed: 1, no_route: 0, total: 1},
+    reports: [{path: "a.jpg", changed: true, not_removed: [{tag: "plate-solved", why: "failed"}]}]});
+  const p = undoPanel({state: {can_write: true}, photos: uPhotos([1, 0, 0]), dry, done});
+  await p.page.undoAsk();
+  await p.page.undoConfirm();
+  assert.match(p.el.saveinfo.innerHTML, /1 not removed \(Facet did not answer: Undo again\)/);
+  assert.equal(p.el.undoBtn.disabled, false);
+});
+
+test("undo: the control is a quiet link below the save line, not beside Save to Facet; Help names it", () => {
+  const s4 = between('<details class="step" id="s4">', "</details>");
+  const save = s4.indexOf('id="saveFacet"'), info = s4.indexOf('id="saveinfo"'), undo = s4.indexOf('id="undoBtn"');
+  assert.ok(save > 0 && info > save && undo > info, "undo comes after the save line");
+  assert.match(s4, /<button id="undoBtn" class="link small" disabled>Undo what Astro saved&hellip;<\/button>/);
+  assert.match(s4, /the ticked photos/);
+  assert.match(s4, /everything loaded/);
+  const help = between('<h2 id="h-safe">', '<button id="helpBack2">');
+  assert.match(help, /Undo what Astro saved/);
+  assert.match(help, /object tags, the status tags and the sky labels/);
+  const script = html.split("<script>").slice(-1)[0];
+  assert.doesNotMatch(script, /\bconfirm\(/, "no browser confirm() in a sandboxed iframe");
+});

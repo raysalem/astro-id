@@ -278,6 +278,7 @@
   const UPDATE_MANUAL = "Astro needs one restart to update: on Facet's Add-ons page click Stop, then Open.";
   const UPDATE_REOPEN = "Astro was updated: close and reopen the Astro panel.";
   const UPDATE_WAIT = {solve: "Astro will update after this solve.", export: "Astro will update after this export.",
+                       save: "Astro will update after this save.", undo: "Astro will update after this undo.",
                        unsaved: "Astro will update after you save these results to Facet."};
 
   /* What the panel does about the running add-on's code, from api/state (`st`), this page's version and what it

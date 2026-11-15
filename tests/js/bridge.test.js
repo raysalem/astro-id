@@ -347,6 +347,8 @@ test("updatePlan: add-on newer than the page -> reload once; an old add-on -> ma
 
 test("restartRefused maps the server's reasons", () => {
   assert.equal(B.restartRefused({restart: false, reason: "busy", busy: "export"}).message, "Astro will update after this export.");
+  assert.equal(B.restartRefused({restart: false, reason: "busy", busy: "save"}).message, "Astro will update after this save.");
+  assert.equal(B.restartRefused({restart: false, reason: "busy", busy: "undo"}).message, "Astro will update after this undo.");
   assert.equal(B.restartRefused({restart: false, reason: "unsaved"}).message, "Astro will update after you save these results to Facet.");
   assert.equal(B.restartRefused({restart: false, reason: "unsupported"}).action, "manual");
   assert.equal(B.restartRefused({restart: false, reason: "current"}).action, "none");

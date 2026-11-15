@@ -593,6 +593,185 @@ def _remove_all(ctx: SyncContext, paths: list[str] | None) -> list[dict]:
     return reports
 
 
+# ------------------------------------------------------------------ undo ---
+
+STATUS_TAGS = frozenset({TAG_SOLVED, TAG_FAILED, TAG_REVIEW})
+NOT_REMOVED_WHY = {
+    "yours": "yours: written outside the add-on, so only you can remove them in Facet",
+    "other_writer": "another writer owns that row now",
+    "failed": "Facet did not answer: try Undo again",
+    "no_route": "this Facet cannot remove sky labels",
+}
+
+
+def undo(ctx: SyncContext, paths: list[str] | None = None, dry_run: bool = False) -> dict:
+    """Undo "Save to Facet" for ``paths`` (default: every photo the ledger holds for this library): remove the status
+    tags, object tags and sky labels astro-id wrote, and nothing else.
+
+    What is astro-id's comes from the ledger (plus, on a model D Facet, the summary tags Facet itself lists as this
+    add-on's, as a save adopts them). Never removed: a tag the ledger does not list (the user's, the AI's, another
+    tool's), and ``legacy_tags`` (rows written through the user path that the user owns now). A model D Facet refuses
+    to remove a row another writer owns (``skipped_foreign``): counted, never forced. ``dry_run`` reads only and
+    says what would go. Idempotent: what is gone is no longer in the ledger, so a second undo finds nothing.
+
+    The ledger stays consistent on a partial failure: each photo is re-read after the writes and its row records
+    exactly what of astro-id's is still there (a failed removal stays listed, so Undo again finishes it)."""
+    ctx.refresh()
+    with _job(ctx.client):
+        return _undo(ctx, paths, dry_run)
+
+
+def _undo_plan(ctx: SyncContext, row: dict) -> dict:
+    """What undo removes from one ledger photo (reads Facet; writes nothing)."""
+    path = row["path"]
+    photo = ctx.client.photo(path)
+    if photo is None:
+        return {"path": path, "error": "not in Facet (or not visible)"}
+    present = manual_tags(photo)
+    legacy = set(row.get("legacy_tags") or []) & present
+    mine = set(row["tags"]) & present
+    if ctx.model_d:
+        mine |= _adopt(photo) & present
+    mine -= legacy
+    names = 0
+    labels = recorded = bool(row.get("payload_hash") and row.get("annotation_via"))
+    if ctx.model_d and ctx.client.features().get("annotation_summary"):
+        # the sky labels Facet holds for this add-on, and how many object tags (indexed names) they carry
+        try:
+            mine_ann = next((r for r in ctx.client.annotations_summary(path)
+                             if r.get("source") == ANNOTATION_SOURCE), None)
+            labels = mine_ann is not None
+            names = int(mine_ann.get("indexed") or 0) if mine_ann else 0
+        except FacetError as exc:
+            if exc.status != 404:
+                log.warning("%s: could not read its sky labels: %s", path, exc)
+    route = ctx.mode in ("api", "legacy-db")
+    return {"path": path, "row": row,
+            "status_tags": sorted(t for t in mine if t in STATUS_TAGS),
+            "object_tags": sorted(t for t in mine if t not in STATUS_TAGS),
+            "names": names if (labels and route) else 0,
+            "sky_labels": labels and route, "labels_blocked": labels and not route,
+            "labels_gone": recorded and not labels,     # the ledger lists sky labels Facet no longer has
+            "yours": sorted(legacy)}
+
+
+def _undo(ctx: SyncContext, paths, dry_run: bool) -> dict:
+    want = None if paths is None else set(paths)
+    rows = [r for r in ctx.ledger.rows(ctx.library) if want is None or r["path"] in want]
+    plans: dict[str, dict] = {}
+    errors: list[dict] = []
+    for row in rows:
+        try:
+            p = _undo_plan(ctx, row)
+        except FacetError as exc:
+            p = {"path": row["path"], "error": f"could not read the photo: {exc}"}
+        if p.get("error"):
+            errors.append(p)
+        else:
+            plans[row["path"]] = p
+    failed_tags: dict[str, set] = {}
+    labels_ok: dict[str, bool] = {}
+    if not dry_run:
+        try:
+            _undo_write(ctx, plans, failed_tags, labels_ok)
+        finally:
+            for path, p in plans.items():
+                _undo_record(ctx, p, failed_tags.get(path, set()), labels_ok)
+    reports = []
+    nr = {"yours": 0, "other_writer": 0, "failed": 0, "no_route": 0}
+    tot = {"photos": 0, "object_tags": 0, "status_tags": 0, "sky_labels": 0}
+    for path, p in plans.items():
+        rep = {"path": path, "dry_run": dry_run, "not_removed": []}
+        for t in p["yours"]:
+            rep["not_removed"].append({"tag": t, "why": "yours"})
+        failed = failed_tags.get(path, set())
+        left = p.get("left", set())
+        removed = {k: [t for t in p[k] if t not in failed and t not in left] for k in ("status_tags", "object_tags")}
+        for t in sorted((set(p["status_tags"]) | set(p["object_tags"])) - set(removed["status_tags"])
+                        - set(removed["object_tags"])):
+            rep["not_removed"].append({"tag": t, "why": "failed" if t in failed else "other_writer"})
+        labels = p["sky_labels"] and (dry_run or labels_ok.get(path, False))
+        if p["sky_labels"] and not labels:
+            rep["not_removed"].append({"sky_labels": True, "why": "failed"})
+        if p["labels_blocked"]:
+            rep["not_removed"].append({"sky_labels": True, "why": "no_route"})
+        rep.update(status_tags=removed["status_tags"], object_tags=removed["object_tags"],
+                   names=p["names"] if labels else 0, sky_labels=labels)
+        rep["changed"] = bool(rep["status_tags"] or rep["object_tags"] or labels)
+        for x in rep["not_removed"]:
+            nr[x["why"]] += 1
+        if rep["changed"]:
+            tot["photos"] += 1
+        tot["object_tags"] += len(rep["object_tags"]) + rep["names"]
+        tot["status_tags"] += len(rep["status_tags"])
+        tot["sky_labels"] += int(labels)
+        reports.append(rep)
+    reports += [{"path": e["path"], "error": e["error"], "dry_run": dry_run} for e in errors]
+    return {"dry_run": dry_run, **tot, "not_removed": {**nr, "total": sum(nr.values())},
+            "why": {k: NOT_REMOVED_WHY[k] for k, v in nr.items() if v}, "errors": len(errors),
+            "recorded": len(rows), "reports": reports}
+
+
+def _undo_write(ctx, plans, failed_tags, labels_ok) -> None:
+    by_tag: dict[str, list[str]] = {}
+    for path, p in plans.items():
+        for t in p["status_tags"] + p["object_tags"]:
+            by_tag.setdefault(t, []).append(path)
+    for t, ps in sorted(by_tag.items()):
+        try:
+            done = ctx.client.batch_remove_tag(t, ps) or {}
+            if done.get("skipped_foreign"):
+                log.warning("undo %r: Facet left %d row(s) another writer owns", t, done["skipped_foreign"])
+        except Exception as exc:       # the next tag still goes; the ledger keeps this one listed
+            log.error("undo %r: not removed: %s", t, exc)
+            for pp in ps:
+                failed_tags.setdefault(pp, set()).add(t)
+    for path, p in plans.items():
+        if not p["sky_labels"]:
+            continue
+        try:
+            if ctx.mode == "api":
+                ctx.client.delete_annotation(path, ANNOTATION_SOURCE)
+            else:
+                ctx._legacy.delete(path, ANNOTATION_SOURCE)
+            labels_ok[path] = True
+        except Exception as exc:
+            log.error("%s: sky labels not removed: %s", path, exc)
+            labels_ok[path] = False
+
+
+def _undo_record(ctx, p: dict, failed: set, labels_ok: dict) -> None:
+    """Re-read one photo and make its ledger row say exactly what of astro-id's is still there."""
+    row, path = p["row"], p["path"]
+    tried = set(p["status_tags"]) | set(p["object_tags"])
+    gone_labels = (p["sky_labels"] and labels_ok.get(path, False)) or p.get("labels_gone")
+    h, via = (None, None) if gone_labels else (row.get("payload_hash"), row.get("annotation_via"))
+    try:
+        after = ctx.client.photo(path)
+    except Exception as exc:
+        log.error("%s: could not re-read after undo: %s", path, exc)
+        after = None
+    if after is None:
+        # unknown: keep listing every tag (the next undo intersects with what Facet holds), drop removed labels
+        ctx.ledger.record(ctx.library, path, tags=row["tags"], payload_hash=h, annotation_via=via,
+                          status=row.get("status"), facet_version=row.get("facet_version"),
+                          tag_kind=row.get("tag_kind"))
+        return
+    present = manual_tags(after)
+    left = {t for t in tried if t in present}
+    still = sorted(left & failed)                 # the call failed: still ours, Undo again removes it
+    foreign = left - failed                       # Facet kept it: another writer owns that row
+    p["left"] = foreign
+    if not still and h is None:
+        # nothing of astro-id's is left. Rows the user owns (legacy, foreign) are theirs now: reported by this undo,
+        # not tracked any more (the photo is "not saved by Astro" again, as before its first save).
+        ctx.ledger.forget(ctx.library, path)
+        return
+    legacy = sorted((set(row.get("legacy_tags") or []) & present) | (foreign if ctx.model_d else set()))
+    ctx.ledger.record(ctx.library, path, tags=still, payload_hash=h, annotation_via=via, status=row.get("status"),
+                      facet_version=row.get("facet_version"), tag_kind=row.get("tag_kind"), legacy_tags=legacy)
+
+
 # ------------------------------------------------------------- selection ---
 
 @dataclass

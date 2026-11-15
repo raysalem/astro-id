@@ -54,7 +54,7 @@ from . import keeper
 from .client import ALL_FRAMES, FacetClient, FacetError, addon_credentials, client_from_env, connect
 from .ledger import Ledger
 from .sync import (ANNOTATION_SOURCE, TAG_REVIEW, SyncContext, apply_results, facet_hints, gps_source,
-                   parse_path_map, to_local)
+                   parse_path_map, to_local, undo as undo_saved)
 
 log = logging.getLogger("astro_id.facet")
 STATIC = Path(__file__).with_name("static")
@@ -66,9 +66,13 @@ EXPORT_KEYS = ("lines", "scores", "legend")   # Export's plain-language options 
 # an add-on process running while the page is read from disk on every load, so after an update the page can be newer
 # than its server. The panel then asks the server to restart itself on the new code (api/restart, keeper.py); only
 # a server too old for that gets the one-line "click Stop, then Open". Bump both together.
-PAGE_VERSION = "2026-11-15.1"
+PAGE_VERSION = "2026-11-15.2"
 PACKAGE = Path(__file__).resolve().parents[1]    # the astro_id package: its .py files are what a restart reloads
 UPDATING = "Astro is updating: try again in a moment"
+BUSY_WORDS = {"solve": "a plate solve is running: try again when it ends",
+              "export": "an export is running: try again when it ends",
+              "save": "a save to Facet is running: try again when it ends",
+              "undo": "an undo is running: try again when it ends"}
 
 
 def code_stamp(root: Path = PACKAGE) -> str:
@@ -357,6 +361,7 @@ class App:
         self._export_lock = threading.Lock()  # one export at a time: the check and the start are one step
         self.update = SelfUpdate(False)     # add-on worker mode replaces it (finish_addon)
         self.restarting = False             # set once api/restart accepted: no new solve / export starts
+        self.writing: str | None = None     # "save" / "undo" while one writes to Facet (one writer at a time)
 
     # ------------------------------------------------------------ helpers ---
     def local(self, path: str) -> str:
@@ -444,12 +449,21 @@ class App:
                            "disk_page_version": disk_page_version() if self.update.supported else None}}
 
     def busy(self) -> str | None:
-        """What a restart must wait for: a solve or an export in progress."""
+        """What a restart (or an undo) must wait for: a solve, an export, or a save / undo in progress."""
         if self.job.running:
             return "solve"
         if self.export_job.get("running"):
             return "export"
-        return None
+        return self.writing
+
+    def _start_write(self, what: str) -> None:
+        """Claim the one Facet writer slot (save / undo), or ValueError naming what runs."""
+        with self._export_lock:
+            if self.restarting:
+                raise ValueError(UPDATING)
+            if self.writing:
+                raise ValueError(BUSY_WORDS[self.writing])
+            self.writing = what
 
     # ------------------------------------------------------------ self-update ---
     def restart(self, _q, b):
@@ -860,7 +874,11 @@ class App:
         cut = _confidence(b.get("min_confidence"))   # step 4 slider (else the solve's)
         if cut is not None:
             self.job.min_confidence = cut
-        reports = apply_results(self._ctx_for(self.job), results)
+        self._start_write("save")
+        try:
+            reports = apply_results(self._ctx_for(self.job), results)
+        finally:
+            self.writing = None
         with self.job.lock:
             self.job.reports = reports
             self.job.saved = True
@@ -974,6 +992,8 @@ class App:
                 raise ValueError("an export is already running")
             if self.job.running:
                 raise ValueError("the solve is still running")
+            if self.writing:
+                raise ValueError(BUSY_WORDS[self.writing])
             o = export_options(b.get("options")) or {}
             opts = {"lines": o.get("lines", True), "scores": o.get("scores", False), "legend": o.get("legend", True)}
             view = b.get("view") if isinstance(b.get("view"), dict) else {}
@@ -1049,8 +1069,48 @@ class App:
         results = {p: r for p, r in self.job.results.items() if p in self.job.saved_paths}
         flagged = set(b.get("paths") or [])
         extra = {p: ([TAG_REVIEW] if p in flagged else []) for p in results}
-        reports = apply_results(self._ctx_for(self.job), results, extra_tags=extra)
+        self._start_write("save")
+        try:
+            reports = apply_results(self._ctx_for(self.job), results, extra_tags=extra)
+        finally:
+            self.writing = None
         return {"reports": reports, "skipped_unsaved": len(flagged - set(results))}
+
+    def undo(self, _q, b):
+        """``POST api/undo {paths?, dry_run?}``: remove what "Save to Facet" wrote (astro-id's status tags, object
+        tags and sky labels, per the ledger) from ``paths`` (default: every loaded photo), nothing else. ``dry_run``
+        answers what would go and writes nothing, for the panel's confirmation line. Refused while a solve, an export,
+        a save or another undo runs. The solve's results stay, so Save to Facet can write them again."""
+        dry = b.get("dry_run") is True
+        paths = b.get("paths")
+        if paths is None:
+            paths = list(self.photos)
+        if not isinstance(paths, list) or not all(isinstance(p, str) and p for p in paths):
+            raise ValueError("paths must be a list of photo paths")
+        if len(paths) > MAX_SCOPE_PHOTOS:
+            raise ValueError(f"at most {MAX_SCOPE_PHOTOS} photos at a time")
+        if not paths:
+            raise ValueError("load photos first")
+        with self._export_lock:
+            busy = self.busy()
+            if self.restarting:
+                raise ValueError(UPDATING)
+            if busy:
+                raise ValueError(BUSY_WORDS.get(busy, busy))
+            if not dry:
+                self.writing = "undo"
+        try:
+            out = undo_saved(self._ctx_for(self.job), list(dict.fromkeys(paths)), dry_run=dry)
+        finally:
+            if not dry:
+                self.writing = None
+        if not dry:
+            undone = {r["path"] for r in out["reports"] if r.get("changed")}
+            with self.job.lock:
+                self.job.saved_paths -= undone      # culling's review tag goes only on photos saved (again)
+        out["names_as"] = "searchable" if self.ctx.model_d else "tags"
+        out["annotations"] = self.ctx.mode
+        return out
 
     ROUTES = {("GET", "api/state"): "state", ("GET", "api/albums"): "albums", ("GET", "api/job"): "job_state",
               ("POST", "api/photos"): "list_photos", ("POST", "api/scope"): "scope", ("POST", "api/location"): "location",
@@ -1059,7 +1119,8 @@ class App:
               ("POST", "api/review-tags"): "review_tags", ("POST", "api/save"): "save",
               ("GET", "api/annotations"): "annotations", ("POST", "api/count"): "count",
               ("POST", "api/export"): "export", ("GET", "api/export"): "export_state",
-              ("POST", "api/restart"): "restart", ("GET", "api/loaded"): "loaded_set"}
+              ("POST", "api/restart"): "restart", ("GET", "api/loaded"): "loaded_set",
+              ("POST", "api/undo"): "undo"}
     BINARY = {("GET", "api/thumb"): "thumb"}
 
 
