@@ -6,6 +6,7 @@
 
 1. [What it does](#1-what-it-does)
 2. [Install and check your setup](#2-install-and-check-your-setup)
+   - [The simplest way: astro-id label](#the-simplest-way-astro-id-label)
 3. [Your first solve](#3-your-first-solve)
 4. [A wrong camera clock](#4-a-wrong-camera-clock)
 5. [Your location](#5-your-location)
@@ -24,7 +25,8 @@ use paths like `~/photos/trip/astro`.
 - It reads a night-sky photo and works out where the camera was pointing (this is called plate solving).
 - It names what is in the frame: constellations, the Sun, Moon and planets, bright stars, Messier/NGC/IC objects, asterisms.
 - Every object gets a confidence from 0 to 100.
-- It can draw the names on a copy of the photo, or write them into the [Facet](https://github.com/ncoevoet/facet) photo library.
+- It can draw the names on a copy of the photo (the drawn names are called sky labels), or write them into the
+  [Facet](https://github.com/ncoevoet/facet) photo library as object tags and sky labels.
 - It runs as a command-line tool, or as an "Astro" panel inside Facet. It never changes your original photos.
 
 ## 2. Install and check your setup
@@ -46,10 +48,26 @@ Check your setup:
 uv run astro-id check
 ```
 
-`check` reports whether the reference data, ASTAP and its star database are found, and what to fix if not.
-If your copy answers `invalid choice: 'check'`, update it with `git pull`. The older command
-`uv run astro-id setup` does the download-and-report part: it downloads the reference data (first run only, needs
-internet), prints where ASTAP and its databases were found, and exits non-zero when something is missing.
+`check` compares your setup against the stated minimums (Python, uv, ASTAP and its star database, and Facet if you
+pass `--facet URL`), marks each line, says what to fix, and exits 0 when every required check passes (1 when one
+fails). The minimums are listed in [REQUIREMENTS.md](REQUIREMENTS.md). If your copy answers `invalid choice: 'check'`,
+update it with `git pull`. `uv run astro-id setup` downloads the reference data (first run only, needs internet),
+prints where ASTAP and its databases were found, and exits 3 when ASTAP or a dataset is missing.
+
+### The simplest way: astro-id label
+
+If you only want labeled copies of a few photos, one command (or one drag-and-drop) does it
+([SIMPLE.md](SIMPLE.md)):
+
+- **Windows:** drag a photo, several photos or a folder onto `astro-label.cmd` in the astro-id folder.
+- **Linux/macOS:** `./astro-label.sh photo.jpg`.
+- **Any system:** `uv run astro-id label <photo-or-folder>`.
+
+Each photo gets `<name>_astro.jpg` next to it: a copy with the stick figures and names burned in. The original is
+never touched. `--out sidecar` writes `<name>.astro.json` (the objects, confidence, positions and annotations)
+instead, `--out both` writes both, and `--to <folder>` puts the results elsewhere. Re-running skips photos that
+already have their output. Exit code 0 means labeled (or already done), 1 nothing labeled, 2 a setup or usage
+problem. Time and place are optional here too ([sections 4 and 5](#4-a-wrong-camera-clock)).
 
 ## 3. Your first solve
 
@@ -68,6 +86,8 @@ with `--overlay-dir`):
 
 - `<photo>_astro.jpg` - a labeled copy of each frame (see [section 7](#7-labeled-copies)).
 - `astro-id-report.csv` - one row per object found, for every frame.
+- `astro-id-results.json` - the full results per frame (the same document `--json` prints). A later run replaces only
+  the entries of the photos it solved. `--no-results-file` skips it. Runs from the Facet panel never write it.
 
 ### Reading the report CSV
 
@@ -94,9 +114,15 @@ Add `--json` to get one JSON document on the screen (logs go to the error stream
 uv run astro-id solve examples --json > solve.json
 ```
 
-It holds one entry per frame under `results`, each with `solved`, `grade`, `true_time`, `objects`, and so on. The full
-field list is in [CONTRACT.md](../CONTRACT.md). The exit code is 0 when the run finished, even if some frames did not
-solve.
+It holds one entry per frame under `results`, each with `solved`, `grade`, `true_time`, `objects`, `warnings`, and
+so on. The full field list is in [CONTRACT.md](../CONTRACT.md). `warnings` says, per frame, when no clock offset or
+no site was set (and so the Sun, Moon and planets are capped, see sections 4 and 5).
+
+### Exit codes
+
+`solve` exits 0 when the run finished, even if some frames did not solve (they are in the report), and 2 for a usage
+error (target not found, a bad flag value, no images). Every command prints its own table at the end of `--help`;
+all of them are in [CONTRACT.md](../CONTRACT.md#exit-codes-read-from-the-code-that-returns-them).
 
 ### Confidence tiers
 
@@ -108,15 +134,16 @@ solve.
 
 Confidence combines how well the frame solved, how precisely the object's position is known at that spot, how bright
 the object is against the faintest stars the photo caught, and whether it is cut by the frame edge or near the horizon.
-The full formula is in the [README](../README.md#confidence-scale).
+The full formula is in the [reference](REFERENCE.md#confidence-scale).
 
 On the labeled copies, names are green (high), amber (likely) and gray (candidate).
 
 ## 4. A wrong camera clock
 
 Camera clocks drift or were never set. A wrong clock does not stop the solve (the stars fix the pointing on their
-own), but it spoils the Moon, the planets and the horizon check. With only the camera's own time, those objects are
-capped at "candidate".
+own), but it spoils the Sun, Moon and planets and the horizon check. They are still identified, but with only the
+camera's own time (no offset set) their confidence is capped at 64, "candidate", so they never become object tags at
+the default cut. Any offset in `astro-id.json`, even an empty one ("the clock was right"), lifts the cap.
 
 Give the offset: how much to add to the camera's time to get the true time.
 
@@ -150,12 +177,16 @@ Put an `astro-id.json` in the photo folder and you do not need the flags again:
 ```
 
 The nearest `astro-id.json` above each photo's folder applies. Command-line flags override it. All keys and flags
-are in the [README "All options" table](../README.md#all-options).
+are in the [reference "All options" table](REFERENCE.md#all-options).
 
 ## 5. Your location
 
-The location matters only for the planets, the Moon and the horizon: where they were in the sky at that time from
+The location matters only for the Sun, Moon and planets and the horizon: where they were in the sky at that time from
 that spot. Constellations, stars and deep-sky objects do not depend on it.
+
+No default location is ever assumed. Without one, the bodies are computed from the Earth's centre (the Moon can be
+about 1 degree off) and no horizon check is made, so their confidence is capped: the Sun and planets at 79, the Moon
+at 70 ("likely" at best, never "high"). Without a clock offset as well, the lower cap (64) wins.
 
 Give a location with a flag or in `astro-id.json`:
 
@@ -175,6 +206,10 @@ uv run astro-id site D:\photos\2026\trip\astro
 It opens Google Maps in Chrome. Right-click the spot, click the first line (it copies `lat, lon`), paste it (a Maps URL
 also works), confirm the elevation and give the site a name. An offset, tolerance and timezone already in the file are
 kept.
+
+As the suggested answer it offers the folder's own saved site, else the last site you saved on this computer. When
+neither exists it suggests nothing and asks for coordinates: pressing Enter alone saves nothing. Exit code 0 means
+saved, 1 not saved.
 
 ## 6. JPG or RAW
 
@@ -212,9 +247,13 @@ Inside Facet the same thing is the Export step (see [section 8](#export-labeled-
 
 ## 8. Inside Facet, end to end
 
-The Astro panel needs a Facet version that supports add-ons. Some details below (object tags, sky labels) also depend
-on the Facet version; where they do, the panel falls back to the older behavior by itself. Facet's own documentation
-is the reference for add-ons.
+The Astro panel needs a Facet version that supports add-ons; where to get one:
+[README](../README.md#use-it-with-facet). Some details below (object tags, sky labels) also depend on the Facet
+version; where they do, the panel falls back to the older behavior by itself. Facet's own documentation is the
+reference for add-ons.
+
+Under the panel's title a short requirements line appears when something Astro needs is missing (the same checks
+as `astro-id check`).
 
 ### Four kinds of tags in Facet
 
@@ -242,7 +281,8 @@ Use your Facet's data folder (the one holding `scoring_config.json`). This write
    default; astro-id never edits it).
 2. Restart Facet or reload its config. "Astro" appears on Facet's Add-ons page.
 3. Re-run the install command if you move the astro-id folder or `uv`.
-4. A Facet older than the current add-on contract refuses an unknown line in the manifest; install with `--older-facet`.
+4. A Facet older than the current add-on contract refuses an unknown line in the manifest (`network`); install with
+   `--older-facet`. The install command prints this hint after every normal install.
 
 To remove it: `uv run astro-id facet uninstall --facet-data "$env:LOCALAPPDATA\Facet\data"`. Tags already written stay
 (see [Can I undo it?](#can-i-undo-it)).
@@ -309,14 +349,23 @@ objects off the frame and names Facet refuses are left out). A star inside a sav
 gets no tag of its own.
 
 What is tagged by default (constellations, Sun/Moon/planets, Messier/NGC/IC up to magnitude 6, asterisms; not
-individual stars) is the tag policy: [README](../README.md#tag-hierarchy-and-tag-policy).
+individual stars) is the tag policy: [reference](REFERENCE.md#tag-hierarchy-and-tag-policy). The Sun, Moon and planets
+need the location (step 1) and the time (step 2) to reach "high"; see [section 5](#5-your-location).
+
+**Undo what Astro saved…** is a quiet link under the save line. Choose **the ticked photos** or **everything
+loaded**; the panel first checks and asks one line, for example "Remove 32 object tags, 3 status tags and the sky
+labels from 3 photos? Your own tags stay." Nothing changes until you click **Confirm** (or **Cancel**). It removes
+only the object tags, status tags and sky labels Astro saved. It never removes your own tags, nor old tags written
+outside the add-on (only you can remove those in Facet). The results stay in the panel, so **Save to Facet** writes
+them again. Undo twice is harmless. More: [Can I undo it?](#can-i-undo-it)
 
 ### 5. Sky labels on the photo
 
 Sky labels are the names Facet draws over the photo, each with a small circle at the object. Every object found is
-stored as a sky label when you save. Open a solved photo in Facet and the panel shows **Show sky labels** (labels are
-drawn only while this panel is open and that box is on), the groups to show, **Show names at confidence ≥**,
-**Max magnitude** and **show scores**.
+stored as a sky label when you save. Open a solved photo in Facet and the panel shows the switch **Sky labels on this
+photo: Off** (labels are drawn only while this panel is open and the switch says **On**; it starts Off every time the
+panel opens, and the controls below it are dimmed while it is Off), the groups to show, **Only names at
+confidence ≥**, **Max magnitude** and **show scores**.
 
 This slider decides only what is shown, never what was saved as object tags. Sky labels never change the photo file.
 Whether sky labels can be stored depends on your Facet version; if not, the panel says annotations are skipped.
@@ -353,29 +402,29 @@ photos and the last solve are kept).
 ## 10. Troubleshooting
 
 **A frame does not solve.** Read the `error` column in the CSV (or `error` in the JSON). Common causes:
-- ASTAP or its star database is missing: run `uv run astro-id setup`. Wide-angle frames need W08; telephoto frames
+- ASTAP or its star database is missing: run `uv run astro-id check`. Wide-angle frames need W08; telephoto frames
   (field under about 20 degrees) also need D50.
 - Too few visible stars: cloud, a bright Moon, light pollution, a very short exposure or heavy trailing.
 - Other frames of the same sequence may solve; try them.
 - Last resort, optional: set the `ASTROMETRY_API_KEY` environment variable and astro-id retries on nova.astrometry.net
   (a downscaled copy is uploaded as a private submission). `--no-fallback` turns it off.
 
-**Times look wrong, or the Moon and planets stay "candidate".** The clock offset, timezone or location is missing or
-wrong. Re-check [section 4](#4-a-wrong-camera-clock) and [section 5](#5-your-location). In the panel use
+**Times look wrong, or the Moon and planets stay "candidate" (64) or "likely" (79, the Moon 70).** The clock offset,
+timezone or location is missing or wrong: no offset caps them at 64, no location at 79 (the Moon 70). Re-check [section 4](#4-a-wrong-camera-clock) and [section 5](#5-your-location). In the panel use
 **Check times**, and **Auto** if the Moon is in a solved frame. A `time_flag` of `best_fit_outside_tolerance` means the
 Moon's position disagrees with your offset by more than the tolerance.
 
-**ASTAP not found.** Run `uv run astro-id setup`; it prints what it found. astro-id looks in the `ASTAP_PATH`
+**ASTAP not found.** Run `uv run astro-id check`; it prints what it found and what to fix. astro-id looks in the `ASTAP_PATH`
 environment variable (the exe or its folder), `%LOCALAPPDATA%\astap`, `%ProgramFiles%\astap`, then `PATH`. The star
 database comes from `ASTAP_DB` or the exe's folder. Set `ASTAP_PATH` and run again.
 
 **The panel asks for one restart.** See [section 9](#9-updating): on Facet's Add-ons page click Stop, then Open.
 
 **Nothing shows on the photo in Facet.**
-- Sky labels are drawn only while the Astro panel is open and **Show sky labels** is ticked (it starts off), and only
-  on a photo that was solved and saved.
+- Sky labels are drawn only while the Astro panel is open and **Sky labels on this photo** is **On** (it starts Off),
+  and only on a photo that was solved and saved.
 - Did you click **Save to Facet**? Solving alone writes nothing.
-- The **Show names at confidence ≥** slider may be above your objects' confidence, or a group may be switched off.
+- The **Only names at confidence ≥** slider may be above your objects' confidence, or a group may be switched off.
 - Your Facet may not store sky labels; the panel then says annotations are skipped.
 
 **"Nothing loaded yet." though you opened a photo.** Click the load button under the status line; the panel does not
@@ -384,7 +433,7 @@ load by itself.
 ## 11. FAQ
 
 **Does it change my photos?** No. Solving reads them. Copies go to a separate folder. In Facet, astro-id writes only
-its own tags and sky labels (and the location, if you confirm one); it leaves your own tags alone and never touches
+its own object tags, status tags and sky labels (and the location, if you confirm one); it leaves your own tags alone and never touches
 Facet's cull or reject flags.
 
 **Does it need internet?** Only for the first downloads (reference data, plus the ASTAP files you install yourself),
@@ -397,6 +446,8 @@ Solving itself runs on your computer.
 
 Yes.
 
+- **In the panel:** **Undo what Astro saved…** under **Save to Facet** (step 4) removes Astro's object tags, status
+  tags and sky labels from the ticked photos or everything loaded, after one confirmation line. Your own tags stay.
 - **Part of it, in the panel:** raise **Save object tags at confidence ≥** and **Save to Facet** again to remove the
   object tags now below it.
 - **Everything astro-id wrote, from the command line.** astro-id keeps a ledger of what it added and removes only
@@ -408,7 +459,7 @@ Yes.
   ```
 
   Set `FACET_URL` and your Facet credentials first (`FACET_EDITION_PASSWORD`, or `FACET_USERNAME` and
-  `FACET_PASSWORD`, or `FACET_TOKEN`), as in the README's
-  [Facet sidecar section](../README.md#facet-sidecar-astro-id-facet-). `uv run astro-id facet status` shows what the
+  `FACET_PASSWORD`, or `FACET_TOKEN`), as in the reference's
+  [Facet sidecar section](REFERENCE.md#facet-sidecar-astro-id-facet-). `uv run astro-id facet status` shows what the
   ledger holds.
 - **Files:** copies and `astro-id.json` are plain files. Delete the `<folder>-annotated` folder or the JSON to remove them.
