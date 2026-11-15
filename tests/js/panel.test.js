@@ -249,3 +249,58 @@ test("one word for astro-id's per-object output: object tags (no 'searchable nam
   assert.match(ui, /<dt>Object tags<\/dt>/);
   assert.doesNotMatch(ui, /searchable name|Make names searchable|Astro tags/i);
 });
+
+// ------------------------------------------------- B-P9: a held set on open / reload / restart ---
+// The page's own restoreLoaded + drawStatus against a scripted api/loaded: the first status line must be
+// "Loaded: ... ✓" on the album page, never "Nothing loaded yet." for a set the add-on still holds.
+function restorePanel(server) {
+  const B = require(path.join(__dirname, "..", "..", "astro_id", "facet", "static", "bridge.js"));
+  const el = {}; const $ = (id) => (el[id] = el[id] || {hidden: false, textContent: "", className: "", title: "", disabled: false});
+  const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  const calls = [];
+  const api = async (p) => { calls.push(p); if (p !== "api/loaded") throw new Error("unexpected " + p); return server.loaded; };
+  const src = between("async function restoreLoaded()", "function onContext(") + between("function drawStatus()", "$(\"reload\").onclick");
+  const mk = new Function("B", "$", "plural", "NONCE", "api", "S",
+    "let state = S.state, facetTarget = null, loadedKey = '', loadedLabel = '', loadedAlbum = null, photos = [], curWhat = '', curCount = null,"
+    + " curSmart = null, curNote = '', ctxSeen = true, loadingNow = false, lastManual = null, scopeReq = null, lastAlbumId = null;\n"
+    + "function loaded(d) { photos = d.photos; }\n" + src
+    + "\nreturn {restoreLoaded, drawStatus, show(t, what, n) { facetTarget = t; curWhat = what; curCount = n; drawStatus(); },"
+    + " get v() { return {loadedKey, loadedLabel, loadedAlbum, lastManual, scopeReq, lastAlbumId, photos}; }};");
+  return {page: mk(B, $, plural, "nonce", api, server), el, calls};
+}
+const heldAlbum = {key: "album:6", label: "Album Astro test (fixed)", album: {id: 6, name: "Astro test (fixed)"}, via: "photos", body: {album_id: 6}};
+
+test("B-P9: panel opened on the album the add-on holds -> 'Loaded: Album ... · 18 photos ✓' at once, no Load button", async () => {
+  const p = restorePanel({state: {loaded: {key: "album:6", label: heldAlbum.label, album: heldAlbum.album, count: 18}},
+                          loaded: {photos: six, folders: {}, loaded: heldAlbum}});
+  await p.page.restoreLoaded();
+  p.page.drawStatus();                                   // init draws before any Facet context arrives
+  assert.equal(p.el.stLoadedText.textContent, "Loaded: Album Astro test (fixed) · 18 photos");
+  p.page.show(album(6), "Album Astro test (fixed)", 18); // the album page's context
+  assert.equal(p.el.stLoadedText.textContent, "Loaded: Album Astro test (fixed) · 18 photos ✓");
+  assert.equal(p.el.loadFacet.hidden, true);
+  assert.equal(p.el.reload.hidden, false, "Reload works for a restored set");
+  assert.equal(p.page.v.lastAlbumId, 6, "a photo of the album opened next is offered as that album");
+  // Facet moved on: the c-state pair, the loaded line unchanged
+  p.page.show(album(7), "Album Trip", 40);
+  assert.equal(p.el.stLoadedText.textContent, "Loaded: Album Astro test (fixed) · 18 photos");
+  assert.equal(p.el.loadFacet.textContent, "Load Album Trip instead");
+});
+
+test("B-P9: nothing held (fresh add-on) -> no api/loaded call, 'Nothing loaded yet.'", async () => {
+  const p = restorePanel({state: {loaded: null}, loaded: null});
+  await p.page.restoreLoaded();
+  p.page.show(album(6), "Album Astro test (fixed)", 18);
+  assert.deepEqual(p.calls, []);
+  assert.equal(p.el.stLoadedText.textContent, "Nothing loaded yet.");
+});
+
+test("B-P9: init restores the held set before the first status line and before contexts are handled", () => {
+  const init = between("async function init()", "function onContext(");
+  const r = init.indexOf("await restoreLoaded()"), d = init.indexOf("initDone = true"), s = init.indexOf("drawStatus();");
+  assert.ok(r > 0 && r < d && d < s, "restoreLoaded -> initDone -> drawStatus");
+  assert.match(html, /api\("api\/photos", Object\.assign\(\{\}, body, \{loaded: \{key: key, label: label, album: album\}\}\)\)/);
+  assert.match(html, /loaded: \{key: B\.scopeKey\(req\), label: scopeLabel\(req\), album: null\}/);
+  assert.doesNotMatch(html.split("<main>")[1].split("</main>")[0], /<b id="stLoadedText">Nothing loaded yet\.<\/b>/,
+    "the static placeholder must not claim nothing is loaded before init knows");
+});

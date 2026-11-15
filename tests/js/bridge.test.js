@@ -369,3 +369,25 @@ test("reloadUrl keeps the nonce and marks the reload once", () => {
   assert.equal(B.reloadUrl("http://h/ui/"), "http://h/ui/?astro_reloaded=1");
   assert.equal(B.reloadUrl("http://h/ui/?nonce=a#x"), "http://h/ui/?nonce=a&astro_reloaded=1#x");
 });
+
+// B-P9: the set the add-on already holds becomes the page's load variables on open/reload/restart.
+test("restoredLoad: a held album -> its key, label, album, Reload body and the album as 'viewed last'", () => {
+  const r = B.restoredLoad({key: "album:6", label: "Album Astro test (fixed)", album: {id: 6, name: "Astro test (fixed)"},
+                            via: "photos", body: {album_id: 6}});
+  assert.equal(r.loadedKey, "album:6");
+  assert.equal(r.loadedLabel, "Album Astro test (fixed)");
+  assert.deepEqual(r.loadedAlbum, {id: 6, name: "Astro test (fixed)"});
+  assert.deepEqual(r.lastManual, [{album_id: 6}, "Album Astro test (fixed)", {id: 6, name: "Astro test (fixed)"}, "album:6"]);
+  assert.equal(r.scopeReq, null);
+  assert.equal(r.lastAlbumId, 6);
+});
+
+test("restoredLoad: a held scope (import) reloads through its scope; nothing held -> null", () => {
+  const r = B.restoredLoad({key: "import:7", label: "Import #7", album: null, via: "scope", body: {kind: "import", run_id: "7"}});
+  assert.deepEqual(r.scopeReq, {kind: "import", run_id: "7"});
+  assert.equal(r.lastManual, null);
+  assert.equal(r.lastAlbumId, null);
+  assert.equal(B.restoredLoad(null), null);
+  assert.equal(B.restoredLoad({key: ""}), null);
+  assert.equal(B.restoredLoad({label: "x"}), null);
+});
