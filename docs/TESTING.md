@@ -18,3 +18,7 @@
     `--overlay-dir examples/annotated`, then `make_examples.py expected solve.json` (writes `expected.json` with each
     listed tag's `scores`) and `make_examples.py composites` (hero and gallery images). Then
     `uv run --with imageio-ffmpeg python tools/make_demo.py` rebuilds `docs/img/demo.mp4` and `demo.gif`.
+12. The demo (`tools/make_demo.py`, one command above; needs ASTAP + W08, about a minute) solves frames 04 and 05 four
+    times into `build/demo/` (site + offset, offset only, site only, neither), renders each scene with
+    `astro_id.export.render` for the view the card beside it shows, and writes the numbers it used to
+    `build/demo/numbers.json`. It stops if a run no longer matches a caption. `--reuse` skips the solves.

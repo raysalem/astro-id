@@ -12,8 +12,8 @@ Works standalone from the command line, or as an add-on inside the [Facet](https
 </p>
 
 <p align="center">
-  <a href="docs/img/demo.mp4"><img src="docs/img/demo.gif" width="640" alt="Looping animation: the plain photo of Orion rising, the same photo gaining its labels and constellation figures, then a zoom onto the Pleiades label with the caption 'M45 Pleiades, confidence 99'."></a>
-  <br><sub>From a plain photo to named objects. <a href="docs/img/demo.mp4">Full 20 s video (MP4)</a>.</sub>
+  <a href="docs/img/demo.mp4"><img src="docs/img/demo.gif" width="640" alt="Looping animation: the plain photo of Orion rising gains its labels (112 objects found); then a panel slider 'Only names at confidence' steps 65, 80, 95 and the drawn names thin from 19 to 16 to 10; then group checkboxes switch on Constellations (5 names), Messier / NGC / IC (17) and all groups with Stars (67)."></a>
+  <br><sub>From a plain photo to named objects, and the controls for what is shown. <a href="docs/img/demo.mp4">Full 40 s video (MP4)</a>: setting the location and the clock offset, how approximate they may be, confidence and groups.</sub>
 </p>
 
 <table>
@@ -169,6 +169,8 @@ Full factor table: [Confidence scale](docs/REFERENCE.md#confidence-scale). Which
 - **Time and place only matter for the Sun, Moon and planets.** Stars and deep-sky objects come from the stars
   alone. The bodies are always computed, but without a clock offset or a confirmed time they are capped at 64
   (*candidate*), and without a site at 79 (*likely*; the Moon at 70). No default site is ever assumed.
+- **Location and time can be approximate:** an estimated site and a clock offset with a tolerance are enough, and
+  stars, constellations and deep-sky objects are named without either.
 - **Photos need a long edge of at least about 2400 px**; smaller copies may not solve (details in
   [How it solves](docs/REFERENCE.md#how-it-solves)).
 - The extreme corners of very wide or fisheye frames may stay unlabelled.

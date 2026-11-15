@@ -162,6 +162,9 @@ uv run astro-id solve D:\photos\2026\trip\astro --offset +2559d11h08m --time-tol
   the zone of the site, else your computer's zone.
 - **The Moon helps.** When the Moon is found in a frame, its position pins the true time. astro-id then reports a
   `best_fit_time` and sets `time_flag` if it falls outside your tolerance.
+- **Approximate is fine.** An offset with a tolerance that covers your doubt is enough; with neither an offset nor
+  a site, stars, constellations and deep-sky objects are still named, but with a site set, set the offset too: the
+  horizon check uses the time, and the camera's raw time can put the whole field below the horizon.
 
 ### Remember it per folder: `astro-id.json`
 
@@ -186,7 +189,8 @@ that spot. Constellations, stars and deep-sky objects do not depend on it.
 
 No default location is ever assumed. Without one, the bodies are computed from the Earth's centre (the Moon can be
 about 1 degree off) and no horizon check is made, so their confidence is capped: the Sun and planets at 79, the Moon
-at 70 ("likely" at best, never "high"). Without a clock offset as well, the lower cap (64) wins.
+at 70 ("likely" at best, never "high"). Without a clock offset as well, the lower cap (64) wins. The location can be approximate:
+an estimated site is enough, and without one stars, constellations and deep-sky objects are still named.
 
 Give a location with a flag or in `astro-id.json`:
 
