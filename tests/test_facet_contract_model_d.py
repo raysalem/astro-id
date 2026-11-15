@@ -11,7 +11,7 @@ tag the user typed (also one with the same text); summary tags land as plugin ro
 detections; rows written through the password/command-line path are reported as the user's (``legacy``) and kept;
 a second save writes nothing; the old-Facet fallback is not taken.
 
-    FACET_DIR=C:\\Users\\raysa\\facet-review-all uv run pytest -m facet_contract tests/test_facet_contract_model_d.py
+    FACET_DIR=<path to a Facet checkout> uv run pytest -m facet_contract tests/test_facet_contract_model_d.py
 """
 from __future__ import annotations
 
