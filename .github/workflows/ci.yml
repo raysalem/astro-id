@@ -82,9 +82,7 @@ jobs:
         if: steps.has.outputs.present == 'true'
         uses: actions/cache@v6.1.0
         with:
-          path: |
-            ~/.astro-id
-            ~/.cache/astro-id
+          path: ~/.cache/astro-id
           key: astro-id-catalogs-v1
       - name: Solve examples
         if: steps.has.outputs.present == 'true'
