@@ -320,6 +320,11 @@ test("one word for astro-id's per-object output: object tags (no 'searchable nam
   assert.doesNotMatch(ui, /searchable name|Make names searchable|Astro tags/i);
 });
 
+test("B-P11: the save line says when tags were left because Facet does not say who wrote them", () => {
+  assert.match(html, /d\.tags_unknown_owner \?/);
+  assert.match(html, /this Facet does not say who wrote them, so they may be yours/);
+});
+
 // ------------------------------------------------- B-P9: a held set on open / reload / restart ---
 // The page's own restoreLoaded + drawStatus against a scripted api/loaded: the first status line must be
 // "Loaded: ... ✓" on the album page, never "Nothing loaded yet." for a set the add-on still holds.

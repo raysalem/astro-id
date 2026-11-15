@@ -26,7 +26,7 @@ CAP = 50
 class FakeFacet:
     def __init__(self, photos: list[dict], *, password="pw", annotations_put=True, annotations_read=True,
                  version="1.29.0", addon_token=None, addon_denied=(), plugin_tags=False, mcp_tools=None,
-                 addon_id="astro-id", album_names=None, model_d=False):
+                 addon_id="astro-id", album_names=None, model_d=False, tag_sources=False):
         self.photos = {p["path"]: {"manual_tags": [], "tags": "", **p} for p in photos}
         self.password = password
         self.annotations_put = annotations_put
@@ -47,6 +47,9 @@ class FakeFacet:
         self.mcp_inits = 0                 # MCP initialize requests (one per session)
         self.model_d = model_d             # Facet fix/review-all add-on contract (fake_facet_mcp.py)
         self.detections: dict = {}         # model D: path -> [{label, grp, score}]
+        # get_photo carries manual_tag_sources {tag: add-on id} for rows an installed add-on wrote (Facet
+        # local/photo-page-layout, the :5003 viewer: an older contract that still says who wrote a row)
+        self.tag_sources = tag_sources
         self.addon_id = addon_id
         self.album_names = dict(album_names or {1: "Night"})
         self.mcp = None

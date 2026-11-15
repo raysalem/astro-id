@@ -1127,7 +1127,8 @@ $("saveFacet").onclick = async () => {
     const what = d.names_as === "searchable"
       ? `${d.searchable} object tag(s), sky labels on ${d.sky_labels}` + (d.old_tags_removed ? `, ${d.old_tags_removed} old plain per-object tag(s) removed` : "")
         + (d.old_tags_yours ? `, ${d.old_tags_yours} old tag(s) are yours to remove (written outside the add-on)` : "")
-      : `object tags +${d.tags_added} -${d.tags_removed}, sky labels on ${d.sky_labels}`;
+      : `object tags +${d.tags_added} -${d.tags_removed}, sky labels on ${d.sky_labels}`
+        + (d.tags_unknown_owner ? `, ${d.tags_unknown_owner} tag(s) with an object's name left as they were (this Facet does not say who wrote them, so they may be yours)` : "");
     $("saveinfo").innerHTML = `<span class="ok">Saved ${d.photos} photo(s)</span>: ${esc(what)}${esc(skip)}` +
       (d.errors ? ` · <span class="err">${d.errors} error(s)</span>` : "") + ". Open a photo in Facet to see its sky labels (5).";
     $("st4").textContent = `${review.filter((r) => r.status !== "failed").length}/${review.length} solved · ${d.photos} saved`;
