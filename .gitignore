@@ -19,7 +19,7 @@ astro-id-report.csv
 hip_main.dat
 dev-notes/
 astro-id-results.json
-# ...except the example set and the docs images (photos CC BY 4.0, see examples/README.md)
+# ...except the example set and the docs images (photos © Ray Salem, all rights reserved, see examples/README.md)
 !examples/*.jpg
 !examples/annotated/*.jpg
 !examples/astro-id.json

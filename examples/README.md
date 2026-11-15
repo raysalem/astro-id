@@ -34,5 +34,6 @@ Frame 05 solves at grade C (22 matched stars in a bright sky), which caps Jupite
 
 ## License
 
-Photos (the JPGs in this folder, `annotated/` and `docs/img/`) © Ray Salem, CC BY 4.0
-(https://creativecommons.org/licenses/by/4.0/). The code stays MIT (see `LICENSE`).
+Example photos © Ray Salem. All rights reserved. They are included to demonstrate and test astro-id. This covers the JPGs in this folder,
+`annotated/` and `docs/img/` (including the demo video). The code is MIT (see [LICENSE](../LICENSE)); the MIT
+license does not cover the photos.

@@ -213,5 +213,5 @@ node --test tests/js/bridge.test.js
 node --test tests/js/panel.test.js
 ```
 
-Code: MIT, copyright (c) 2026 Ray Salem, see [LICENSE](LICENSE). Example photos: CC BY 4.0, see
-[examples/README.md](examples/README.md). Third-party data and tools keep their own licenses.
+Code: MIT, copyright (c) 2026 Ray Salem, see [LICENSE](LICENSE). Example photos © Ray Salem. All rights reserved. They are included to demonstrate and test astro-id. (The MIT license does not
+cover them; see [examples/README.md](examples/README.md).) Third-party data and tools keep their own licenses.
