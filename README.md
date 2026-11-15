@@ -171,6 +171,8 @@ Full factor table: [Confidence scale](docs/REFERENCE.md#confidence-scale). Which
 - **Time and place only matter for the Sun, Moon and planets.** Stars and deep-sky objects come from the stars
   alone. The bodies are always computed, but without a clock offset or a confirmed time they are capped at 64
   (*candidate*), and without a site at 79 (*likely*; the Moon at 70). No default site is ever assumed.
+- **Photos need a long edge of at least about 2400 px**; smaller copies may not solve (details in
+  [How it solves](docs/REFERENCE.md#how-it-solves)).
 - The extreme corners of very wide or fisheye frames may stay unlabelled.
 
 ## Docs

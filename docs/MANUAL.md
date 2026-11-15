@@ -405,6 +405,8 @@ photos and the last solve are kept).
 - ASTAP or its star database is missing: run `uv run astro-id check`. Wide-angle frames need W08; telephoto frames
   (field under about 20 degrees) also need D50.
 - Too few visible stars: cloud, a bright Moon, light pollution, a very short exposure or heavy trailing.
+- The photo is too small: the error says "too few stars at this size ...; use a larger copy". Solve the
+  original or a copy with a long edge of at least 2400 px.
 - Other frames of the same sequence may solve; try them.
 - Last resort, optional: set the `ASTROMETRY_API_KEY` environment variable and astro-id retries on nova.astrometry.net
   (a downscaled copy is uploaded as a private submission). `--no-fallback` turns it off.
