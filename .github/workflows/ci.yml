@@ -1,0 +1,96 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run pytest -q -rs
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: "22"
+      - run: node --test tests/js/bridge.test.js
+      - run: node --test tests/js/panel.test.js
+
+  examples:
+    name: examples (ASTAP solve)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ASTAP_PATH: /opt/astap/astap_cli
+      ASTAP_DB: /opt/astap
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Check for examples/expected.json
+        id: has
+        run: |
+          if [ -f examples/expected.json ]; then echo "present=true" >> "$GITHUB_OUTPUT"
+          else echo "present=false" >> "$GITHUB_OUTPUT"; echo "::notice::examples/expected.json not present, skipping"; fi
+      - uses: astral-sh/setup-uv@v10.3.3
+        if: steps.has.outputs.present == 'true'
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Cache ASTAP downloads
+        if: steps.has.outputs.present == 'true'
+        uses: actions/cache@v6.1.0
+        with:
+          path: ~/astap-dl
+          key: astap-2026.11.01-w08-v1
+      - name: Install ASTAP CLI and W08 database
+        if: steps.has.outputs.present == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p ~/astap-dl && cd ~/astap-dl
+          base=https://sourceforge.net/projects/astap-program/files
+          [ -f cli.zip ] || curl -fsSL --retry 3 -o cli.zip "$base/linux_installer/astap_command-line_version_Linux_amd64.zip/download"
+          [ -f w08.deb ] || curl -fsSL --retry 3 -o w08.deb "$base/star_databases/w08_star_database_mag08_astap.deb/download"
+          echo "3f19121d39d1855e6e01c1419658ec6a5e0610c554ca32dc6bf903f1146ba1b3  cli.zip" | sha256sum -c -
+          echo "523131fbf448c547d42051df5d23aea7e92b0ca75484043abb35cd128da7beed  w08.deb" | sha256sum -c -
+          sudo mkdir -p /opt/astap
+          sudo unzip -oq cli.zip -d /opt/astap
+          sudo chmod +x /opt/astap/astap_cli
+          mkdir -p w08x && dpkg-deb -x w08.deb w08x
+          find w08x -type f | head
+          sudo find w08x -type f -name 'w08_*' -exec cp {} /opt/astap/ \;
+          ls /opt/astap | head
+      - name: Cache astro-id catalogs
+        if: steps.has.outputs.present == 'true'
+        uses: actions/cache@v6.1.0
+        with:
+          path: ~/.cache/astro-id
+          key: astro-id-catalogs-v1
+      - name: Solve examples
+        if: steps.has.outputs.present == 'true'
+        run: |
+          uv sync --frozen
+          uv run astro-id setup || true
+          for i in 1 2; do
+            uv run astro-id solve examples/ --json --no-fallback --overlay-dir "$RUNNER_TEMP/annotated" > solve.json && break
+            echo "attempt $i failed, retrying"; sleep 10
+          done
+          uv run python tests/check_examples.py solve.json examples/expected.json

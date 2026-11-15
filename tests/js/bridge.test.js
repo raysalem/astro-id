@@ -278,7 +278,7 @@ test("makePoller never runs two polls at once, and stops when fn returns false",
   }, 2);
   assert.equal(p.start(), true);
   assert.equal(p.start(), false);                  // already running
-  await new Promise((r) => setTimeout(r, 200));
+  for (let i = 0; i < 100 && p.running; i++) await new Promise((r) => setTimeout(r, 20));   // wait for the stop, not a fixed 200 ms (slow CI timers)
   assert.equal(calls, 4); assert.equal(maxInflight, 1); assert.equal(p.running, false);
   const q = B.makePoller(async () => { throw new Error("boom"); }, 2);   // a throwing fn keeps the loop alive
   q.start(); await new Promise((r) => setTimeout(r, 30)); assert.equal(q.running, true); q.stop();
