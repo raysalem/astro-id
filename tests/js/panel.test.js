@@ -448,3 +448,17 @@ test("undo: the control is a quiet link below the save line, not beside Save to 
   const script = html.split("<script>").slice(-1)[0];
   assert.doesNotMatch(script, /\bconfirm\(/, "no browser confirm() in a sandboxed iframe");
 });
+
+test("sky labels step: Off line and header text (starts hidden, names the count)", () => {
+  const src = between("function skyHeader", "function savedView");
+  const P = new Function(src + "\nreturn {skyHeader, skyOffLine};")();
+  assert.equal(P.skyHeader(false, 12), "hidden");
+  assert.equal(P.skyHeader(true, 12), "shown · 12 names");
+  assert.equal(P.skyHeader(true, 1), "shown · 1 name");
+  assert.equal(P.skyOffLine(12), "Sky labels are hidden. Turn them on to see 12 names on this photo.");
+  assert.equal(P.skyOffLine(1), "Sky labels are hidden. Turn them on to see 1 name on this photo.");
+  assert.match(html, /<span id="skyOnWord"[^>]*>Off<\/span>/);       // the switch starts Off
+  assert.match(html, /Only names at confidence&nbsp;&ge;/);
+  assert.ok(!/Show names at confidence/.test(html), "old slider name is gone");
+  assert.match(html, /let skyView = \{visible: false\}/);
+});

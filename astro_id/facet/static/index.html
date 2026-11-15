@@ -56,6 +56,14 @@
   td.fname { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:9em; }
   tr.names > td { border-top:0; padding:0 6px 6px 52px; }
   tr.names > td > div { margin:2px 0; }
+  .sw { cursor:pointer; display:inline-flex; align-items:center; gap:6px; }
+  .sw input { position:absolute; opacity:0; width:1px; height:1px; }
+  .swtrack { width:34px; height:18px; border-radius:9px; background:var(--line); position:relative; flex:none; transition:background .15s; }
+  .swtrack::after { content:""; position:absolute; top:2px; left:2px; width:14px; height:14px; border-radius:50%; background:#fff; transition:left .15s; }
+  .sw input:checked + .swtrack { background:#2e7d32; } .sw input:checked + .swtrack::after { left:18px; }
+  .sw input:focus-visible + .swtrack { outline:2px solid #1976d2; outline-offset:2px; }
+  .swword { font-weight:bold; }
+  #skyRest.dim { opacity:.45; }
   .muted { color:var(--muted); } .small { font-size:12px; }
   .warn { color:var(--review); } .err { color:var(--reject); } .ok { color:var(--keep); }
   .keep { color:var(--keep); font-weight:600; } .review { color:var(--review); font-weight:600; }
@@ -133,8 +141,8 @@
       ordinary tags; the meaning is the same.</dd>
     <dt>People tags</dt><dd>The persons in a photo. Astro does not write them.</dd>
     <dt>Sky labels</dt><dd>The names Facet draws on top of the photo, each with a small circle at the object. Stored
-      with the photo by <b>Save to Facet</b>, but drawn only while this panel is open and <b>Show sky labels</b> is
-      on. They never change the photo file.</dd>
+      with the photo by <b>Save to Facet</b>, but drawn only while this panel is open and <b>Sky labels on this photo</b> is
+      <b>On</b>. It starts <b>Off</b> every time the panel opens. They never change the photo file.</dd>
     <dt>Labeled copies</dt><dd>Separate JPG files with the sky labels burned into the image, made by <b>Export</b>
       and written to a "&lt;folder&gt;-annotated" folder beside the originals. The originals are never changed.</dd>
     <dt>Stick figures</dt><dd>The lines that join a constellation's main stars into its usual shape (and the shape
@@ -153,8 +161,9 @@
     <li><b>Save object tags at confidence &ge;</b> (step 4, default 65) decides what is <b>saved</b>. Objects at or
       above it become object tags. Raising it and saving again removes the object tags now below it; lowering it
       adds them.</li>
-    <li><b>Show names at confidence &ge;</b> (step 5) decides what is <b>shown</b> on the photo, and what
-      <b>Export</b> burns into the copies. It is display only: moving it never changes what is saved. Every object
+    <li><b>Only names at confidence &ge;</b> (step 5) decides what is <b>shown</b> on the photo, and what
+      <b>Export</b> burns into the copies. It has no effect while <b>Sky labels on this photo</b> is Off (you can still set it
+      ahead). It is display only: moving it never changes what is saved. Every object
       found is stored as a sky label, so you can show more (or fewer) names than you saved object tags.</li>
   </ul>
   <p class="muted">A star that belongs to a saved constellation, cluster or asterism gets no object tag of its own (the
@@ -189,7 +198,7 @@
   </dl>
 
   <h2 id="h-export">Export</h2>
-  <p>Draws exactly what <b>Sky labels</b> (step 5) shows (the same groups, the same <i>Show names at confidence</i>
+  <p>Draws exactly what <b>Sky labels</b> (step 5) shows (the same groups, the same <i>Only names at confidence</i>
     and <i>Max magnitude</i>) on a copy of each photo. At export time you choose: <b>Draw constellation stick
     figures</b>, <b>Show confidence numbers</b> after each name, and an <b>info box</b> with the date, time and how
     well the frame solved. It uses the results already found (no new solve), or the sky labels stored in Facet when
@@ -338,11 +347,15 @@
   <div class="body">
     <div class="row"><span id="skyinfo" class="muted small">Open a photo in Facet to set how its sky labels are drawn.</span></div>
     <div id="skyCtl" hidden>
-      <div class="row"><label><input type="checkbox" id="skyOn"> <b>Show sky labels</b></label></div>
+      <div class="row"><label class="sw"><input type="checkbox" id="skyOn" role="switch"> <span class="swtrack" aria-hidden="true"></span>
+        <b>Sky labels on this photo:</b> <span id="skyOnWord" class="swword">Off</span></label></div>
+      <p class="small" id="skyOffLine" style="margin:2px 0" hidden></p>
+      <div id="skyRest">
       <fieldset><legend>Groups</legend><div class="row" id="skyGroups"></div></fieldset>
-      <div class="row"><label>Show names at confidence&nbsp;&ge; <input type="range" id="skyScore"> <span id="skyScoreV" class="n"></span></label></div>
+      <div class="row"><label>Only names at confidence&nbsp;&ge; <input type="range" id="skyScore"> <span id="skyScoreV" class="n"></span></label></div>
       <div id="skyMetrics"></div>
       <div class="row"><label><input type="checkbox" id="skyScores"> show scores</label></div>
+      </div>
       <p class="muted small" style="margin:2px 0">Display only: Facet redraws as you change these; nothing saved changes.
         Export burns what is shown here. <button class="link" data-help="h-sliders">More</button></p>
     </div>
@@ -1235,7 +1248,10 @@ $("undoCancel").onclick = () => undoClose();
 
 /* --------------------------------------------------------- step 5: sky labels --- */
 // The view Facet applies to astro-id's labels (PLUGIN_BOUNDARY.md §6c). visible starts off and is never saved.
+let skyItems = 0;
 let skyView = {visible: false}, skyPayload = null, skyPhoto = undefined, skySeq = 0;
+function skyHeader(visible, n) { return visible ? `shown · ${n} name${n === 1 ? "" : "s"}` : "hidden"; }
+function skyOffLine(n) { return `Sky labels are hidden. Turn them on to see ${n} name${n === 1 ? "" : "s"} on this photo.`; }
 function savedView() { const v = Object.assign({}, skyView); delete v.visible; return v; }
 function postView() { if (bridge && bridge.active) bridge.annotationView(skyView); }
 function viewChanged() { postView(); drawExport(); autosave(); }
@@ -1248,7 +1264,7 @@ async function skyContext(photo) {
   try {
     const d = await api("api/annotations?path=" + encodeURIComponent(photo));
     if (seq !== skySeq) return;   // another photo was opened meanwhile
-    skyPayload = d.payload;
+    skyPayload = d.payload; skyItems = d.items || 0;
     $("skyinfo").textContent = skyPayload ? `${base(photo)}: ${d.items} sky label(s)` + (d.searchable != null ? `, ${d.searchable} object tag(s)` : "")
       : `${base(photo)} has no sky labels yet: plate solve it, then Save to Facet.` + (d.note ? ` (${d.note})` : "");
     if (skyPayload && !$("solve").disabled) $("s5").open = true;   // a photo with sky labels is open: "see it" is the priority
@@ -1258,9 +1274,9 @@ async function skyContext(photo) {
 function drawSky() {
   const p = skyPayload;
   $("skyCtl").hidden = !p;
-  $("st5").textContent = p ? (skyView.visible ? "shown" : "hidden") : "";
+  $("st5").textContent = p ? skyHeader(skyView.visible, skyItems) : "";
   if (!p) return;
-  $("skyOn").checked = !!skyView.visible;
+  $("skyOn").checked = !!skyView.visible; syncSkyOn();
   $("skyScores").checked = !!skyView.show_scores;
   const g = skyView.groups || {};
   $("skyGroups").innerHTML = (p.groups || []).map((x) => `<label><input type="checkbox" data-g="${esc(x.id)}"
@@ -1280,7 +1296,14 @@ function drawSky() {
     $("skyMetrics").querySelector(`[data-mv="${r.dataset.m}"]`).textContent = r.value; viewChanged();
   });
 }
-$("skyOn").onchange = () => { skyView.visible = $("skyOn").checked; $("st5").textContent = skyView.visible ? "shown" : "hidden"; postView(); };
+function syncSkyOn() {
+  const on = !!skyView.visible;
+  $("skyOnWord").textContent = on ? "On" : "Off";
+  $("skyRest").classList.toggle("dim", !on);
+  $("skyOffLine").hidden = on; $("skyOffLine").textContent = skyOffLine(skyItems);
+  $("st5").textContent = skyHeader(on, skyItems);
+}
+$("skyOn").onchange = () => { skyView.visible = $("skyOn").checked; syncSkyOn(); postView(); };
 $("skyScores").onchange = () => { skyView.show_scores = $("skyScores").checked; viewChanged(); };
 $("skyScore").oninput = () => { skyView.score = Number($("skyScore").value); $("skyScoreV").textContent = $("skyScore").value; viewChanged(); };
 
