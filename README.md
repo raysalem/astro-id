@@ -6,31 +6,29 @@
 **Drop in a night-sky photo and astro-id tells you what is in it: constellations, planets, the Moon, bright
 stars and Messier/NGC objects, each with a 0-100 confidence score.**
 
-![A wide-field night-sky photo labelled by astro-id: constellation stick figures, planets and named deep-sky objects](docs/img/hero.jpg)
+![Before and after: a night-sky photo, then the same photo with astro-id's labels, constellation figures and confidence scores](docs/img/hero.jpg)
+
+<p align="center">
+  <a href="docs/img/demo.mp4"><img src="docs/img/demo.gif" alt="Demo: astro-id solving a folder of night-sky photos and drawing the labels" width="800"></a>
+  <br><sub>Click for the full-quality video.</sub>
+</p>
+
+| | | |
+|---|---|---|
+| ![Example 1](docs/img/gallery-1.jpg) | ![Example 2](docs/img/gallery-2.jpg) | ![Example 3](docs/img/gallery-3.jpg) |
 
 <!-- Screen recording of the panel inside Facet, to be added later:
 ![astro-id panel inside Facet](docs/img/panel-demo.gif)
 -->
 
-## What it does
-
-- **Names what is in the frame** — constellations, the Sun, Moon and planets, IAU-named stars, asterisms and
-  Messier/NGC/IC objects, each with a 0-100 confidence score and a tier (high, likely, candidate).
-- **Fixes a wrong camera clock** — give it the offset once per folder; when the Moon is in the frame it also
-  works out the true capture time from where the Moon sits.
-- **Makes photos searchable in Facet** — the objects become tags (`orion`, `jupiter`, `m45 pleiades`) in the
-  [Facet](https://github.com/ncoevoet/facet) photo library.
-- **Draws sky labels live over the photo** — inside Facet the labels are an overlay you filter by confidence,
-  group and magnitude, without solving again.
-- **Exports labelled copies** — an annotated JPG per photo plus a CSV report; your originals are never changed.
-- **Works offline after setup** — the plate solver and catalogs live on your machine. Nothing is uploaded
-  unless you turn on the optional online fallback.
-
-It works standalone from the command line, or as an add-on panel inside Facet.
+It works standalone from the command line, or as an add-on panel inside the [Facet](https://github.com/ncoevoet/facet)
+photo library.
 
 ## Quick start
 
 You need [Python 3.12+](https://www.python.org/downloads/) and [uv](https://docs.astral.sh/uv/getting-started/installation/).
+
+### Install
 
 **1. Get astro-id**
 
@@ -94,6 +92,8 @@ uv run astro-id setup
 uv run astro-id check
 ```
 
+### First run
+
 **4. Solve the example photos**
 
 ```sh
@@ -101,17 +101,34 @@ uv run astro-id solve examples/
 ```
 
 The terminal shows progress and how many objects each photo solved to. The labelled copies (`<name>_astro.jpg`)
-and `astro-id-report.csv`, one row per object with its confidence, land in `examples-annotated/`. Add `--json`
-for machine-readable output. Point it at your own photo or folder the same way.
+and `astro-id-report.csv`, one row per object with its confidence, land in `examples-annotated/`. Point it at your
+own photo or folder the same way.
 
-## Examples
+There is no separate results file per photo today. The full per-photo results (every object, its position,
+confidence and tier, the solve quality) come from `--json`, which prints them as one JSON document
+([CONTRACT.md](CONTRACT.md)); the CSV report holds the same objects one row each.
 
-| | | |
-|---|---|---|
-| ![Example 1](docs/img/gallery-1.jpg) | ![Example 2](docs/img/gallery-2.jpg) | ![Example 3](docs/img/gallery-3.jpg) |
-| ![Example 4](docs/img/gallery-4.jpg) | ![Example 5](docs/img/gallery-5.jpg) | |
+## What it does
 
-The source photos are in [`examples/`](examples/).
+- **Names what is in the frame** — constellations, the Sun, Moon and planets, IAU-named stars, asterisms and
+  Messier/NGC/IC objects, each with a 0-100 confidence score and a tier (high, likely, candidate).
+- **Fixes a wrong camera clock** — give it the offset once per folder; when the Moon is in the frame it also
+  works out the true capture time from where the Moon sits.
+- **Makes photos searchable in Facet** — the objects become tags (`orion`, `jupiter`, `m45 pleiades`) in the
+  [Facet](https://github.com/ncoevoet/facet) photo library.
+- **Draws sky labels live over the photo** — inside Facet the labels are an overlay you filter by confidence,
+  group and magnitude, without solving again.
+- **Exports labelled copies** — an annotated JPG per photo plus a CSV report; your originals are never changed.
+- **Works offline after setup** — the plate solver and catalogs live on your machine. Nothing is uploaded
+  unless you turn on the optional online fallback.
+
+## More examples
+
+| | |
+|---|---|
+| ![Example 4](docs/img/gallery-4.jpg) | ![Example 5](docs/img/gallery-5.jpg) |
+
+Examples 1-3 are at the top of this page. The source photos are in [`examples/`](examples/).
 
 ## Use it inside Facet
 
@@ -119,11 +136,23 @@ The source photos are in [`examples/`](examples/).
 Facet yet.** It lives on the [`wip/photo-page-layout`](https://github.com/raysalem/facet/tree/wip/photo-page-layout)
 branch of [raysalem/facet](https://github.com/raysalem/facet); use that build until it is merged upstream.
 
-Install the add-on once, pointing at Facet's data folder (the one that holds `scoring_config.json`):
+Install the add-on once from your astro-id folder, pointing at Facet's data folder (the one that holds
+`scoring_config.json`):
+
+```powershell
+# Windows (PowerShell)
+cd <path to astro-id>
+uv run astro-id facet install --facet-data "$env:LOCALAPPDATA\Facet\data"
+```
 
 ```sh
-uv run astro-id facet install --facet-data <facet data folder>
+# Linux / macOS
+cd <path to astro-id>
+uv run astro-id facet install --facet-data /path/to/facet/data
 ```
+
+If your Facet build is older and refuses the add-on manifest (it does not know the manifest's `network` key), add
+`--older-facet`, which leaves that key out.
 
 Then turn on `"addons": {"enabled": true}` in Facet's `scoring_config.json` and restart Facet; "Astro" appears on
 its Add-ons page. Open the Astro panel on a folder or a selection of photos, confirm the location and the time,
@@ -146,7 +175,9 @@ to show in this frame, and how far it sits from the edge and the horizon.
 - **It needs stars.** Cloud, heavy light pollution, daylight or a frame filled by the Moon will not solve.
 - **Wide-angle shots need the W08 database**; telephoto shots need D50 as well.
 - **Time matters only for the planets, the Moon and the horizon.** Stars, constellations and deep-sky objects are
-  found from the stars alone. Without a clock offset, planets and the Moon are capped at *candidate*.
+  found from the stars alone. Unless the camera clock is confirmed (a clock offset from `--offset` or
+  `clock_offset` in `astro-id.json`, even `0`, or a true time from `--time` or Facet), the Sun, Moon and planets are
+  capped at *candidate* (64). A site is not needed for that; it only adds the horizon check.
 - Wide fields are solved from a central crop and extended outward, so the extreme corners of very wide or
   fisheye lenses may stay unlabelled.
 
@@ -255,9 +286,10 @@ writes/merges `astro-id.json` (keeping any clock offset, tolerance and timezone 
 Camera clocks drift. Every time-dependent check (planet and Moon positions, above-horizon, horizon
 margin) is evaluated across `[t - tolerance, t + tolerance]` and the **worst case** is scored. When the
 Moon is found in the frame its position pins the time (it moves ~0.5 deg per hour against the stars):
-`best_fit_time` is reported and `time_flag` is set if it falls outside the tolerance. Without an
-`astro-id.json` or `--offset`, EXIF time is used as-is (`time_source: "exif"`) and the Sun, Moon and
-planets are capped at *candidate*.
+`best_fit_time` is reported and `time_flag` is set if it falls outside the tolerance. Without a clock
+offset (`--offset`, or a `clock_offset` key in `astro-id.json`, even `0`) or a true time (`--time`, or a date
+corrected in Facet), EXIF time is used as-is (`time_source: "exif"`) and the Sun, Moon and planets are capped at
+*candidate* (confidence 64; `EXIF_TIME_CAP` in `astro_id/confidence.py`). The site does not affect the cap.
 
 ### Annotations payload (for the Facet viewer)
 
@@ -397,10 +429,18 @@ or type a password after the one-time install.
 **Install (once):**
 
 ```powershell
-cd C:\path\to\astro-id
+# Windows (PowerShell)
+cd <path to astro-id>
 uv run astro-id facet install --facet-data "$env:LOCALAPPDATA\Facet\data"
 ```
 
+```sh
+# Linux / macOS
+cd <path to astro-id>
+uv run astro-id facet install --facet-data /path/to/facet/data
+```
+
+`--older-facet` leaves the manifest's `network` key out, for an older Facet that refuses keys it does not know.
 This writes `<facet data>\addons\astro-id\addon.json` and nothing else. The manifest holds the absolute path of
 `uv` (from `$env:UV`, else `uv` on PATH; `--uv` overrides) and of this checkout (`--project` overrides), so Facet
 can start `uv run --project <checkout> astro-id facet serve --addon` without a PATH lookup. Re-run it after moving
