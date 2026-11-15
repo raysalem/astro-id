@@ -670,11 +670,11 @@ def test_page_priority_layout_terms_and_script_parses(tmp_path):
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     text = re.sub(r"<script>.*?</script>", "", html, flags=re.S)
     for want in ('id="loadFacet"', 'id="albumSel"', "Import a new folder", "1. Location", "2. Time", "Auto",
-                 "3. Plate solve", "4. Results", "Save to Facet", "5. Sky labels", "Show sky labels",
+                 "3. Plate solve", "4. Results", "Save to Facet", "5. Sky labels", "Sky labels on this photo:",
                  "6. Export labeled copies", "Draw constellation stick figures", "Show confidence numbers",
                  "Culling (low priority)", "Save object tags", 'id="saveScore"', "<dt>Object tags</dt>",
                  "<dt>Album tags</dt>", "<dt>People tags</dt>", "Objects at or above the slider become <b>object tags</b>",
-                 "Show names at confidence", 'id="help"', 'id="helpBtn"', "The two confidence sliders", 'id="resAll"',
+                 "Only names at confidence", 'id="help"', 'id="helpBtn"', "The two confidence sliders", 'id="resAll"',
                  'id="prog"', 'id="autoApply"'):
         assert want in text, want
     panel = text[text.index("<main>"):]          # the panel itself (the help page above uses the same words)
