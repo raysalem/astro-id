@@ -204,6 +204,12 @@
   <p>Yes. Solving and exporting write nothing to Facet. Saving again writes only what changed, and Astro only ever
     changes its own status tags, object tags and sky labels, never the ones you or other tools added. The
     first save also removes the plain per-object tags an older Astro wrote (it keeps a list); the object tags replace them.</p>
+  <p id="h-undo"><b>Undo what Astro saved&hellip;</b> (under Save to Facet in step 4) takes it back: for the ticked
+    photos, or everything loaded, it removes the object tags, the status tags and the sky labels Astro saved, and
+    nothing else. It first says what it will remove; nothing changes until you click <b>Confirm</b>. Your own tags
+    stay, and so do old tags written outside the add-on (only you can remove those in
+    Facet). The results stay in the panel, so <b>Save to Facet</b> can write them again. Undo twice is harmless: the
+    second finds nothing.</p>
   <div class="row"><button id="helpBack2">&larr; Back to the panel</button></div>
 </section>
 <main>
@@ -313,6 +319,17 @@
       Safe to repeat.
       <button class="link" data-help="h-sliders">More</button></p>
     <div class="row"><span id="saveinfo" class="small"></span></div>
+    <div class="row" id="undoRow" style="margin-top:10px" hidden>
+      <button id="undoBtn" class="link small" disabled>Undo what Astro saved&hellip;</button>
+      <span id="undoWhy" class="muted small"></span></div>
+    <div id="undoBox" class="note small" hidden>
+      <div class="row"><span>For</span>
+        <label><input type="radio" name="undoScope" id="undoScopeTicked" value="ticked" checked> the ticked photos</label>
+        <label><input type="radio" name="undoScope" id="undoScopeAll" value="all"> everything loaded</label></div>
+      <div class="row"><span id="undoQ"></span></div>
+      <div class="row"><button id="undoGo" class="secondary" hidden>Confirm</button>
+        <button id="undoCancel" class="secondary">Cancel</button></div>
+    </div>
   </div>
 </details>
 
@@ -1053,6 +1070,7 @@ function showSaveCut() {
   const n = rows.reduce((a, r) => a + nSave(r), 0);
   $("saveCount").textContent = review.length ? `${n} object tag(s) on ${rows.length} ticked photo(s)` : "";
   if (review.length) $("saveFacet").disabled = !state.can_write || !rows.length;
+  drawUndo();
 }
 $("saveScore").oninput = () => { showSaveCut(); if (review.length) drawResults(); };
 $("saveScore").addEventListener("change", autosave);
@@ -1119,12 +1137,101 @@ $("saveFacet").onclick = async () => {
     $("st4").textContent = `${review.filter((r) => r.status !== "failed").length}/${review.length} solved · ${d.photos} saved`;
     $("saveFacet").textContent = "Save to Facet again";
     if (d.photos) $("applyReview").disabled = false;
+    for (const r of d.reports) if (!r.error) undoMark.set(r.path, true);
+    undoClose(); drawUndo();
     if (bridge) bridge.refresh(d.reports.filter((r) => !r.error).map((r) => r.path));
     skyPhoto = undefined; if (lastCtx) skyContext(lastCtx.photo);   // the open photo may have sky labels now
   } catch (e) { $("saveinfo").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
   finally { $("saveFacet").disabled = !state.can_write || !toSave.size; }
 };
 $("showSolved").onclick = () => { if (bridge) bridge.showPhotos(Object.keys(solved).filter((p) => solved[p])); };
+
+/* ---- undo (start): "Undo what Astro saved…" (api/undo). A dry run first, one inline confirmation line, then the
+   undo; no browser confirm dialog (the iframe is sandboxed). Only astro-id's own object tags, status tags and sky labels. */
+const undoMark = new Map();   // path -> true (saved here) / false (undone here); else the listing's ledger says
+let undoPending = null;       // {paths} the dry run answered for: Confirm sends exactly these
+function undoParts(d) {
+  const parts = [];
+  if (d.object_tags) parts.push(plural(d.object_tags, "object tag"));
+  if (d.status_tags) parts.push(plural(d.status_tags, "status tag"));
+  if (d.sky_labels) parts.push("the sky labels");
+  return parts.length < 2 ? (parts[0] || "") : parts.slice(0, -1).join(", ") + " and " + parts[parts.length - 1];
+}
+function undoQuestion(d) {
+  const what = undoParts(d);
+  return what && d.photos ? `Remove ${what} from ${plural(d.photos, "photo")}? Your own tags stay.` : null;
+}
+function undoKept(d) {
+  const n = d.not_removed || {}, bits = [];
+  if (n.yours) bits.push(`${plural(n.yours, "old tag")} written outside the add-on stay (only you can remove them in Facet)`);
+  if (n.other_writer) bits.push(`${plural(n.other_writer, "tag")} stay (another writer owns them now)`);
+  if (n.failed) bits.push(`${n.failed} not removed (Facet did not answer: Undo again)`);
+  if (n.no_route) bits.push(`sky labels stay on ${plural(n.no_route, "photo")} (this Facet cannot remove them)`);
+  return bits.join(" · ");
+}
+function undoDone(d) {
+  const what = undoParts(d), kept = undoKept(d);
+  return (what ? `Removed ${what} from ${plural(d.photos, "photo")}.` : "Nothing was removed.")
+    + (kept ? ` ${kept}.` : "") + (d.errors ? ` ${plural(d.errors, "photo")} could not be read.` : "")
+    + " The results stay here: Save to Facet writes them again.";
+}
+function undoScope() { return $("undoScopeAll").checked ? "all" : "ticked"; }
+function undoPaths(scope) {
+  if (scope === "all") return photos.map((p) => p.path);
+  return review.length ? [...toSave] : selected();
+}
+function undoKnown(path) {
+  if (undoMark.has(path)) return undoMark.get(path);
+  const p = photos.find((x) => x.path === path);
+  return !!(p && p.ledger);
+}
+function undoClose() { undoPending = null; $("undoBox").hidden = true; $("undoGo").hidden = true; }
+function drawUndo() {
+  const why = !photos.length ? "" : !state.can_write ? "Read-only: Astro has no Facet credential."
+    : !photos.some((p) => undoKnown(p.path)) ? "Nothing Astro saved is recorded for the loaded photos." : "";
+  $("undoRow").hidden = !photos.length;
+  $("undoBtn").disabled = !!why || serverStale;
+  $("undoWhy").textContent = why;
+  if (why) undoClose();
+}
+async function undoAsk() {
+  const scope = undoScope(), paths = undoPaths(scope);
+  undoPending = null; $("undoBox").hidden = false; $("undoGo").hidden = true;
+  if (!paths.length) { $("undoQ").textContent = scope === "all" ? "Nothing is loaded." : "No photos are ticked."; return; }
+  $("undoQ").textContent = "Checking what Astro saved...";
+  try {
+    const d = await api("api/undo", {paths, dry_run: true});
+    if (undoScope() !== scope) return;              // the choice changed meanwhile: that answer is old
+    const q = undoQuestion(d), kept = undoKept(d);
+    if (q) { undoPending = {paths}; $("undoGo").hidden = false; $("undoQ").textContent = q; return; }
+    $("undoQ").textContent = `Nothing Astro saved is recorded for ${scope === "all" ? "the loaded photos" : "the ticked photos"}.`
+      + (kept ? ` ${kept}.` : "");
+  } catch (e) { $("undoQ").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+}
+async function undoConfirm() {
+  if (!undoPending || serverStale) return;
+  const paths = undoPending.paths;
+  undoClose(); $("undoBtn").disabled = true; $("saveinfo").textContent = "Removing what Astro saved...";
+  try {
+    const d = await api("api/undo", {paths});
+    const reps = new Map((d.reports || []).map((r) => [r.path, r]));
+    for (const p of paths) {   // still recorded only where a removal failed (Undo again finishes it)
+      const r = reps.get(p);
+      if (r && r.error) continue;
+      undoMark.set(p, !!(r && (r.not_removed || []).some((x) => x.why === "failed")));
+    }
+    $("saveinfo").innerHTML = `<span class="ok">${esc(undoDone(d))}</span>`;
+    $("saveFacet").textContent = "Save to Facet";
+    if (bridge) bridge.refresh((d.reports || []).filter((r) => r.changed).map((r) => r.path));
+    skyPhoto = undefined; if (lastCtx) skyContext(lastCtx.photo);   // the open photo's sky labels may be gone
+  } catch (e) { $("saveinfo").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  finally { drawUndo(); }
+}
+$("undoBtn").onclick = () => { if ($("undoBox").hidden) undoAsk(); else undoClose(); };
+$("undoScopeTicked").onchange = $("undoScopeAll").onchange = () => undoAsk();
+$("undoGo").onclick = () => undoConfirm();
+$("undoCancel").onclick = () => undoClose();
+/* ---- undo (end) */
 
 /* --------------------------------------------------------- step 5: sky labels --- */
 // The view Facet applies to astro-id's labels (PLUGIN_BOUNDARY.md §6c). visible starts off and is never saved.
