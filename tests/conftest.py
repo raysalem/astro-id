@@ -4,14 +4,24 @@ import pytest
 
 from astro_id import requirements as R
 
+_REAL_ASTAP_STATUS = R.astap_status
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _astap_requirement_met():
+    """Tests stub the solver, so the run-time ASTAP gate must not depend on this machine. Session scope, so that
+    module-scoped fixtures that run a solve (tests/test_annotations.py) see the stub too."""
+    mp = pytest.MonkeyPatch()
+    mp.setattr(R, "astap_status", lambda: R.AstapStatus(Path("astap_cli"), Path("."), R.MIN_ASTAP, {"w08"}))
+    yield
+    mp.undo()
+
 
 @pytest.fixture(autouse=True)
-def _astap_requirement_met(request, monkeypatch):
-    """Tests stub the solver, so the run-time ASTAP gate must not depend on this machine (tests/test_requirements.py
-    exercises the real gate and opts out with the ``real_gate`` marker)."""
+def _real_gate(request, monkeypatch):
+    """tests/test_requirements.py exercises the real gate and opts out of the stub with the ``real_gate`` marker."""
     if request.node.get_closest_marker("real_gate"):
-        return
-    monkeypatch.setattr(R, "astap_status", lambda: R.AstapStatus(Path("astap_cli"), Path("."), R.MIN_ASTAP, {"w08"}))
+        monkeypatch.setattr(R, "astap_status", _REAL_ASTAP_STATUS)
 
 
 @pytest.fixture(autouse=True)
