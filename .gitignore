@@ -17,7 +17,6 @@ astro-id.json
 astro-id-report.csv
 *.bsp
 hip_main.dat
-dev-notes/
 astro-id-results.json
 # ...except the example set and the docs images (photos © Ray Salem, all rights reserved, see examples/README.md)
 !examples/*.jpg
@@ -28,3 +27,4 @@ astro-id-results.json
 !docs/img/*.jpg
 !docs/img/demo.mp4
 !docs/img/demo.gif
+dev-notes-private/

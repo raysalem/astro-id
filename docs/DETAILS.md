@@ -1,0 +1,128 @@
+# astro-id: details
+
+## Architecture
+```
+photo -> ASTAP crop solve -> full-frame TAN-SIP refit -> identify + score -> labels / JSON / CSV / labeled copy
+
+Facet (MCP + HTTP) <-- astro-id add-on (keeper + worker, panel) <-- results reviewed in the panel, then saved
+```
+The engine (`astro_id/`) is a library and CLI. The Facet add-on (`astro_id/facet/`) is a separate process Facet starts; it serves a sandboxed panel page and talks to Facet only over Facet's own API with its own token. Solving never writes to Facet; the panel's "Save to Facet" does.
+
+## Data flow
+1. Photo (JPG, or a RAW source) -> ASTAP solve with a crop, then a full-frame refit.
+2. Identify objects, apply the time and site (worst case across the clock tolerance), score 0-100, add quality metrics.
+3. Output: JSON per [CONTRACT](../CONTRACT.md), CSV, labeled copy; or, in Facet, tags + sky labels (annotations) through the add-on.
+
+## Interfaces
+| Interface | Direction | Spec |
+|---|---|---|
+| CLI (`astro-id solve`, `label`, `moon`, `session`, `cull`, `check`, `site`, `setup`, `facet ...`) | in/out | [REFERENCE](REFERENCE.md) |
+| JSON result contract v1.1 | out | [CONTRACT](../CONTRACT.md) |
+| Annotation payload | out | [ANNOTATIONS](../ANNOTATIONS.md) |
+| Facet add-on manifest + panel bridge (postMessage v1) | both | Facet's add-on spec; the dated sections below |
+
+## Decisions
+| Date | Decision | Why | Rejected |
+|---|---|---|---|
+| 2026-11-11 | astro-id leaves Facet's process: sidecar, then Facet add-on | Facet upgrades must not break it; one credential, one API | in-process plugin with a hardlink |
+| 2026-11-12 | "Model D": at most 3 summary tags + searchable object tags + sky labels; old Facet keeps per-object tags | one tag per object flooded the tag list | namespaced tags hidden from the cloud |
+| 2026-11-14 | A keeper restarts the worker on code changes | no manual Stop/Open after every change | a Facet-side restart route (asked of Facet) |
+| 2026-11-15 | Safety probe before an update is offered | half-written code once took the add-on down | none |
+| 2026-11-15 | Moon close-ups get their own command, `astro-id moon` | a Moon close-up has no stars to plate-solve; a separate command is purely additive | wiring it into `solve`/`label` now (left for later, [Moon plan](plans/2026-11-15-moon-features.md)) |
+| 2026-11-15 | The lunar catalog is committed (`astro_id/moon_catalog.py`), unlike the star and deep-sky catalogs | IAU/USGS gazetteer and NASA NSSDCA data are public domain; GPL / CC-BY-SA data stays downloaded | a CC BY-SA full-Moon photo as an example (share-alike would bind every labeled copy) |
+| 2026-11-15 | The maria fit searches only the unmirrored picture; `--mirror` flips it | a camera lens does not mirror, and searching both doubled the false peaks | searching both orientations |
+
+## Gotchas
+- Only the Moon pins the clock today; planets and the horizon do not (see [TODO](TODO.md)).
+- `astro-id moon` needs a disc of about 250 px for craters (60 px for maria); smaller discs get no names and a message saying the size needed. A thin crescent or an eclipse needs the photo's time to tell a phase from the Earth's shadow.
+- `docs/PLAN-moon.md` is only a pointer now: `astro_id/moon.py` and `tests/test_moon.py` cite that path. Repoint them to `docs/plans/2026-11-15-moon-features.md` in a code change, then archive the pointer.
+- ASTAP versions are dates; the minimum is in [REQUIREMENTS](REQUIREMENTS.md).
+- Past defects, with causes: [ISSUES](ISSUES.md).
+
+---
+
+*Moved from the maintainer's private working notes on 2026-11-15 and scrubbed for this public repo. Sections are dated; later sections replace earlier ones where they say so.*
+
+## Engine and add-on notes (dated)
+### Engine
+- Layout: `astro_id/` cli, pipeline, solve, stars, identify, confidence, overlay, site, config, timeutil, imageio, data. uv project, console script `astro-id = astro_id.cli:main`, flat module root.
+- Reference data cache `<local app data>` (override `ASTRO_ID_DATA`): hip_main.dat (CDS; CfA mirror fallback - CDS timed out from this network on 2026-11-09), de421.bsp, OpenNGC NGC.csv + addendum.csv, IAU-CSN.txt, Stellarium v23.4 modern constellationship.fab. Nothing vendored (GPL / CC-BY-SA stay out of the MIT repo). Seven Messier objects lack a V-mag in OpenNGC (M35, M22, M62, M69, M70, M71, M107): filled from published values.
+- ASTAP: `<local app data>` (CLI 2026.10.30) + W08 (`w08_0101.001`), installed silently with `/DIR`. Found via `ASTAP_PATH` -> LOCALAPPDATA -> ProgramFiles -> PATH; database from `ASTAP_DB` or the exe folder. All 18 test frames are 20 mm, so D50 was not installed.
+- Solve: JPEG read at 1/2 scale (DCT draft). Stars detected at 4 smoothing scales (sigma 1/3/6/12 px): the defocused frames (frame-7610, frame-7612) have 25-100 px discs. The scale is chosen by center agreement, then lowest final RMS.
+- ASTAP attempts: c30 crop at ~2'/px (bin 3 for 20 mm), bin+1, c40, offset crops up/down/left/right. FITS written unflipped; the crop WCS is mapped to full-res pixels by a 9x9 grid fit.
+- Gotcha: `astropy fit_wcs_from_points(proj_point='center')` mis-centred a field at RA 59 Dec 67 (CRVAL 359.8). Replaced by an explicit tangent point, and the SIP fit by our own linear least squares (`fit_tan_sip`: full polynomial in normalized (u,v); linear part = CD, higher terms -> SIP A/B; CRVAL re-centred).
+- Refit rounds: coarse bright-star round (wide radius) -> inner TAN -> SIP2 -> SIP3/4 full frame with radius = 2.5 x median residual, 2.5x-median clipping; a round that worsens the median is rejected. Then `_grow_into_corners`: ring by ring (rho +0.10); in each of 8 sectors the offset is found by voting over catalog-detection pair offsets (the extrapolated model was ~47 px off at rho 0.75 on frame-7611); refit SIP 3-5; then 3 tight full-frame rounds.
+- `safe_world2pix`: rejects sky points beyond half-diagonal + 10 deg or where SIP and plain TAN differ by > 5 % of the frame (an extrapolated SIP polynomial folds distant sky into the frame: "Phoenix" and NGC 7380 appeared inside Orion before the guard).
+- Limiting magnitude: faintest 0.25-mag bin where >= 50 % of catalog stars near matched stars have a detection, chance-coincidence corrected.
+- Bright sources for planets/Moon: ordered by peak, then flux (Milky Way blobs have big flux but low peak). Bodies <= mag 2 must coincide with one of the 150 brightest within max(3 x err, 0.5 deg); fainter bodies use any detection within the fit error.
+- Confidence math in `confidence.py` (README explains it); EXIF-only time caps Sun/Moon/planets at 64.
+- Contract JSON exactly per CONTRACT.md v1; extra diagnostics only in the CSV and the stderr log.
+- Overlay/CSV location: `--overlay-dir`, default `<folder>-annotated`; originals are never written.
+
+### Facet plugin
+- Event data for `on_score_complete` (facet processing/scorer.py:3040): `path, filename, aggregate, aesthetic, comp_score, category, tags` (tags = comma-joined string). No DB path or config in the event; the plugin reads config via `config_resolve.load_resolved()` (`plugins.astro_id`) and the DB path from plugin `db_path` > `--db` in argv > `$DB_PATH`.
+- `photo_manual_tags.source` has CHECK IN ('user','xmp'), so the ownership marker is `created_by='astro-id'`. FK photo_path -> photos(path) ON DELETE CASCADE, exact string match; the event path is used verbatim.
+- Mirrors the manual-tag API: `insert_manual_tag`, skips tags equal to an AI tag, deletes `stats_cache` key 'tags'. In-process caches (`after_commit`) are not touched (viewer is a separate process).
+- RAW/JPG: results map to requested paths by exact path, else same folder + stem.
+- Engine: `uv run --project <engine> astro-id solve <target> --json --min-confidence N [--overlay-dir D]`; contract != 1 rejected; failure writes nothing. Folder run when >= `batch_min` frames pending in a folder.
+
+#### Facet as source of truth (2026-11-09)
+- Precedence: SITE Facet GPS > astro-id.json site > none; TIME Facet manual date > json offset on EXIF > raw EXIF. Non-manual `date_taken` is never used (camera clock).
+- `photos.date_taken` is a naive camera-local walltime string `YYYY:MM:DD HH:MM:SS` (`utils/capture_dates.py`; `parse_capture_date` accepts that and ISO without offset). No timezone is stored or inferred, so the plugin sends a naive `--time` and the engine applies the folder timezone (json, else site-inferred, else system). A shift (`api/routers/capture_dates.py`) writes `date_taken` + `date_manually_set=1`.
+- GPS `(0,0)` is treated as absent. Batching groups by (folder, Facet site); photos with a manual date always run solo.
+- Engine: `time_source: "facet"` is not capped like EXIF (identify.py). Elevation cache per 3-decimal coordinate; failures not cached.
+
+#### Tag hierarchy + plugin-controlled runs (2026-11-10)
+- `astro_id/tagpolicy.py`: levels, `TagPolicy` (`make_policy(json_cfg, **flags)`), asterism table (HIP ids verified against Hipparcos + IAU names on 2026-11-10), `styled_tag`, `constellation_of` (astropy `SkyCoord.get_constellation`, Roman 1987 boundaries bundled with astropy, no download), `apply_policy`.
+- `identify._hierarchy`: sets style, parent (asterism parent only when all members share one constellation), membership (stars within a cluster's radius AND fainter than the cluster's integrated mag, so Hatysa is not swallowed by M42 nor Aldebaran by a Hyades entry; asterism member HIPs), then `apply_policy`. A member is suppressed only when its group is taggable and >= `--min-confidence` (the engine's `--min-confidence`, which the plugin passes), so a low-confidence cluster never hides its stars.
+- Asterism detection: members projected, in frame, above horizon (any time in the window), and `_star_seen` (fit-matched or a bright source within 3 fit errors). share >= 0.8 of ALL members; confidence = combine(quality, 1, share, horizon margin of the lowest member).
+- `astro_id/stack.py`: `group_frames` sorts by EXIF time and splits on gap or setup change (lens 0xA434, focal, exposure, size); `representative` = middle (len//2). `verify` detects stars on the frame at the representative's chosen smoothing scale first (`Solution.det_smooth`), then the others; `register` votes the translation from the 200 brightest detections of each (2D histogram, bin max(6, 2 psf)), then fits an affine on all detections in 3 shrinking radii. Accept: >= 15 pairs, >= 60 % of the frame's 200 brightest detections have a counterpart, centre shift <= `stack_tolerance` x diagonal (0.02), rotation <= 3 deg, scale within 2 %. Sky rotation on a fixed tripod (~0.25 deg/min about the pole) is absorbed by the affine.
+- `pipeline.process_copy`: own true_time (EXIF + offset), objects mapped through the affine (point objects that leave the frame are dropped, constellation/asterism figures mapped), centre RA/Dec via the inverse affine and the representative WCS, overlay drawn with a stack-copy legend line.
+- Plugin exit hook: registered at module import only when `basename(sys.argv[0])` is `facet.py`/`facet`. `facet.py` calls `init_global_plugin_manager` before gathering files (facet.py:1781), the viewer in `api/__init__.py:767`; the viewer's argv[0] is `viewer.py`, so it never registers. `_PROCESS_START` (UTC) is taken at import, before the scan writes rows; Facet's `scanned_at` and `created_at` are both SQLite `datetime('now')` UTC strings, compared as text.
+- Caveat: a multi-pass rescan of an EXISTING row keeps its `scanned_at` (the partial upsert only updates computed columns), so "rescanned since" fires for new inserts and full rescans, not for every partial pass.
+- Child: `sys.executable plugins/astro_id.py --pending --since <start> --db <abs db> [--config <abs>]`, cwd = Facet checkout, env DB_PATH + inherited FACET_CONFIG, creationflags 0x08000000|0x8|0x200, stdin DEVNULL, stdout+stderr appended to the log. Lock `astro-id-catchup.lock` (O_EXCL, pid + time); liveness via OpenProcess/GetExitCodeProcess (STILL_ACTIVE) on Windows.
+
+### Annotations, RAW source, plugin config (2026-11-10)
+- `astro_id/annotations.py`: `build_annotations` (ids = slug of the name, `-2` on collision; `member_of` resolved from the object tag to the slug id), `figure_segments` (great-circle slerp, <= 48 pieces/segment, `safe_world2pix`, Liang-Barsky clip), `cap_size` (drops lowest-score items, never planets). `Obj.figure_sky` carries each stick-figure segment in (ra, dec) so the figure can be re-projected; a stack-copy frame projects through the representative's solution and then the registration affine (`StackMatch.apply`).
+- Only named stars (IAU names, mag <= 4.5) exist as objects, so the Stars group holds those; the mag slider range -5..8 is as in the spec.
+- Payload build failure never costs a frame its tags (`annotations: null`, warning logged).
+- RAW source: `imageio.choose_source` / `raw_crop_for` / `load_gray(crop=...)`. rawpy reports the Sony crop with left margin 0, but the JPG is the centred crop: measured 32 px left, 20 px top on an A7R IV by solving the JPG and the RAW and comparing Jupiter (JPG 4823.4, 2564.5; RAW 4823.5, 2564.6 after the centred crop). Same size or a matching crop size is required, otherwise the JPG is solved (warning). Linear (gamma 1) demosaic: 481 matched stars, rms 0.34; default gamma 1813 stars, rms 0.41; both grade A. JPG: 1889 stars, rms 0.34.
+- Plugin RAW XMP: exiftool config defines namespace `astroid` with a `Keywords` bag (needs `WRITABLE => 'string'`); a list is rebuilt by repeating `tag=value` (not `-=`/`+=`, which kept old values); sidecar created from a minimal XMP packet when missing; `-overwrite_original`.
+- Plugin config: `validate_config` / `get_config`; a bad value sets `enabled` false and logs once per message.
+- Facet helper contract assumed: `db.annotations.upsert_annotation(conn, photo_path, source, payload_dict)` inside the caller's transaction (the plugin only COMMITs if the helper left the transaction open). Delete uses `delete_annotation(conn, photo_path, source)` if present, else a plain DELETE on the table.
+
+### Astro session, quality metrics, culling (2026-11-11)
+- `astro_id/quality.py`: one full-res decode (PIL "L"), half-size = 2x2 mean. Detection (5 sigma) at smoothing 2, 6 and 16 half-size px. Per scale the 150 brightest isolated (nearest neighbour >= 1.5 x blob size and >= 12 full px), unsaturated (stamp peak < 0.97 x max), SNR (peak >= 8 x annulus noise) stars after skipping the brightest 2 %. `star_shape`: up to 6 rounds of re-centring (flux-weighted, pixels > 3 sigma) and aperture growth to 2.5 r50 + 2 (max 90 px); half-flux radius from the signed cumulative flux sorted by radius (clipping noise at 0 biased it up 25 %); elongation from flux-weighted second moments over r <= 2 r50, pixels > 3 sigma (wide windows made trailed stars look round). The reported scale is the one whose kernel FWHM (2.355 x sigma) is closest in log to the median measured HFD: a defocused frame measured at the fine scale gave rim fragments (frame-7612 read 10 px; the discs are ~120 px, HFD of a uniform disc = D / sqrt 2 = 85). Medians over stars within rho 0.6 when >= 15. Background/noise: median and MAD per 64-px cell of the half-size image over cells with >= 2 detections (sky, not foreground).
+- Synthetic checks: Gaussian FWHM 3/5/10 -> 2.8/4.7/10.3; elongation 2/3 -> 1.77/2.49 (moments under-read the trail a little); uniform 60 px discs -> 42 (60/sqrt 2).
+- Pipeline: quality computed after the solve on both outcomes (`fr["quality"]`, failures logged, never fatal); scale from the solution centre (`stack._center_scale_deg`) else EXIF; stack-copies get their own metrics with `matched` = registration pairs.
+- `cli.solve_files(files, args, stack_cfg, on_frame)` split out of `cmd_solve`; the session builds `args` with `build_parser().parse_args([...])` so every engine flag means the same thing in both paths.
+- Session jobs: group by (folder, site) without hint time (stacking intact), hint-time photos solo with `--time`; RAW paths collected to their JPG twin and reported under the requested path; results matched back by normalised path; a job exception or missing file becomes a failed photo event, never a crash.
+- Tolerance: ASTAP/refit are time-free and `timeutil.window` always samples 5 points, so the window width costs nothing; it affects only horizon margin, planet/Moon spread and `time_flag`. Verified end to end by `test_session_end_to_end_honours_tolerance` (frame `time_tolerance_min` 5, legend "5 min").
+- Plugin: `annotation_for` merges `quality` into a copy of the payload; Facet's real `validate_payload` keeps it (checked with a helper in the Facet test checkout). `trigger != "scan"` returns early in `on_score_complete` and `_on_exit`.
+
+
+### Facet sidecar, Phase 0 (2026-11-11)
+- Code: `astro_id/facet/{client,ledger,sync,legacy,serve,cli}.py`, `astro_id/facet/static/index.html`. Engine and session code unchanged.
+- Facet API facts read from the code (a Facet test checkout at 1.28.0 + the owner's branches, and one at 1.29): single-user login is `POST /api/auth/edition/login {password}` (the edition JWT also reads; `/api/auth/login` in legacy mode only checks the viewer password); multi-user `POST /api/auth/login {username, password}`. Logins are rate-limited per IP (429): the client logs in once and re-logs only on a 401. `GET /api/photos` takes `category`, `path_prefix` (backslashes normalised), `tag`, `album_id`, `date_from` (capture date), `per_page` <= 500, `has_more`; viewer defaults hide burst/duplicate/bracket/panorama members, so the client sends every `hide_*=0` and `collapse_stacks=0`. No `fields` selector and no scan time in the API. `GET /api/photo` gives `manual_tags` + `album_tags` (both count to the 50 cap), `tags` (AI, untruncated), `gps_*`, `gps_manually_set`, `date_manually_set`, `raw_companion` (only on stacks with file-type-filter). `GET /api/config` has `version`. OpenAPI is off by default, so optional routes are detected by a probe: `PUT /api/photo/annotations` with `{}` answers 422 when it exists, 405 when not.
+- `batch_manual_tags` add is `INSERT OR IGNORE` with the AI-tag and cap checks and answers only a count; delete removes the tag whatever its source. Hence: plan per photo against a fresh `GET /api/photo` (foreign = manual minus ledger), batch the adds per tag, delete stale ledger tags one by one, re-read each photo and record in the ledger only planned tags that are present.
+- Watermark: Facet exposes no scan time, so "new" = a path not in the ledger. `--since` filters on Facet's capture date (day granularity); `last` stores the newest capture date seen (camera clock: consistent per camera even when offset).
+- Legacy annotations: `db/annotations.py` is loaded by file path (stdlib only), so Facet's `db` package and its dependencies are never imported; one sqlite connection, `with conn:` per write, busy_timeout 30 s.
+- Migration: the old plugin's tags are `source='user', created_by='astro-id'`; the API cannot tell them from user tags, so without `adopt` the sidecar treats them as the user's (skips them, never removes them). `adopt` reads them once (read-only URI) into the ledger.
+- Serve: `ThreadingHTTPServer`, one solve job at a time, the ledger connection shared across threads under an RLock (`check_same_thread=False`). The page polls `api/job?after=N` every 1.5 s (no SSE: simpler with the stdlib server; the event list is small).
+- Path forms: Facet stores `\\host\share\...`; the API accepts either slash form for `path_prefix`. Git Bash mangles a leading `\\` on arguments; run from PowerShell.
+
+### Facet add-on (2026-11-11)
+Spec: private notes `dev-notes\facet\PLUGIN_BOUNDARY.md` v0.2, plus the review's §5 on the proxy. astro-id's side is recorded in CONTRACT.md "Facet add-on". Files: `astro_id/facet/install.py`; `serve.py` (add-on handler, `AddonEnv`, `build_addon` / `finish_addon` / `serve_addon`); `lifeline.py`; `client.py` (`addon_credentials`, `thumbnail`, stricter probes); `static/index.html` + `static/bridge.js`.
+
+- **Start order:** bind -> print the port line -> start the lifeline -> contact Facet (version, feature probes) -> serve. The port line never waits on Facet. stdout carries only that line; logging goes to stderr (Facet logs both to `data/logs/addons/astro-id.log`).
+- **Process tree on Windows (found 2026-11-11):** `uv.exe -> .venv\Scripts\astro-id.exe (trampoline) -> .venv\Scripts\python.exe (venv launcher) -> base python.exe`. `terminate()` on uv.exe ends uv only; the other three kept the port and the pipe open. `lifeline.py` takes a Toolhelp snapshot, opens SYNCHRONIZE handles on the ancestors up to and including uv's parent (Facet), and calls `os._exit(0)` when any of them ends (WaitForMultipleObjects; the handles pin process identity, so PID reuse cannot fool it). With no uv in the chain (run by hand) it watches the parent only. POSIX: a getppid poll; Facet's killpg covers the group anyway.
+- **Gates:** `/health` is the only route without `X-Facet-Launch` (the supervisor calls it before it trusts the port). A loopback Host is still required (the proxy sets Host to the upstream). The secret is compared with `hmac.compare_digest`. The path is unquoted once with `errors="strict"`, so `%252e%252e` stays a literal `%2e%2e`.
+- **Origin:** opaque-origin fetches send `Origin: null` (the spec's proxy drops Origin anyway). Add-on mode has no Origin check; the launch secret and the proxy's nonce gate replace it. The standalone page keeps its Origin and secret-path checks.
+- **CORS preflight:** every panel fetch is cross-origin (opaque origin) with a custom header, so the browser sends `OPTIONS` first, **without** `X-Addon-Nonce`. In the Chrome harness the stand-in proxy answered OPTIONS itself. astro-id also answers OPTIONS with 204 (behind the launch gate) in case Facet forwards it.
+- **Page inlining:** `bridge.js` is inlined into the page at serve time (`<!--ASTRO_BRIDGE-->`), so the page is one request and does not depend on whether `script-src 'self'` resolves in an opaque origin. In Chrome, `connect-src 'self'` and `img-src blob:` did work in the sandboxed frame (harness, docs/TESTING.md).
+- **No modal dialogs:** the old "Save to folder astro-id.json" used `confirm()`, which a sandbox without `allow-modals` silently answers false. A second click within 5 s now confirms. Links to Facet became `open_photo` messages (no popups).
+- **Scope -> photos:** import passes `scan_run=<run_id>` plus the page's category (default `astro`, since a run may hold landscapes too). View drops `page`, `per_page`, `sort`, `dir`, `nonce` and the hide/collapse toggles: astro-id wants every frame of a burst in capture order, as the sidecar always did. Selection fetches each path with `GET /api/photo` and drops unknown ones. Cap: 2000 photos.
+- **Thumbnails:** `GET ui/api/thumb?path=&size=` serves only photos in the current set (404 otherwise), fetched from Facet's `/thumbnail` with the token. The page reads it with fetch + `URL.createObjectURL`, because an `<img src>` cannot carry the nonce header; 4 at a time.
+- **Feature probes with a scoped token:** a FastAPI route that exists answers 422 to an empty body. With an add-on token, a route outside its permissions answers 403, so only 422 counts as usable. Password logins keep the old meaning (401/403 = the route exists).
+- **plugin_tags:** probed first, as the spec asks. v0.2 does not pin the request body, and a guessed shape could fail mid-run, so a present route only adds a sidebar note; tags stay on `batch_manual_tags` + ledger.
+- **Standalone `facet serve`:** kept, sharing `App`. It is how astro-id works with a Facet that has no add-on support, and the dev harness for the page.
