@@ -445,7 +445,9 @@ Photos with no results or labels are listed under "Not exported".
 ### Culling
 
 Last and optional (low priority). Flags frames that look soft, trailed or have too few stars as `review` or
-`reject`. It is advice only: it never deletes or rejects anything in Facet. Out-of-focus frames are at most `review`
+`reject`. Twilight frames are measured fairly (a bright, graded sky is not mistaken for noise, and the stars the
+plate solve matched count), but a dawn frame in a session of dark ones can still come out `review` because it holds
+fewer stars; the reason says so. It is advice only: it never deletes or rejects anything in Facet. Out-of-focus frames are at most `review`
 because they can still be stacked. **Apply tag** adds an `astro-review` tag to those frames so you can find them; it
 works only on photos already saved to Facet. The "Rule" section changes the checks; **Re-cull** re-ranks without
 solving again.

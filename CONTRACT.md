@@ -136,23 +136,24 @@ The JSON document keeps `"contract": 1` (the major version; v1.1 only adds field
 
 ```jsonc
 "quality": {
-  "version": 1,
-  "detected": 12298,        // stars detected (5 sigma, half-size image)
+  "version": 2,             // 1 before B-E3 (2026-11-16): half-size detection, per-star median elongation
+  "detected": 12298,        // stars detected (5 sigma, work image: the solve's scale, half size from a 6000 px edge)
   "matched": 1043,          // plate-solve catalog matches; stack-copy: registration pairs; null when unsolved
   "measured": 150,          // isolated, unsaturated stars measured for size and shape
-  "detect_scale": 2.0,      // detection smoothing (half-size px) whose kernel matched the stars; > 2 = large discs
+  "detect_scale": 2.0,      // detection smoothing (work-image px) whose kernel matched the stars; > 2 = large discs
   "fwhm_px": 6.99,          // median half-flux diameter, full-resolution px (= FWHM for a Gaussian; the disc for defocus)
   "fwhm_arcsec": 470.3,     // fwhm_px x pixel scale at the centre (null when unknown)
-  "elongation": 1.163,      // median major/minor axis ratio (1 = round; trailing / wind raise it)
+  "elongation": 1.163,      // major/minor axis ratio of the stars' shared shape (1 = round; trailing / wind raise it)
   "roundness": 0.86,        // 1 / elongation
-  "background": 41.0,       // sky level, 8-bit DN on the half-size image (cells holding stars only)
+  "background": 41.0,       // sky level, 8-bit DN on the work image (cells holding stars only)
   "noise": 4.45,            // sky noise (robust sigma), same units
   "grade": "B",             // A: fwhm <= 6 px, elongation <= 1.35, >= 500 stars; B: <= 10 px, <= 1.8, >= 100; else C
+                            // stars = max(detected, matched): a frame the solve matched in has at least that many
   "measured_on": "jpg"      // "jpg" | "raw"
 }
 ```
 
-Size and shape use stars within 60 % of the half diagonal when there are at least 15 (wide-angle corner coma is not trailing). The grade is absolute and lens-dependent; session-relative verdicts are the cull rule's job.
+Size and shape use stars within 60 % of the half diagonal when there are at least 15 (wide-angle corner coma is not trailing), and prefer stars with a peak at least 30x their local noise when there are 25 or more (faint stars read too large). Of the three detection scales, one counts only with at least 30 % of the best-supported scale's stars, and a coarser one only when its stars measure within 1.5x the size seen at the finest such scale (real stars, defocused discs included, measure the same from any scale; Milky Way clumps do not); among those the kernel closest to the stars' size wins. Stars are detected after subtracting a background mesh interpolated from its cell centres, so a twilight sky gradient is not read as noise. `elongation` is the axis ratio of the median ellipticity vector in each region of a 3 x 3 grid, then the median over regions: a direction the stars share (trailing, wind) counts; the random shapes noise gives faint stars cancel. The grade is absolute and lens-dependent; session-relative verdicts are the cull rule's job.
 
 ### Culling (`astro_id/cull.py`, pure functions)
 
@@ -168,10 +169,10 @@ Rule, from (first found) the session's `--cull-rule`, the folder's `astro-id.jso
 |---|---|
 | `focus` | `fwhm_px >= focus_ratio x reference.fwhm_px` (or `>= focus_px`) -> `review`. **Never `reject`**: defocused frames are kept for stacking. |
 | `trailing` | `elongation >= trailing_reject` -> `reject`; `>= trailing_review` -> `review` |
-| `stars` | `detected < stars_min` -> `reject`; `< stars_ratio_review x reference.detected` -> `review` |
+| `stars` | stars `< stars_min` -> `reject`; `< stars_ratio_review x reference.detected` -> `review`. Stars = max(`detected`, `matched`): the plate solve's matches are evidence too |
 | `solve` | frame not plate-solved -> `review` (off by default) |
 
-`order` lists the checks that run, most important first; reasons come out in that order. A threshold set to `null` is off. Missing metrics -> `review` ("no quality metrics"). `reference` (session baseline) = lower quartile of `fwhm_px` (the best-focused frames) and median of `detected` over the session's frames.
+`order` lists the checks that run, most important first; reasons come out in that order. A threshold set to `null` is off. Missing metrics -> `review` ("no quality metrics"). `reference` (session baseline) = lower quartile of `fwhm_px` (the best-focused frames) and median star count (max of `detected` and `matched`) over the session's frames.
 
 `cull_rank(metrics, rule, reference, solved)` ->
 

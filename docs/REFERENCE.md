@@ -133,6 +133,16 @@ and noise, and an A/B/C quality grade. Stars are detected at three smoothing sca
 the stars is used, so a badly defocused frame is measured on whole discs, not fragments. `--no-quality` skips it
 (about 5-15 s per 61 MP frame, mostly JPEG decoding).
 
+Detection works at the solve's scale (the frame's own pixels below a 6000 px long edge, half size above) after
+subtracting a background mesh interpolated from its cell centres, so the steep sky gradient of a twilight frame is
+not taken for noise. Size and shape prefer clean stars (peak at least 30x the local noise), and a coarse detection
+scale is used only when its stars measure the same size as the fine one sees (a defocused frame), never for Milky
+Way clumps on a sharp frame. Elongation counts only
+the direction the stars share, per region of a 3 x 3 grid: trailing and wind shake have one; the grain of a noisy
+frame does not. The grade and the `stars` check count max(detected, matched), so a frame the plate solve matched
+hundreds of stars in is never "too few stars". Twilight frames still hold fewer stars than dark ones: in a mixed
+session they can be `review` for stars (the reason says so), never `reject` when they solved well.
+
 `astro_id/cull.py` turns the metrics into `keep | review | reject` with reasons against the session's own
 baseline (best-focus quartile, median star count). Defocused frames are `review`, never `reject` (stacking).
 The rule is configurable: `{"enabled", "order": ["focus", "trailing", "stars", "solve"], "thresholds": {...}}`

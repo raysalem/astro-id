@@ -11,12 +11,14 @@ Rule (``astro-id.json`` ``"cull"``, the session ``--cull-rule``, or the Facet pl
 
 ``order`` lists the checks that run, most important first (reasons come out in that order; a check left out is
 off). Checks: ``focus`` (half-flux diameter vs the session's best), ``trailing`` (elongation), ``stars``
-(detected star count), ``solve`` (frame did not plate-solve). A defocused frame is at most ``review``, never
+(``quality.star_count``: the larger of the detected and the plate-solve matched stars), ``solve`` (frame did not plate-solve). A defocused frame is at most ``review``, never
 ``reject``: defocused frames are still useful for stacking.
 """
 from __future__ import annotations
 
 import math
+
+from .quality import star_count
 
 CHECKS = ("focus", "trailing", "stars", "solve")
 DEFAULT_THRESHOLDS = {
@@ -24,8 +26,8 @@ DEFAULT_THRESHOLDS = {
     "focus_px": None,           # absolute fwhm_px >= this -> review (null = off)
     "trailing_review": 1.6,     # elongation >= this -> review
     "trailing_reject": 3.0,     # elongation >= this -> reject (null = never)
-    "stars_ratio_review": 0.4,  # detected / session reference < this -> review
-    "stars_min": 20,            # detected < this -> reject (clouds, lens cap, foreground only)
+    "stars_ratio_review": 0.4,  # star_count / session reference < this -> review
+    "stars_min": 20,            # star_count < this -> reject (clouds, lens cap, foreground only)
 }
 DEFAULT_RULE = {"enabled": True, "order": ["focus", "trailing", "stars"], "thresholds": DEFAULT_THRESHOLDS}
 DECISIONS = ("keep", "review", "reject")
@@ -84,9 +86,10 @@ def _quantile(v: list[float], q: float) -> float | None:
 
 
 def session_reference(metrics: list[dict | None]) -> dict:
-    """Session baseline: ``fwhm_px`` = lower quartile (the best-focused frames), ``detected`` = median."""
+    """Session baseline: ``fwhm_px`` = lower quartile (the best-focused frames), ``detected`` = median star count
+    (``star_count``: detected or plate-solve matched, whichever is larger, the same number each frame is ranked on)."""
     fw = [m["fwhm_px"] for m in metrics if m and isinstance(m.get("fwhm_px"), (int, float))]
-    st = [m["detected"] for m in metrics if m and isinstance(m.get("detected"), (int, float))]
+    st = [star_count(m) for m in metrics if m and isinstance(m.get("detected"), (int, float))]
     return {"fwhm_px": _quantile(fw, 0.25), "detected": _median(st), "frames": len([m for m in metrics if m])}
 
 
@@ -133,15 +136,16 @@ def cull_rank(metrics: dict | None, rule: dict | None = None, reference: dict | 
             elif th.get("trailing_review") and e >= th["trailing_review"]:
                 add("trailing", "review", e, th["trailing_review"], f"trailing: stars elongated {e:.2f}:1")
         elif c == "stars":
-            n = metrics.get("detected")
-            if n is None:
+            if metrics.get("detected") is None:
                 continue
+            n = star_count(metrics)
+            how = "detected" if n == metrics["detected"] else "matched by the plate solve"
             base = ref.get("detected")
             if th.get("stars_min") is not None and n < th["stars_min"]:
-                add("stars", "reject", n, th["stars_min"], f"stars: only {n} detected")
+                add("stars", "reject", n, th["stars_min"], f"stars: only {n} {how}")
             elif th.get("stars_ratio_review") and base and n < th["stars_ratio_review"] * base:
                 add("stars", "review", n, round(th["stars_ratio_review"] * base),
-                    f"stars: {n} detected, {n / base:.0%} of the session median {base:.0f} (cloud, haze, twilight?)")
+                    f"stars: {n} {how}, {n / base:.0%} of the session median {base:.0f} (cloud, haze, twilight?)")
     decision = "keep"
     for ch in checks:
         if _RANK[ch["level"]] > _RANK[decision]:

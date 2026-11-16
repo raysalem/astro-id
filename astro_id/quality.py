@@ -2,13 +2,22 @@
 (elongation), sky background and noise, and an A/B/C quality grade.
 
 Measured on the frame's own pixels (the Facet photo: the JPG, or a lone RAW), never on the solve source, so
-frames of one session compare like for like. Stars are detected on the half-size image; size and shape are
-measured on full-resolution stamps (JPG/TIF/PNG) around the brightest isolated, unsaturated stars.
+frames of one session compare like for like. Stars are detected on the work image (the solve's scale rule,
+``solve.reduce_for``: full size under 6000 px, half size above) after subtracting a centre-aligned background mesh,
+so a twilight sky gradient is not read as noise (B-E3); size and shape are measured on full-resolution stamps
+(JPG/TIF/PNG) around the brightest isolated, unsaturated stars.
+
+- ``detected`` counts the stars found; ``grade`` and the cull ``stars`` check use ``star_count`` =
+  max(detected, matched), so a frame the solve matched hundreds of stars in is never "too few stars".
 
 - ``fwhm_px``: median half-flux diameter (HFD) in full-resolution pixels. For a Gaussian star the half-flux
   diameter equals the FWHM; for a defocused disc or donut it measures the disc, which is what focus needs.
-- ``elongation``: median major/minor axis ratio from flux-weighted second moments (1.0 = round). Trailing
-  and wind shake raise it.
+- ``elongation``: major/minor axis ratio from flux-weighted second moments (1.0 = round). Trailing and wind
+  shake raise it. Per region of a 3 x 3 grid, the stars' ellipticities are combined as vectors (median e1, e2), so
+  a direction the stars share counts and the random shapes that noise gives faint stars cancel (on the grainy
+  twilight example 03 the per-star median read 1.64 with no common direction, B-E3); the frame value is the median
+  over the regions, so trails curving around a pole in the frame still count.
+- Stars with peak >= 30 x their local noise are preferred when there are enough: low-SNR stars read too large.
 Both use stars in the central part of the frame (radius <= 60 % of the half diagonal) when there are enough,
 so wide-angle corner coma does not read as trailing.
 """
@@ -25,14 +34,20 @@ from .stars import detect
 
 log = logging.getLogger("astro_id")
 
-QUALITY_VERSION = 1
-REDUCE = 2
-DETECT_SMOOTH = 2.0          # reduced px: the star count and the sky mask use this scale
-DETECT_SCALES = (2.0, 6.0, 16.0)   # reduced px: sharp points .. large defocused discs
+QUALITY_VERSION = 2          # 2: aligned background, solve scale rule, grade from star_count (B-E3)
+REDUCE = 2                   # RAW frames (decoded half size) and the measure_arrays default
+DETECT_SMOOTH = 2.0          # work px: the star count and the sky mask use this scale
+DETECT_SCALES = (2.0, 6.0, 16.0)   # work px: sharp points .. large defocused discs
 MAX_STARS = 150              # brightest usable stars measured per detection scale
 CENTER_RHO = 0.6             # central region used for focus/trailing when >= MIN_CENTER stars sit in it
 MIN_CENTER = 15
 MIN_MEASURED = 5
+MIN_SUPPORT = 0.3            # a scale competes only with >= this share of the best-supported scale's stars ...
+SCALE_AGREE = 1.5            # ... and when its median HFD is <= this x that of the finest such scale
+SNR_GOOD = 30.0              # peak / local noise: stars this clean are preferred for size and shape ...
+MIN_GOOD = 25                # ... when at least this many of them were measured at a scale (B-E3)
+TILES = 3                    # elongation: coherent ellipticity per region of a TILES x TILES grid ...
+MIN_TILE = 5                 # ... from regions holding at least this many measured stars
 MIN_HFD_PX = 1.6            # full-res px: smaller is a hot pixel (dark frames), not a star
 SATURATION_FRACTION = 0.97   # stamp peak >= this x the image maximum: saturated, not measured
 
@@ -102,7 +117,7 @@ def star_shape(img: np.ndarray, x: float, y: float, r_start: float = 4.0, r_max:
         # flux-weighted second moments over the core (r <= 2 x r50, pixels > 3 sigma): noise far out
         # would make every star look round
         core = (rr <= max(2.0 * r50, 2.5)) & ((st - bg) > 3 * noise)
-        elong = None
+        elong = e1 = e2 = None
         if core.sum() >= 4:
             ww = st[core] - bg
             dx, dy = xx[core] - x, yy[core] - y
@@ -114,9 +129,10 @@ def star_shape(img: np.ndarray, x: float, y: float, r_start: float = 4.0, r_max:
             disc = math.sqrt(max(tr * tr / 4 - det, 0.0))
             l1, l2 = tr / 2 + disc, max(tr / 2 - disc, 1e-6)
             elong = float(math.sqrt(l1 / l2))
+            e1, e2 = float((cxx - cyy) / max(tr, 1e-9)), float(2 * cxy / max(tr, 1e-9))   # ellipticity vector
         raw_peak = float(st[inside].max())
-        out = {"x": x, "y": y, "hfd": 2 * r50, "elongation": elong, "flux": tot, "peak": raw_peak - bg,
-               "raw_peak": raw_peak, "noise": noise}
+        out = {"x": x, "y": y, "hfd": 2 * r50, "elongation": elong, "e1": e1, "e2": e2, "flux": tot,
+               "peak": raw_peak - bg, "raw_peak": raw_peak, "noise": noise}
         want = max(r_start, 2.5 * r50 + 2.0)
         if abs(want - r_ap) <= 0.1 * r_ap or r_ap >= r_max:
             break
@@ -141,8 +157,49 @@ def _sky_background(gray: np.ndarray, det_x: np.ndarray, det_y: np.ndarray, cell
     return float(np.median(med[sky])), float(np.median(mad[sky]))
 
 
+def star_count(q: dict) -> int:
+    """Star evidence for one frame: the larger of the stars detected and the stars the plate solve matched."""
+    return max(int(q.get("detected") or 0), int(q.get("matched") or 0))
+
+
+def _axis_ratio(e1: float, e2: float) -> float:
+    e = min(math.hypot(e1, e2), 0.999)
+    return math.sqrt((1 + e) / (1 - e))
+
+
+def _elongation(kept: list[dict], use: np.ndarray, u: np.ndarray, v: np.ndarray, el_a: np.ndarray) -> float | None:
+    """Frame elongation: per TILES x TILES region, the axis ratio of the median ellipticity vector of its stars;
+    then the median over regions. Falls back to the per-star median when no region holds MIN_TILE stars."""
+    e1 = np.array([np.nan if k.get("e1") is None else k["e1"] for k in kept])
+    e2 = np.array([np.nan if k.get("e2") is None else k["e2"] for k in kept])
+    ok = use & np.isfinite(e1) & np.isfinite(e2)
+    tile = np.clip((u * TILES).astype(int), 0, TILES - 1) * TILES + np.clip((v * TILES).astype(int), 0, TILES - 1)
+    ratios = [_axis_ratio(float(np.median(e1[m])), float(np.median(e2[m])))
+              for t in range(TILES * TILES) if (m := ok & (tile == t)).sum() >= MIN_TILE]
+    if ratios:
+        return float(np.median(ratios))
+    e_ok = use & np.isfinite(el_a)
+    return float(np.median(el_a[e_ok])) if e_ok.sum() >= 3 else None
+
+
+def pick_scale(hfd_det: dict, support: dict) -> float:
+    """Detection scale whose stars give the frame's size and shape. ``hfd_det`` = {scale: median HFD of the stars
+    measured from it, in detection px}; ``support`` = {scale: stars usable at it}.
+
+    Re-centred stars measure the same size from any scale (defocused discs included); a coarse scale that reads
+    much larger is measuring clumps (Milky Way knots), not stars. On a sharp 61 MP frame the cleaner background
+    let sm 6 / 16 find such clumps and read HFD 27-66 px instead of 6 (B-E3, DSC07614). So a scale needs
+    MIN_SUPPORT of the best-supported scale's stars, a coarser one must agree within SCALE_AGREE with the finest
+    such scale, and then the matched filter picks (kernel FWHM closest to the stars' HFD)."""
+    top = max(support[sm] for sm in hfd_det)
+    qualified = sorted(sm for sm in hfd_det if support[sm] >= MIN_SUPPORT * top)
+    ref = hfd_det[qualified[0]]
+    return min((sm for sm in qualified if hfd_det[sm] <= SCALE_AGREE * ref),
+               key=lambda sm: abs(math.log(max(hfd_det[sm], 0.5) / (2.3548 * sm))))
+
+
 def grade(q: dict) -> str | None:
-    f, e, n = q.get("fwhm_px"), q.get("elongation"), q.get("detected") or 0
+    f, e, n = q.get("fwhm_px"), q.get("elongation"), star_count(q)
     if f is None:
         return "C" if n else None
     e = e if e is not None else 1.0
@@ -158,18 +215,20 @@ def _r(v, nd=2):
 
 
 def measure_arrays(gray: np.ndarray, full: np.ndarray | None, scale_arcsec: float | None = None,
-                   max_value: float | None = None) -> dict:
-    """Quality from a half-size grayscale ``gray`` and (optionally) the full-resolution ``full``.
+                   max_value: float | None = None, reduce: int = REDUCE) -> dict:
+    """Quality from the work image ``gray`` (``full`` reduced ``reduce`` x) and (optionally) the full-resolution
+    ``full``.
 
-    Sizes are reported in full-resolution pixels (``full`` shape, else 2 x ``gray``). Stars are detected at
+    Sizes are reported in full-resolution pixels (``full`` shape, else ``reduce`` x ``gray``). Stars are detected at
     several smoothing scales (sharp points to large defocused discs) and measured with re-centring; the scale
     whose kernel matches the measured stars gives the medians (``detect_scale``)."""
     from scipy.spatial import cKDTree
 
     h, w = gray.shape
-    R = float(REDUCE)                              # gray is the 2x2-binned frame
+    R = float(reduce)                              # gray is the frame binned reduce x reduce
     cell = max(32, w // 75)
-    dets = {sm: detect(gray, sigma=5.0, smooth=sm, cell=max(cell, int(10 * sm))) for sm in DETECT_SCALES}
+    dets = {sm: detect(gray, sigma=5.0, smooth=sm, cell=max(cell, int(10 * sm)), aligned=True)
+            for sm in DETECT_SCALES}
     det = dets[DETECT_SMOOTH]
     bg, noise = _sky_background(gray, det.x, det.y, cell)
     q: dict = {"version": QUALITY_VERSION, "detected": int(len(det)), "matched": None, "measured": 0,
@@ -185,6 +244,7 @@ def measure_arrays(gray: np.ndarray, full: np.ndarray | None, scale_arcsec: floa
     # pick the finest scale; a badly defocused frame picks a coarse one, whose detections are whole discs
     # rather than fragments of their rims.
     per_scale: dict = {}
+    support: dict = {}           # usable stars per scale, before the SNR preference
     for sm, d in dets.items():
         if len(d) == 0:
             continue
@@ -208,16 +268,18 @@ def measure_arrays(gray: np.ndarray, full: np.ndarray | None, scale_arcsec: floa
             if r["hfd"] * to_full < MIN_HFD_PX:   # hot pixel / noise spike, not a star image
                 continue
             got.append(r)
+        support[sm] = len(got)
+        good = [r for r in got if r["peak"] >= SNR_GOOD * r["noise"]]
+        if len(good) >= MIN_GOOD:     # noisy faint stars read larger and rounder-or-longer at random
+            got = good
         if len(got) >= MIN_MEASURED:
             per_scale[sm] = got
     if not per_scale:
         q["grade"] = grade(q)
         return q
 
-    def mismatch(sm):
-        hfd_det = float(np.median([r["hfd"] for r in per_scale[sm]])) / to_img   # detection px
-        return abs(math.log(max(hfd_det, 0.5) / (2.3548 * sm)))
-    best = min(per_scale, key=mismatch)
+    best = pick_scale({sm: float(np.median([r["hfd"] for r in v])) / to_img for sm, v in per_scale.items()},
+                      support)
     kept = per_scale[best]
     q["measured"] = len(kept)
     q["detect_scale"] = best
@@ -229,8 +291,7 @@ def measure_arrays(gray: np.ndarray, full: np.ndarray | None, scale_arcsec: floa
     rho = np.hypot(xs_a - (fw - 1) / 2, ys_a - (fh - 1) / 2) / (math.hypot(fw, fh) / 2)
     use = rho <= CENTER_RHO if (rho <= CENTER_RHO).sum() >= MIN_CENTER else np.ones(len(rho), bool)
     f = float(np.median(hfd_a[use]))
-    e_ok = use & np.isfinite(el_a)
-    e = float(np.median(el_a[e_ok])) if e_ok.sum() >= 3 else None
+    e = _elongation(kept, use, xs_a / fw, ys_a / fh, el_a)
     q.update(fwhm_px=_r(f), elongation=_r(e, 3), roundness=_r(1.0 / e, 3) if e else None,
              fwhm_arcsec=_r(f * scale_arcsec, 1) if scale_arcsec else None)
     q["grade"] = grade(q)
@@ -240,20 +301,25 @@ def measure_arrays(gray: np.ndarray, full: np.ndarray | None, scale_arcsec: floa
 def frame_quality(path: Path, scale_arcsec: float | None = None, matched: int | None = None) -> dict | None:
     """Quality metrics of one frame (``path`` is the Facet photo). None when the image cannot be read."""
     from .imageio import load_gray
+    from .solve import reduce_for
 
     try:
         full = _load_full(path)
-        if full is not None:   # half size by 2x2 mean: one decode instead of two
-            h, w = (full.shape[0] // REDUCE) * REDUCE, (full.shape[1] // REDUCE) * REDUCE
-            gray = full[:h, :w].reshape(h // REDUCE, REDUCE, w // REDUCE, REDUCE).mean(axis=(1, 3), dtype=np.float32)
-        else:
+        if full is not None:   # the solve's scale rule; binned by mean: one decode instead of two
+            red = reduce_for(full.shape[1], full.shape[0])
+            h, w = (full.shape[0] // red) * red, (full.shape[1] // red) * red
+            gray = full[:h, :w].reshape(h // red, red, w // red, red).mean(axis=(1, 3), dtype=np.float32)
+        else:                  # a lone RAW: decoded half size (RAW frames are large)
+            red = REDUCE
             gray = load_gray(path, REDUCE)
-        q = measure_arrays(gray, full, scale_arcsec, 255.0 if full is not None and full.dtype == np.uint8 else None)
+        q = measure_arrays(gray, full, scale_arcsec, 255.0 if full is not None and full.dtype == np.uint8 else None,
+                           reduce=red)
+        q["matched"] = matched
+        q["grade"] = grade(q)       # the solve's matched stars count as star evidence
 
     except Exception as exc:
         log.warning("%s: quality metrics failed (%s)", path.name, exc)
         return None
-    q["matched"] = matched
     q["measured_on"] = "raw" if full is None else "jpg"
     log.info("%s: quality %s: %d stars, HFD %s px, elongation %s, background %s +- %s", path.name, q["grade"],
              q["detected"], q["fwhm_px"], q["elongation"], q["background"], q["noise"])

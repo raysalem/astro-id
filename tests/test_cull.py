@@ -64,3 +64,20 @@ def test_validate_rule():
     assert validate_rule({"thresholds": {"focus_ratio": -1}})
     assert validate_rule({"enabled": "yes"})
     assert validate_rule([1])
+
+
+def test_stars_check_uses_the_solve_matches():
+    # B-E3: a twilight frame the solve matched 924 stars in is never "only 1 detected"
+    tw = {"fwhm_px": 5.0, "elongation": 1.1, "detected": 1, "matched": 924}
+    r = cull_rank(tw, None, {"fwhm_px": 5.0, "detected": 1000})
+    assert r["decision"] == "keep"
+    r = cull_rank(tw, None, REF)
+    assert r["decision"] == "review" and "924 matched by the plate solve" in r["reasons"][0]
+    r = cull_rank({**tw, "matched": None}, None, REF)
+    assert r["decision"] == "reject" and r["reasons"] == ["stars: only 1 detected"]
+
+
+def test_session_reference_uses_star_evidence():
+    ref = session_reference([{"detected": 10, "matched": 900}, {"detected": 1000, "matched": 800},
+                             {"detected": 2000, "matched": None}])
+    assert ref["detected"] == 1000

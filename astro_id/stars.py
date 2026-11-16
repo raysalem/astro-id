@@ -45,12 +45,29 @@ class Detections:
         return np.lexsort((-self.flux, -pk))
 
 
-def background_map(img: np.ndarray, cell: int = 64) -> np.ndarray:
+def background_map(img: np.ndarray, cell: int = 64, aligned: bool = False) -> np.ndarray:
+    """Smooth sky background: per-cell medians, 3x3 median-filtered, interpolated back to the image size.
+
+    ``aligned=True`` interpolates each median from its cell centre. The default (``ndi.zoom``) pins the first
+    and last cells to the image edges, which shifts the mesh by up to half a cell: on a steep sky gradient
+    (twilight) the residual then keeps a ramp larger than a faint star (B-E3). The default is kept for the
+    solve's detection, whose results the examples pin."""
     h, w = img.shape
     gh, gw = max(1, h // cell), max(1, w // cell)
     small = img[: gh * cell, : gw * cell].reshape(gh, cell, gw, cell)
     med = np.median(small, axis=(1, 3))
     med = ndi.median_filter(med, size=3, mode="nearest")
+    if aligned:
+        yy = (np.arange(h, dtype=np.float32) + 0.5) / cell - 0.5   # pixel centre in cell-index units
+        xx = (np.arange(w, dtype=np.float32) + 0.5) / cell - 0.5
+        y0 = np.clip(np.floor(yy).astype(int), 0, gh - 1)
+        x0 = np.clip(np.floor(xx).astype(int), 0, gw - 1)
+        y1, x1 = np.minimum(y0 + 1, gh - 1), np.minimum(x0 + 1, gw - 1)
+        fy = np.clip(yy - y0, 0.0, 1.0)[:, None]          # edges clamp to the outer cell's median
+        fx = np.clip(xx - x0, 0.0, 1.0)[None, :]
+        top = med[y0][:, x0] * (1 - fx) + med[y0][:, x1] * fx
+        bot = med[y1][:, x0] * (1 - fx) + med[y1][:, x1] * fx
+        return (top * (1 - fy) + bot * fy).astype(img.dtype, copy=False)
     zoom = (h / gh, w / gw)
     bg = ndi.zoom(med, zoom, order=1, mode="nearest")
     out = np.empty_like(img)
@@ -64,9 +81,10 @@ def background_map(img: np.ndarray, cell: int = 64) -> np.ndarray:
 
 
 def detect(img: np.ndarray, sigma: float = 5.0, smooth: float = 1.0, max_npix: int | None = None,
-           cell: int = 64) -> Detections:
-    """Threshold above a smooth background, label blobs, return flux-weighted centroids."""
-    bg = background_map(img, cell)
+           cell: int = 64, aligned: bool = False) -> Detections:
+    """Threshold above a smooth background, label blobs, return flux-weighted centroids.
+    ``aligned``: centre-aligned background mesh (see background_map)."""
+    bg = background_map(img, cell, aligned)
     res = img - bg
     mad = np.median(np.abs(res - np.median(res)))
     noise = float(max(1.4826 * mad, 1e-3))
