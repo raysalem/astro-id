@@ -186,7 +186,73 @@ def build_annotations(objs, sol, width: int, height: int, legend: str, xform=Non
                "image": {"width": int(width), "height": int(height)}, "legend": legend,
                "groups": [dict(g) for g in GROUPS], "metrics": [dict(m) for m in METRICS],
                "score": dict(SCORE), "items": items}
-    return cap_size(payload)
+    return layout_payload(cap_size(payload))
+
+
+FACET_LABEL_SCALE = 0.013   # Facet's photo layer: label font = 1.3 % of the image's long edge
+FACET_MARKER_SCALE = 0.004  # ... and a point marker at least 0.4 %
+FACET_CHAR_W = 0.58         # ... text width estimate per character, in font sizes
+
+
+def facet_metrics(payload: dict):
+    """(font size, measure(text) -> (w, h), marker floor) as Facet's layer sizes labels on this payload."""
+    im = payload.get("image") or {}
+    edge = max(float(im.get("width") or 1), float(im.get("height") or 1))
+    fs = edge * FACET_LABEL_SCALE
+    return fs, (lambda t: (len(t) * fs * FACET_CHAR_W, 1.25 * fs)), edge * FACET_MARKER_SCALE
+
+
+def layout_payload(payload: dict) -> dict:
+    """Give the payload's labels non-overlapping places at Facet's label size (in place; returns the payload).
+
+    Laid out: every ``lines`` item and every point/circle item shown by default (its group on, score at or above
+    the default, within the default metric limits, not a hidden member). Each gets ``label_at`` = [centre x,
+    baseline y] of its label (how Facet anchors a ``lines`` label); a label with no free spot gets
+    ``label_hidden: true``, a shortened one ``label_text``. Items shown by default are placed first, so turning
+    groups or the score slider down never makes two of them collide."""
+    from . import labels as L
+    from .export import GROUP_FIRST, lines_anchor, settings, visible_items
+
+    items = payload.get("items") or []
+    W = float((payload.get("image") or {}).get("width") or 0)
+    H = float((payload.get("image") or {}).get("height") or 0)
+    if not items or W <= 0 or H <= 0:
+        return payload
+    fs, measure, floor = facet_metrics(payload)
+    shown = {id(it) for it in visible_items(payload, settings(payload, None))}
+    todo = [it for it in items if id(it) in shown or it.get("shape") == "lines"]
+    obstacles = []
+    for n, it in enumerate(items):
+        if id(it) in shown and it.get("shape") in ("point", "circle") and isinstance(it.get("x"), (int, float)):
+            r = float(it.get("r") or 0) if it["shape"] == "circle" else max(float(it.get("r") or 0), floor)
+            obstacles.append(L.Disc(float(it["x"]), float(it["y"]), r + 1, ring=r > 2 * fs, key=n))
+    index = {id(it): n for n, it in enumerate(items)}
+    reqs = []
+    for it in todo:
+        n = index[id(it)]
+        first = (0 if id(it) in shown else 10) + GROUP_FIRST.get(it.get("group"), 3)
+        name = str(it.get("label") or it.get("id") or "")
+        if it.get("shape") == "lines":
+            at, pts = lines_anchor(it)
+            if at is None:
+                continue
+            req = L.Request(n, name, at[0], at[1] - 0.375 * fs, mode="centred", slide=pts)
+            reqs.append(((first, -(it.get("score") or 0), 0.0, name), req))   # same key shape as points
+        elif isinstance(it.get("x"), (int, float)) and isinstance(it.get("y"), (int, float)):
+            r = float(it.get("r") or 0) if it.get("shape") == "circle" else max(float(it.get("r") or 0), floor)
+            reqs.append(((first, -(it.get("score") or 0), -r, name), L.Request(n, name, it["x"], it["y"], r)))
+    reqs.sort(key=lambda t: t[0])
+    for p in L.place([r for _, r in reqs], (W, H), measure, obstacles, fs=fs):
+        it = items[p.key]
+        for k in ("label_hidden", "label_text"):
+            it.pop(k, None)
+        if p.box is None:
+            it["label_hidden"] = True
+            continue
+        it["label_at"] = [_r((p.box[0] + p.box[2]) / 2), _r(p.box[1] + fs)]
+        if p.short:
+            it["label_text"] = p.text
+    return payload
 
 
 def encoded_size(payload: dict) -> int:

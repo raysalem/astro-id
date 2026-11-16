@@ -124,6 +124,15 @@ bends with the lens, clipped to the frame, in full-resolution pixels rounded to 
 the group item a star belongs to. The payload stays under 500 KB (lowest-confidence items are dropped first if not).
 The legend reads like `2026-11-07 21:57 PST +-15 min . ASTAP grade A . 2452 stars`.
 
+**Label placement.** Every renderer (the labelled copy, Export, `astro-id moon`) and the payload place labels with
+one routine (`astro_id/labels.py`): planets first, then constellation and asterism names, then the rest by
+confidence. A label tries right of its marker, left, above, below, the diagonals, then a little further out; it
+must stay inside the image and touch no other label, marker or the legend box, so near an edge the text goes inward
+(on the right edge: text, then circle). A constellation name starts at its figure's centre and slides along the
+figure. When nothing fits, a shorter form is tried (`M45`, `NGC 869`, `M. Nectaris`), else the label is left off and
+only the marker drawn. The payload records this as `label_at`, `label_hidden` and `label_text`
+([ANNOTATIONS.md](../ANNOTATIONS.md)).
+
 ## Quality metrics and culling
 
 Every frame result carries `quality` (CONTRACT.md v1.1): detected and matched star counts, focus as the median

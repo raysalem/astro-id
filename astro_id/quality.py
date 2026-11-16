@@ -43,7 +43,10 @@ CENTER_RHO = 0.6             # central region used for focus/trailing when >= MI
 MIN_CENTER = 15
 MIN_MEASURED = 5
 MIN_SUPPORT = 0.3            # pick_scale: the finest scale with >= this share of the best support decides ...
-COMPACT = 1.35               # ... when its stars' HFD <= this x its kernel FWHM (sharp 0.7-1.2, fragments >= 1.5)
+COMPACT = 1.35               # ... when its stars' HFD <= this x its kernel FWHM (night set: sharp 0.68-1.21,
+#                              fragments >= 1.55). Empirical (one camera, one night); with sm 2 it is an absolute
+#                              cut of ~6.4 work px, so oversampled frames (sharp stars larger than that) fall back
+#                              to the v1 matched filter. The clump guard needs sm 2 to hold >= MIN_SUPPORT.
 SNR_GOOD = 30.0              # peak / local noise: stars this clean are preferred for size and shape ...
 MIN_GOOD = 25                # ... when at least this many of them were measured at a scale (B-E3)
 TILES = 3                    # elongation: coherent ellipticity per region of a TILES x TILES grid ...

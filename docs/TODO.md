@@ -15,9 +15,9 @@ Backlog, one line each. Status as of 2026-11-15 (main = 8c8ee5c, the Moon releas
 - [ ] Twilight/foreground frames do not solve: a bright-object solve could match planets and 1st-magnitude stars at a known time.
 - [ ] Badly defocused frames solve with RMS > 2 px: a donut-centroid detector would help.
 - [x] Quality metrics grade some twilight frames C although they plate-solve at grade A ([ISSUES](ISSUES.md) B-E3, branch twilight-cull). · closed 2026-11-16
-- [ ] Quality on a moonlit frame with trees (frame-7620) reads HFD 11.4 instead of 8.7: sky-through-foliage blobs are measured; add a foreground mask. Re-measure the full 18-frame night set (QUALITY_VERSION 2). · opened 2026-11-16
+- [ ] Quality on a moonlit frame with trees (frame-7620) reads HFD 11.4 instead of 8.7: sky-through-foliage blobs are measured; add a foreground mask. · opened 2026-11-16
 - [ ] The solve's own `stars.detect` keeps the edge-pinned background mesh (B-E3); aligning it moves `examples/expected.json`, so do it in its own change. · opened 2026-11-16
-- [ ] Label placement: names overlap (URSA MINOR / Little Dipper, CASSIOPEIA / W of Cassiopeia); near an edge the text should go inward; one collision pass shared by the burned copy and Facet's layer.
+- [x] Label placement: names overlap (URSA MINOR / Little Dipper, CASSIOPEIA / W of Cassiopeia); near an edge the text should go inward; one collision pass shared by the burned copy and Facet's layer. Done 2026-11-16 on branch `label-placement` ([plan](plans/2026-11-16-label-placement.md)); merged into main 2026-11-16.
 - [ ] RAW without a JPG (rawpy, half size) is untested on a real RAW-only folder; RAW solve is not clearly better than the JPG.
 - [ ] astrometry.net fallback is implemented but untested (no key); Linux/macOS ASTAP discovery is minimal.
 - [ ] Moon: a real camera photo at 250+ px with EXIF time and site; eclipse and thin-crescent handling; run `moon` from `label`/`solve` when a solve fails on a large disc. The first version is done (`astro-id moon`); the full list is under "What is left" in [the Moon plan](plans/2026-11-15-moon-features.md). · opened 2026-11-15

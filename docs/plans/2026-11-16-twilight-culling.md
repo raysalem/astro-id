@@ -1,8 +1,8 @@
 # Plan: fair quality grades and cull verdicts for twilight frames (B-E3)
 
 Goal: twilight frames that plate-solve well are not graded C or culled for "too few stars". Branch `twilight-cull`
-(from main 8c8ee5c, main 9833267 merged in). Started 2026-11-15. Status: done 2026-11-16 (pushed, not merged;
-one open item, below).
+(from main 8c8ee5c, main 9833267 merged in). Started 2026-11-15. Status: done 2026-11-16, merged into main
+(one open item: frame-7620, below).
 
 ## Big picture
 1. Project: astro-id, a plate-solving and sky-labeling tool and Facet add-on.
@@ -58,7 +58,7 @@ Ruled out: the noise estimator (MAD vs lower-half MAD changes counts by under 20
    the frame went to `review` for focus. A first guard (coarse scales must agree in size with the fine one)
    broke frame-7612, whose ~85 px discs read 15 px from rim fragments at sm 2 (found re-measuring all 18 frames).
    `pick_scale` now asks whether the finest well-supported scale's stars are compact (HFD <= 1.35x its kernel
-   FWHM; sharp frames 0.7-1.2, fragments >= 1.5): if so it is used, else the v1 matched filter decides.
+   FWHM; sharp frames 0.68-1.21, fragments >= 1.55): if so it is used, else the v1 matched filter decides.
 6. **Open: frame-7620 (moonlit, Moon and trees in frame)** reads HFD 11.4 instead of 8.7: the cleaner mesh admits
    sky-through-foliage blobs into the brightest-150 set (stars common to both versions: 7.3 vs 7.0 px). Tried and
    dropped (no effect, or disturbed other frames): an aperture-isolation test, ranking by peak, a footprint gate.
@@ -98,4 +98,10 @@ No merge into main.
   frame-7612 defocus regression and replaced the size-agreement guard with the compactness rule (test with
   7612's numbers); a hollow-defocus (donut) test.
 - Owner OK: Ray, 2026-11-16, both Decisions approved.
+- dev-notes-reviewer, changes needed, 2026-11-16, attempt 2: code sound, attempt-1 findings fixed; two doc
+  lines. Fixes: main (label placement) merged in, DETAILS Decisions and Gotchas from both kept, TODO re-measure
+  sentence dropped (done), TESTING test count, the COMPACT caveat (empirical, ~6.4 work px absolute cut,
+  oversampled frames fall back to v1, depends on sm 2 support) in DETAILS and quality.py, fragment ratio
+  reconciled to 1.55 (1.49 was frame-7630 as main measured it).
+- Owner accepted the frame-7620 keep->review regression, 2026-11-16.
 

@@ -232,7 +232,7 @@ the owner (verbatim): "i don't know when an album has been loaded or needs to lo
 - FIXED 94f60e4: double-click started two exports; RAW + JPG of one stem overwrote one copy.
 - FIXED fda6c53: overlapping solve/export polls (duplicate log lines, "9 / 6"); a one-off network error said "restarted"; stale server left buttons enabled; the panel's searchable count overstated what Facet indexes.
 
-## B-E3 Quality grades twilight frames C ("1 stars, HFD None") although they plate-solve at grade A (2026-11-16, FIXED on branch twilight-cull, not merged)
+## B-E3 Quality grades twilight frames C ("1 stars, HFD None") although they plate-solve at grade A (2026-11-16, FIXED on branch twilight-cull, merged into main 2026-11-16)
 **Brief.** `quality.py` graded examples 03 (pre-dawn) and 05 (morning twilight) C with 39 and 1 stars detected, although ASTAP solves both at grade A with 1472 and 924 matched stars. In a session of the five examples the cull put 05 at `reject` ("only 1 detected") and 03 at `review`. Plan: [plans/2026-11-16-twilight-culling.md](plans/2026-11-16-twilight-culling.md).
 **Details.**
 1. Triage: engine only: `quality.measure_arrays` -> `stars.detect` on a halved frame; `grade()` and the `stars` check read `detected` only.
@@ -252,7 +252,7 @@ the owner (verbatim): "i don't know when an album has been loaded or needs to lo
    - Defocused discs still use the coarse scale.
    - Synthetic twilight ramps: 31 / 0 stars on main, ~395 now.
    - Solve results are byte-identical.
-   - On full-size 61 MP frames, the first version picked a coarse scale on the clumps of a sharp Milky Way frame (frame-7614, HFD 6.4 -> 66). A size-agreement guard fixed that but broke frame-7612 (stack copy, ~85 px defocus discs: 15 px from rim fragments). `pick_scale` therefore checks whether the finest well-supported scale's stars are compact (HFD <= 1.35x its kernel FWHM; sharp 0.7-1.2, fragments >= 1.5): if so it is used, else the v1 matched filter decides. Both frames are pinned by a test. Synthetic donuts (40-120 px) measure within 3 %.
+   - On full-size 61 MP frames, the first version picked a coarse scale on the clumps of a sharp Milky Way frame (frame-7614, HFD 6.4 -> 66). A size-agreement guard fixed that but broke frame-7612 (stack copy, ~85 px defocus discs: 15 px from rim fragments). `pick_scale` therefore checks whether the finest well-supported scale's stars are compact (HFD <= 1.35x its kernel FWHM; sharp 0.68-1.21, fragments >= 1.55): if so it is used, else the v1 matched filter decides. Both frames are pinned by a test. Synthetic donuts (40-120 px) measure within 3 %.
    - A session mixing quality v1 and v2 metrics (re-culled with `astro-id cull --metrics-file`) gets a warning: the numbers are not comparable.
    - Open: frame-7620 (moonlit, trees) reads HFD 11.4 instead of 8.7, because sky-through-foliage blobs enter the measured set. It goes `keep` -> `review` for focus. Three remedies were tried and dropped; next is a foreground mask ([TODO](TODO.md)).
 7. Verify (ASTAP, the 5 examples; detected / HFD px / grade, main -> fix):

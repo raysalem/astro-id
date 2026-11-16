@@ -1,7 +1,7 @@
 # Testing
 
 1. Install uv, then `uv sync --frozen` (Python 3.12).
-2. `uv run pytest -q -rs` runs the Python suite (489 tests on 2026-11-15); `-rs` lists what skipped and why.
+2. `uv run pytest -q -rs` runs the Python suite (561 tests on 2026-11-16); `-rs` lists what skipped and why.
 3. `node --test tests/js/bridge.test.js` and `node --test tests/js/panel.test.js` run the JS tests (Node 22 LTS).
 4. Tests that need a Facet checkout (`facet_contract`) skip when none is found; the suite does not need ASTAP.
 5. CI is `.github/workflows/ci.yml`, on push to main, pull requests and manual dispatch.
@@ -22,3 +22,6 @@
     times into `build/demo/` (site + offset, offset only, site only, neither), renders each scene with
     `astro_id.export.render` for the view the card beside it shows, and writes the numbers it used to
     `build/demo/numbers.json`. It stops if a run no longer matches a caption. `--reuse` skips the solves.
+13. Label placement (`tests/test_labels.py`) runs on the real label inputs of the 5 sky and 4 Moon examples in
+    `tests/fixtures/labels/`; after a change to detection or the examples, rebuild them with
+    `uv run python tools/make_label_fixtures.py` (needs ASTAP + W08, like step 9).
