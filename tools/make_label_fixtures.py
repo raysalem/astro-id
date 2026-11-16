@@ -4,8 +4,9 @@ Run from the repo root (needs ASTAP + W08 for the sky frames, DE421 for the Moon
     uv run python tools/make_label_fixtures.py
 
 Writes tests/fixtures/labels/sky-<name>.json (the objects the sky overlay draws, its legend lines and size, and the
-annotation payload) and moon-<name>.json (the Moon payload and the size `astro-id moon` renders it at). Only what
-label placement reads is kept; no photo pixels.
+annotation payload) and moon-<name>.json (the Moon payload and the size `astro-id moon` renders it at). Payloads are
+captured BEFORE `layout_payload` (lines items keep their centroid `label_at`, no label fields), so the tests run the
+first layout themselves. Only what label placement reads is kept; no photo pixels.
 """
 from __future__ import annotations
 
@@ -35,6 +36,15 @@ def _write(name: str, doc: dict) -> None:
     print(p.relative_to(ROOT), p.stat().st_size // 1024, "KB")
 
 
+def _no_layout():
+    """Capture payloads as built, before label layout (restored by the caller)."""
+    from astro_id import annotations
+
+    orig = annotations.layout_payload
+    annotations.layout_payload = lambda p: p
+    return lambda: setattr(annotations, "layout_payload", orig)
+
+
 def sky() -> None:
     from PIL import Image
 
@@ -55,6 +65,7 @@ def sky() -> None:
         return orig(src, out, width_full, objects, legend_lines, width=width, **kw)
 
     pipeline.draw_overlay = capture
+    restore = _no_layout()
     with tempfile.TemporaryDirectory() as td:
         res = Path(td) / "results.json"
         import contextlib
@@ -66,6 +77,7 @@ def sky() -> None:
         assert rc == 0
         doc = json.loads(buf.getvalue())
     pipeline.draw_overlay = orig
+    restore()
     del overlay, res
     for r in doc["results"]:
         stem = Path(r["file"]).stem
@@ -75,11 +87,13 @@ def sky() -> None:
 def moon() -> None:
     from astro_id import moon as M
 
+    restore = _no_layout()
     for name, t in MOON.items():
         res = M.analyse(ROOT / "examples" / "moon" / f"{name}.jpg", t=datetime.fromisoformat(t), north_angle=0.0)
         width = min(3000, max(1200, res.width))
         k = min(1.0, width / res.width)
         _write(f"moon-{name}", {"size": [round(res.width * k), round(res.height * k)], "payload": res.annotations})
+    restore()
 
 
 if __name__ == "__main__":

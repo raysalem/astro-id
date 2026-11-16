@@ -6,6 +6,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 from . import labels as L
+from .tagpolicy import LEVEL_BODY
 from .imageio import load_rgb_preview
 
 COLORS = {"high": (60, 220, 90), "likely": (255, 180, 40), "candidate": (160, 160, 160)}
@@ -14,7 +15,6 @@ ASTERISM_LINE = (255, 120, 200)
 STAR_LABEL_MAG = 3.0  # label named stars only to this magnitude, to keep the frame readable
 DSO_KINDS = {"galaxy", "nebula", "cluster", "other"}
 LIKELY_MIN = 65
-LEVEL_BODY = 2
 
 
 def _font(size: int):
@@ -73,7 +73,7 @@ def layout(objects, s: float, size, fs: int, measure_big, measure_small, scores:
             if c is None:
                 continue
             text = o.name.upper() + (f" {o.confidence}" if scores else "")
-            reqs.append(((1, -o.confidence, o.name), L.Request(n, text, c[0], c[1], mode="centred",
+            reqs.append(((1, -o.confidence, 0.0, o.name), L.Request(n, text, c[0], c[1], mode="centred",
                                                                 slide=sorted(set(inside))), "big", COLORS[o.tier]))
             continue
         if kind == "asterism":
@@ -81,7 +81,7 @@ def layout(objects, s: float, size, fs: int, measure_big, measure_small, scores:
                 continue
             pts = [(x1 * s, y1 * s) for x1, y1, _, _ in o.figure] + [(x2 * s, y2 * s) for _, _, x2, y2 in o.figure]
             _, inside = _centroid_inside(pts, size)
-            reqs.append(((2, -o.confidence, o.name), L.Request(n, lab(o), o.x * s, o.y * s + fs, mode="centred",
+            reqs.append(((2, -o.confidence, 0.0, o.name), L.Request(n, lab(o), o.x * s, o.y * s + fs, mode="centred",
                                                                 slide=sorted(set(inside))), "big", COLORS[o.tier]))
             continue
         if o.x is None:

@@ -237,7 +237,7 @@ def layout_payload(payload: dict) -> dict:
             if at is None:
                 continue
             req = L.Request(n, name, at[0], at[1] - 0.375 * fs, mode="centred", slide=pts)
-            reqs.append(((first, -(it.get("score") or 0), name), req))
+            reqs.append(((first, -(it.get("score") or 0), 0.0, name), req))   # same key shape as points
         elif isinstance(it.get("x"), (int, float)) and isinstance(it.get("y"), (int, float)):
             r = float(it.get("r") or 0) if it.get("shape") == "circle" else max(float(it.get("r") or 0), floor)
             reqs.append(((first, -(it.get("score") or 0), -r, name), L.Request(n, name, it["x"], it["y"], r)))

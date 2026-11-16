@@ -1,65 +1,79 @@
-# Plan: label placement without overlaps (2026-11-16)
+# Plan: label placement without overlaps
 
-## Goal
+Goal: no label over another label, over another object's marker or past the image edge, in every renderer and in
+the annotation payload. Branch: `label-placement`. Started 2026-11-16. Status: done 2026-11-16 (pushed, not merged;
+the merge waits for the owner).
 
-No label drawn over another label, over another object's marker or past the image edge, on the sky overlay
-(`<name>_astro.jpg`), the Moon overlay (`<name>_moon.jpg`), the Export render, and in the annotation payload that
-Facet's photo layer draws. Owner's rule: near an image edge the text goes inward (on the right edge: text, then
-the circle), never past the edge, never over another label.
+Owner's rule: near an image edge the text goes inward (on the right edge: text, then the circle), never past the
+edge, never over another label.
 
-Visible today (main @ 8c8ee5c): sky 01, "URSA MINOR" on top of "Little Dipper", "CASSIOPEIA" touching "W of
-Cassiopeia", "M45 Pleiades" pushed back over its own circle at the right edge, the legend box drawn over labels;
-Moon 08, "Mare Tranquillitatis" into "Mare Crisium", "Apollo 12"/"Apollo 14", "Plato"/"Montes Teneriffe".
+## Big picture
+1. Project: astro-id names what is in a night-sky or Moon photo and draws the names on a labeled copy; Facet's photo
+   layer draws the same names live from the annotation payload.
+2. Task: the labels collided. Seen on main @ 8c8ee5c: sky 01, "URSA MINOR" on "Little Dipper", "CASSIOPEIA" touching
+   "W of Cassiopeia", "M45 Pleiades" pushed back over its own circle at the right edge, the legend box over labels;
+   Moon 08, "Mare Tranquillitatis" into "Mare Crisium", "Apollo 12"/"Apollo 14", "Plato"/"Montes Teneriffe".
+3. Touches: `astro_id/labels.py` (new), `overlay.py`, `export.py`, `annotations.py`, `moon.py`; tests; the example
+   images and demo; `ANNOTATIONS.md`, `docs/REFERENCE.md`, `docs/TESTING.md`, `docs/DETAILS.md`.
+4. Nearby: [TODO](../TODO.md) Engine item "Label placement"; the [Moon plan](2026-11-15-moon-features.md).
+5. Risk: the payload is Facet's format; a change there must stay additive (Facet keeps unknown fields).
 
-## What the docs promise (read first)
+What the docs and Facet's code promise (read first): Facet's layer (`annotations.ts`, `layoutAnnotations`) centres a
+`lines` label on `label_at` (x = centre, y = baseline), puts a point/circle label right of its marker and ignores
+`label_at` there, sizes labels at 1.3 % of the long edge with 0.58 font sizes per character, and skips a label that
+would overlap one already placed, highest score first.
 
-- `ANNOTATIONS.md`: the payload format belongs to Facet; astro-id gives `lines` items a `label_at`. Facet's layer
-  (`annotations.ts`, `layoutAnnotations`) centres a `lines` label on `label_at` (x = centre, y = baseline), puts a
-  point/circle label to the right of its marker, uses a font of 1.3 % of the image's long edge and a width estimate
-  of 0.58 x font size per character, and skips (does not draw) a label that would overlap one already placed,
-  highest score first. It ignores `label_at` on points and circles and keeps unknown fields.
-- So for Facet the payload can (a) move each constellation/asterism `label_at` to a spot free of other labels at
-  Facet's own label size, (b) add `label_at` to points and circles (where astro-id would put the label; used by a
-  Facet that honours it, ignored by today's), and (c) add `label_hidden: true` (additive) when no spot fits.
+## Steps
+| # | Step | Files / symbols | Status |
+|---|---|---|---|
+| 1 | Placement routine: candidates right, left, above, below, diagonals, then pushed out by 0.6 and 1.2 font heights; inside the image; clear of placed labels, other markers (small as discs, big circles by their ring) and reserved boxes; centred names slide along their figure; short form, else hidden | `astro_id/labels.py` (`place`, `Request`, `Placement`, `Disc`, `short_forms`, `pil_measure`) | done |
+| 2 | Sky overlay: layout split from drawing, legend box as an obstacle, `_label` no longer clamps after the check | `astro_id/overlay.py` (`layout`, `legend_box`, `draw_overlay`, `_label`) | done |
+| 3 | Export and Moon render on the same routine | `astro_id/export.py` (`layout_items`, `lines_anchor`, `render`) | done |
+| 4 | Payload: `label_at` at Facet's metric, `label_hidden`, `label_text` | `astro_id/annotations.py` (`layout_payload`, `facet_metrics`), `astro_id/moon.py` (`build_payload`) | done |
+| 5 | Tests on captured real inputs of all 9 examples (no ASTAP in CI) | `tests/test_labels.py`, `tests/fixtures/labels/`, `tools/make_label_fixtures.py` | done |
+| 6 | Redraw examples, hero, gallery, Moon crop, demo; `expected.json` unchanged | `examples/annotated/`, `examples/moon/annotated/`, `docs/img/` | done |
+| 7 | Docs and notes | `ANNOTATIONS.md`, `docs/REFERENCE.md`, `docs/TESTING.md`, `docs/DETAILS.md`, `docs/TODO.md`, `tools/README.md`, `astro_id/README.md` | done |
+| 8 | Review fixes, attempt 1 (see Review) | `annotations.py`, `export.py`, `overlay.py`, `tests/test_labels.py`, `tools/make_label_fixtures.py` | done |
 
-## Approach
+Navigation: text search (`rg`).
 
-One shared, deterministic routine, `astro_id/labels.py`:
+Tests in step 5:
+- Property, on every example: every placed box inside the image, no two intersect, none covers another object's
+  marker or the legend. Covered for the sky overlay (with and without scores), Export / Moon render, and the payload
+  at Facet's size (markers with Facet's floor of 0.4 % of the long edge, own item skipped).
+- Named pairs above are drawn and apart; M45 at the right edge is text, then circle.
+- Edge cases: a marker at each edge and corner goes inward; a crowd is shortened or hidden, never overlapped;
+  centred labels slide and are pulled inside; short forms.
+- Determinism: the same requests twice give the same boxes; the first payload layout from the pre-layout capture
+  is the same twice, lays something out, and a second layout changes nothing. Equal-priority input in a different
+  order is NOT promised to give the same layout (the sort is stable, so input order breaks full ties).
+- A `lines` item and a point in the same unknown group at the same score sort without a TypeError.
 
-- Input: label requests in priority order (text, marker centre and radius, or a centred anchor with alternative
-  anchors), the image size, a `measure(text)` from the font that will draw it, and obstacles (other markers, the
-  legend box).
-- Marker labels try, in order: right, left, above, below, the four diagonals, then the same pushed out by 0.6 and
-  1.2 font heights. A box must be inside the image and must not touch any placed label box or any other marker
-  (small markers as discs; large circles only along their ring). Near the right edge the right candidate fails, so
-  the text goes left of the circle, etc.
-- Centred labels (constellation, asterism names) try the anchor (figure centroid), small shifts, then slide along
-  the figure (its vertices and segment midpoints nearest the centroid first); a centred box is clamped inside the
-  image rather than rejected.
-- When nothing fits, a shorter form is tried (catalog names to their designation, "M45 Pleiades" -> "M45",
-  "NGC 869 h Persei Cluster" -> "NGC 869"; lunar "Mare X" -> "M. X", "Montes X" -> "Mts X", "Sinus/Lacus/Palus X"
-  -> "S./L./P. X"); if that does not fit either, the marker stays and the label is hidden. Each result says
-  `hidden` and `short`.
-- Priority: planets/Moon/Sun, constellations, asterisms, then the rest by confidence, then size, then name.
-- Text is measured with the PIL font that draws it (`textlength` + the font's ascent/descent bbox); the payload is
-  measured with Facet's own metric (above), so its boxes match what Facet will draw.
+## Decisions
+- One routine for every renderer and the payload: one rule set instead of three drifting copies. Recorded in
+  [DETAILS](../DETAILS.md).
+- The payload is laid out with Facet's metric, not astro-id's PIL font: the boxes then match what Facet draws.
+- `label_at` is added on points and circles shown by default (today's Facet ignores it there), plus `label_hidden`
+  and `label_text`: additive, so no Facet change is needed. A hidden `lines` item keeps its centroid `label_at`.
+- Only items shown by default and all `lines` items are laid out in the payload, default-shown ones first: placing
+  every star to magnitude 6.5 would cost seconds for labels Facet does not draw by default.
+- Labels may still cross stick-figure lines; only labels, markers and the legend are obstacles.
 
-## Files
+## Open for the next dev
+- Facet's layer could read `label_at` / `label_hidden` / `label_text` for points and circles (a Facet change).
+- Markers under the legend box stay hidden by it (as before this change).
+- In a crowd a label can sit a little away from its marker (e.g. "Longomontanus" on Moon 05).
+- Start in `astro_id/labels.py`; the fixtures are rebuilt with `uv run python tools/make_label_fixtures.py`.
 
-- New `astro_id/labels.py` (placement), `tests/test_labels.py`, `tests/fixtures/labels/` (the label inputs of the
-  5 sky and 4 Moon examples, captured from real runs by `tools/make_label_fixtures.py`, so the tests need no ASTAP).
-- `astro_id/overlay.py` (sky overlay: layout split from drawing, legend box as an obstacle), `astro_id/export.py`
-  (Export and Moon render), `astro_id/annotations.py` (`layout_payload`: `label_at`, `label_hidden`, `label_short`
-  on the payload), `astro_id/moon.py` (payload laid out the same way).
-- Docs: `ANNOTATIONS.md`, `docs/REFERENCE.md` (one paragraph each), `docs/TESTING.md` (fixture rebuild).
-- Regenerated: `examples/annotated/*`, `examples/moon/annotated/*`, `docs/img/hero.jpg`, `gallery-1..3.jpg`,
-  `moon-labeled.jpg` if it is a crop of an example, `demo.mp4`/`demo.gif`. `examples/expected.json` unchanged.
-
-## Tests
-
-- Property, on all 9 example fixtures: every placed label box inside the image, no two intersect, none covers
-  another object's marker; for the sky overlay, the Export render, the Moon render and the payload (Facet metric).
-- Edge cases: a marker at each edge and corner gets its label inward and inside; a marker hard against the right
-  edge gets text then circle; a crowded cluster hides labels rather than overlapping; a hidden label is reported.
-- Determinism: same input twice (and shuffled-equal priorities) gives identical output.
-- Existing suites unchanged (payload golden: only the new label fields may differ).
+## Review
+- dev-notes-reviewer, changes needed, 2026-11-16, attempt 1. Fixes:
+  - Merged origin/main (dev-notes v1.1.0 adoption); notes closed (DETAILS decisions and gotchas, TODO item, tools and
+    astro_id READMEs, TESTING count); this plan put in the PLAN template; `label_short` corrected to `label_text`;
+    the shuffled-input promise dropped.
+  - Sort keys made one shape `(first, -score, -r or 0.0, name)` in `annotations.layout_payload`,
+    `export.layout_items` and `overlay.layout`; test
+    `test_lines_and_point_with_equal_priority_do_not_crash_the_sort`.
+  - Payload test now also asserts no label covers another default-shown marker at Facet's size; fixtures are
+    captured before `layout_payload`, and the determinism test proves the first layout.
+  - `overlay.py` imports `LEVEL_BODY` from `tagpolicy`; the unused `_overlap` import left `export.py`; the sky test
+    uses the obstacles `layout` returns; `ANNOTATIONS.md` says a hidden `lines` item keeps its centroid `label_at`.

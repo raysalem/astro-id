@@ -64,16 +64,9 @@ def _sky_layout(doc, scores=False):
 @pytest.mark.parametrize("scores", [False, True])
 def test_sky_overlay_labels_never_overlap(path, scores):
     doc = _load(path)
-    size, fs, objs, marks, labs, lbox, _ = _sky_layout(doc, scores)
+    size, fs, objs, marks, labs, lbox, discs = _sky_layout(doc, scores)
     placed = [p for p, _, _ in labs]
-    # own marker excluded: rebuild the discs with the request keys the layout used
-    discs = []
-    for n, o in enumerate(objs):
-        for x, y, r, *_ in marks:
-            if o.x is not None and abs(o.x * size[0] / doc["width_full"] - x) < 1e-6 \
-                    and abs(o.y * size[0] / doc["width_full"] - y) < 1e-6:
-                discs.append(O.ring_obstacle(x, y, r, fs, key=n))
-                break
+    assert len(discs) == len(marks)        # every drawn marker is an obstacle, keyed by its own object
     _check(placed, size, discs, extra=[lbox])
     assert placed and sum(p.box is not None for p in placed) >= 0.8 * len(placed)
 
@@ -143,12 +136,25 @@ def _facet_boxes(payload):
 
 @pytest.mark.parametrize("path", SKY + MOON, ids=lambda p: p.stem)
 def test_payload_label_at_never_overlap_at_facet_size(path):
-    p = A.layout_payload(copy.deepcopy(_load(path)["payload"]))
+    raw = _load(path)["payload"]
+    assert not any(k in it for it in raw["items"] for k in ("label_hidden", "label_text"))   # captured pre-layout
+    assert not any("label_at" in it for it in raw["items"] if it.get("shape") != "lines")
+    p = A.layout_payload(copy.deepcopy(raw))
     W, H = p["image"]["width"], p["image"]["height"]
     boxes = _facet_boxes(p)
     assert boxes
+    # markers as Facet draws them (circle: r; point: at least 0.4 % of the long edge), for items shown by default
+    _, _, floor = A.facet_metrics(p)
+    discs = []
+    for it in E.visible_items(p, E.settings(p, None)):
+        if it.get("shape") in ("point", "circle"):
+            r = it["r"] if it["shape"] == "circle" else max(it.get("r") or 0, floor)
+            discs.append(L.Disc(it["x"], it["y"], r, ring=r > 2 * A.facet_metrics(p)[0], key=it["id"]))
     for i, (ka, a) in enumerate(boxes):
         assert -0.2 <= a[0] and -0.2 <= a[1] and a[2] <= W + 0.2 and a[3] <= H + 0.2, (ka, a)
+        inner = (a[0] + 0.1, a[1] + 0.1, a[2] - 0.1, a[3] - 0.1)
+        hit = [c.key for c in discs if c.key != ka and L.hits_disc(inner, c)]
+        assert not hit, (ka, a, hit[:3])
         for kb, b in boxes[i + 1:]:
             # rounding to 0.1 px may make two touching boxes share an edge
             sh = (b[0] + 0.1, b[1] + 0.1, b[2] - 0.1, b[3] - 0.1)
@@ -159,11 +165,35 @@ def test_payload_label_at_never_overlap_at_facet_size(path):
             assert "label_at" in it or it.get("label_hidden") is True, it["id"]
 
 
-def test_payload_layout_is_deterministic_and_stable():
-    raw = _load(FIX / "sky-04-orion-rising.json")["payload"]
-    a = A.layout_payload(copy.deepcopy(raw))
-    b = A.layout_payload(A.layout_payload(copy.deepcopy(raw)))
+@pytest.mark.parametrize("name", ["sky-04-orion-rising", "moon-08-nasa-svs-waxing-gibbous"])
+def test_payload_first_layout_is_deterministic_and_stable(name):
+    raw = _load(FIX / f"{name}.json")["payload"]
+    a = A.layout_payload(copy.deepcopy(raw))          # the first layout, from the pre-layout capture
+    b = A.layout_payload(copy.deepcopy(raw))
     assert json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
+    assert json.dumps(a, sort_keys=True) != json.dumps(raw, sort_keys=True)      # it did lay something out
+    assert any("label_at" in it for it in a["items"] if it.get("shape") != "lines")
+    again = A.layout_payload(copy.deepcopy(a))        # and laying out a laid-out payload changes nothing
+    assert json.dumps(again, sort_keys=True) == json.dumps(a, sort_keys=True)
+
+
+def _mixed_payload():
+    """A lines item and a point in the same unknown group at the same score: the sort keys must compare."""
+    return {"version": 1, "image": {"width": 1000, "height": 800}, "groups": [{"id": "misc", "default": True}],
+            "score": {"min": 0, "max": 100, "default": 0}, "metrics": [],
+            "items": [{"id": "fig", "label": "Fig", "group": "misc", "score": 90, "shape": "lines",
+                       "segments": [[[100, 100], [300, 200]]], "label_at": [200, 150]},
+                      {"id": "pt", "label": "Pt", "group": "misc", "score": 90, "shape": "point",
+                       "x": 600, "y": 400, "r": 5}]}
+
+
+def test_lines_and_point_with_equal_priority_do_not_crash_the_sort():
+    p = A.layout_payload(_mixed_payload())
+    assert all("label_at" in it for it in p["items"])
+    d, fs, font, small = _fonts((1000, 800))
+    marks, labs = E.layout_items(p["items"], 1.0, (1000, 800), fs, L.pil_measure(d, font),
+                                 L.pil_measure(d, small), lambda it, upper=False: it["label"])
+    assert len(labs) == 2 and all(pl.box for pl, _, _ in labs)
 
 
 # ---------------------------------------------------------------- the routine itself

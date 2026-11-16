@@ -15,7 +15,7 @@ Backlog, one line each. Status as of 2026-11-15 (main = 8c8ee5c, the Moon releas
 - [ ] Twilight/foreground frames do not solve: a bright-object solve could match planets and 1st-magnitude stars at a known time.
 - [ ] Badly defocused frames solve with RMS > 2 px: a donut-centroid detector would help.
 - [ ] Quality metrics grade some twilight frames C although they plate-solve at grade A; a cull rule would reject them.
-- [ ] Label placement: names overlap (URSA MINOR / Little Dipper, CASSIOPEIA / W of Cassiopeia); near an edge the text should go inward; one collision pass shared by the burned copy and Facet's layer.
+- [x] Label placement: names overlap (URSA MINOR / Little Dipper, CASSIOPEIA / W of Cassiopeia); near an edge the text should go inward; one collision pass shared by the burned copy and Facet's layer. Done 2026-11-16 on branch `label-placement` ([plan](plans/2026-11-16-label-placement.md)); merge waits for the owner.
 - [ ] RAW without a JPG (rawpy, half size) is untested on a real RAW-only folder; RAW solve is not clearly better than the JPG.
 - [ ] astrometry.net fallback is implemented but untested (no key); Linux/macOS ASTAP discovery is minimal.
 - [ ] Moon: a real camera photo at 250+ px with EXIF time and site; eclipse and thin-crescent handling; run `moon` from `label`/`solve` when a solve fails on a large disc. The first version is done (`astro-id moon`); the full list is under "What is left" in [the Moon plan](plans/2026-11-15-moon-features.md). · opened 2026-11-15

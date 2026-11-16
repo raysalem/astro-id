@@ -14,7 +14,7 @@ from PIL import ImageDraw
 
 from .imageio import load_rgb_preview
 from . import labels as L
-from .overlay import ASTERISM_LINE, COLORS, LINE, _font, _label, _overlap, legend_box, ring_obstacle  # noqa: F401
+from .overlay import ASTERISM_LINE, COLORS, LINE, _font, _label, legend_box, ring_obstacle
 
 LIKELY, HIGH = 65, 80
 
@@ -113,7 +113,7 @@ def layout_items(items: list[dict], s: float, size, fs: float, measure_big, meas
                 continue
             req = L.Request(n, text(it, upper=it.get("group") == "constellation"), at[0] * s, at[1] * s,
                             mode="centred", slide=[(x * s, y * s) for x, y in pts])
-            reqs.append(((first, sc, str(it.get("label"))), req, "big", col))
+            reqs.append(((first, sc, 0.0, str(it.get("label"))), req, "big", col))   # same key shape as points
             continue
         if not (_num(it.get("x")) and _num(it.get("y"))):
             continue

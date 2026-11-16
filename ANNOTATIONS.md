@@ -27,7 +27,8 @@ sidecar sends it with `PUT /api/photo/annotations` when Facet has that route (se
   another marker and none runs past the frame. `label_at` = [centre x, baseline y] of the label, on every `lines`
   item and on every point/circle item shown by default (Facet today places point labels itself and ignores it
   there). `label_hidden: true` when no spot fits (the marker still draws); `label_text` when only a shorter form
-  fits (`M45`, `NGC 869`, `M. Tranquillitatis`). Items shown by default are placed first.
+  fits (`M45`, `NGC 869`, `M. Tranquillitatis`). Items shown by default are placed first. A hidden `lines` item
+  keeps its centroid `label_at`, so a Facet that ignores `label_hidden` still draws its name there.
 - Size: under about 500 KB (the lowest-confidence items are dropped first). Facet caps a row at 2 MB / 20 000 items.
 
 ## Top-level `quality` (astro-id, 2026-11-11)

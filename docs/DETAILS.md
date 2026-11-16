@@ -31,8 +31,13 @@ The engine (`astro_id/`) is a library and CLI. The Facet add-on (`astro_id/facet
 | 2026-11-15 | Moon close-ups get their own command, `astro-id moon` | a Moon close-up has no stars to plate-solve; a separate command is purely additive | wiring it into `solve`/`label` now (left for later, [Moon plan](plans/2026-11-15-moon-features.md)) |
 | 2026-11-15 | The lunar catalog is committed (`astro_id/moon_catalog.py`), unlike the star and deep-sky catalogs | IAU/USGS gazetteer and NASA NSSDCA data are public domain; GPL / CC-BY-SA data stays downloaded | a CC BY-SA full-Moon photo as an example (share-alike would bind every labeled copy) |
 | 2026-11-15 | The maria fit searches only the unmirrored picture; `--mirror` flips it | a camera lens does not mirror, and searching both doubled the false peaks | searching both orientations |
+| 2026-11-16 | One label-placement routine, `astro_id/labels.py`, for every renderer (sky overlay, Export, `astro-id moon`) and the annotation payload | one rule set (inside the image, no label over a label or another marker, inward at the edges) instead of three drifting copies | a separate collision pass per renderer |
+| 2026-11-16 | The payload is laid out with Facet's own label metric (font 1.3 % of the long edge, 0.58 font sizes per character, `label_at` = centre x, baseline y) | the boxes then match what Facet's layer draws | astro-id's PIL font, whose size has nothing to do with Facet's |
+| 2026-11-16 | `label_at` also on points and circles shown by default; `label_hidden: true` and `label_text` (short form) added, all additive | a Facet that reads them can draw astro-id's layout; today's Facet keeps and ignores them | changing Facet's layer from astro-id |
 
 ## Gotchas
+- `export.lines_anchor` starts a `lines` label at the payload's existing `label_at`, so Export and the Moon render re-place from the spot laid out at Facet's size, not from the figure centroid. A hidden `lines` item keeps its centroid `label_at` (Facet still draws it there).
+- `tests/fixtures/labels/` holds payloads captured before `layout_payload`; rebuild them with `tools/make_label_fixtures.py` after a change to detection or the examples, or the tests check stale inputs.
 - Only the Moon pins the clock today; planets and the horizon do not (see [TODO](TODO.md)).
 - `astro-id moon` needs a disc of about 250 px for craters (60 px for maria); smaller discs get no names and a message saying the size needed. A thin crescent or an eclipse needs the photo's time to tell a phase from the Earth's shadow.
 - `docs/PLAN-moon.md` is only a pointer now: `astro_id/moon.py` and `tests/test_moon.py` cite that path. Repoint them to `docs/plans/2026-11-15-moon-features.md` in a code change, then archive the pointer.
