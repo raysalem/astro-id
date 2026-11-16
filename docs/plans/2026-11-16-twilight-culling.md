@@ -1,7 +1,16 @@
 # Plan: fair quality grades and cull verdicts for twilight frames (B-E3)
 
-Branch `twilight-cull` from main 8c8ee5c. Scope: `astro_id/quality.py`, `astro_id/cull.py`, an opt-in flag in
-`astro_id/stars.py`, their tests, and the quality/culling docs. No solve, label or Facet changes.
+Goal: twilight frames that plate-solve well are not graded C or culled for "too few stars". Branch `twilight-cull`
+(from main 8c8ee5c, main 9833267 merged in). Started 2026-11-15. Status: done 2026-11-16 (pushed, not merged;
+one open item, below).
+
+## Big picture
+1. Project: astro-id, a plate-solving and sky-labeling tool and Facet add-on.
+2. Task: engine quality metrics and culling ([ISSUES](../ISSUES.md) B-E3, [TODO](../TODO.md) "Engine").
+3. Touches: `astro_id/quality.py`, `astro_id/cull.py`, an opt-in flag in `astro_id/stars.py`, their tests, the
+   quality/culling docs. No solve, label or Facet changes.
+4. Nearby: `label-placement` (labels; no overlap with these files).
+5. Risk: the quality numbers of every frame move (QUALITY_VERSION 2); dark-sky verdicts must not.
 
 ## Problem
 
@@ -45,11 +54,11 @@ Ruled out: the noise estimator (MAD vs lower-half MAD changes counts by under 20
 ## Found during the analytical review (61 MP frames, scratch copies of the B-E1 test set)
 
 5. **Scale choice fooled by clumps.** With the cleaner background, a coarse scale on a sharp Milky Way frame
-   (DSC07614) measured clumps (HFD 27-66 px) that fit its kernel better than the 6 px stars fit the fine one, and
+   (frame-7614) measured clumps (HFD 27-66 px) that fit its kernel better than the 6 px stars fit the fine one, and
    the frame went to `review` for focus. Re-centred stars measure the same size from every scale (real defocus
-   DSC07610: 19.8 / 20.9 / 21.2 px; synthetic discs agree within 5 %), so `pick_scale` lets a coarse scale
+   frame-7610: 19.8 / 20.9 / 21.2 px; synthetic discs agree within 5 %), so `pick_scale` lets a coarse scale
    compete only with >= 30 % of the best support and a size within 1.5x of the finest qualified scale.
-6. **Open: DSC07620 (moonlit, Moon and trees in frame)** reads HFD 11.4 instead of 8.7: the cleaner mesh admits
+6. **Open: frame-7620 (moonlit, Moon and trees in frame)** reads HFD 11.4 instead of 8.7: the cleaner mesh admits
    sky-through-foliage blobs into the brightest-150 set (stars common to both versions: 7.3 vs 7.0 px). Tried and
    dropped (no effect, or disturbed other frames): an aperture-isolation test, ranking by peak, a footprint gate.
    Follow-up: a foreground mask.

@@ -31,12 +31,15 @@ The engine (`astro_id/`) is a library and CLI. The Facet add-on (`astro_id/facet
 | 2026-11-15 | Moon close-ups get their own command, `astro-id moon` | a Moon close-up has no stars to plate-solve; a separate command is purely additive | wiring it into `solve`/`label` now (left for later, [Moon plan](plans/2026-11-15-moon-features.md)) |
 | 2026-11-15 | The lunar catalog is committed (`astro_id/moon_catalog.py`), unlike the star and deep-sky catalogs | IAU/USGS gazetteer and NASA NSSDCA data are public domain; GPL / CC-BY-SA data stays downloaded | a CC BY-SA full-Moon photo as an example (share-alike would bind every labeled copy) |
 | 2026-11-15 | The maria fit searches only the unmirrored picture; `--mirror` flips it | a camera lens does not mirror, and searching both doubled the false peaks | searching both orientations |
+| 2026-11-16 | Quality counts stars as max(detected, plate-solve matched) and works at the solve's scale (`reduce_for`) | a frame the solve matched hundreds of stars in is never "too few stars"; halving a small copy loses its stars (B-E3) | grading on `detected` alone |
 
 ## Gotchas
 - Only the Moon pins the clock today; planets and the horizon do not (see [TODO](TODO.md)).
 - `astro-id moon` needs a disc of about 250 px for craters (60 px for maria); smaller discs get no names and a message saying the size needed. A thin crescent or an eclipse needs the photo's time to tell a phase from the Earth's shadow.
 - `docs/PLAN-moon.md` is only a pointer now: `astro_id/moon.py` and `tests/test_moon.py` cite that path. Repoint them to `docs/plans/2026-11-15-moon-features.md` in a code change, then archive the pointer.
 - ASTAP versions are dates; the minimum is in [REQUIREMENTS](REQUIREMENTS.md).
+- `stars.background_map` defaults to the edge-pinned mesh (`ndi.zoom`), which leaves a ramp on a steep sky; quality passes `aligned=True`. The solve still uses the default (B-E3).
+- Re-centred stars measure the same size from any detection scale (defocused discs too); a coarse scale that reads much larger is measuring clumps. `quality.pick_scale` relies on this.
 - Past defects, with causes: [ISSUES](ISSUES.md).
 
 ---

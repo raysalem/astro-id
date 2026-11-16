@@ -188,7 +188,7 @@ def pick_scale(hfd_det: dict, support: dict) -> float:
 
     Re-centred stars measure the same size from any scale (defocused discs included); a coarse scale that reads
     much larger is measuring clumps (Milky Way knots), not stars. On a sharp 61 MP frame the cleaner background
-    let sm 6 / 16 find such clumps and read HFD 27-66 px instead of 6 (B-E3, DSC07614). So a scale needs
+    let sm 6 / 16 find such clumps and read HFD 27-66 px instead of 6 (B-E3, frame-7614). So a scale needs
     MIN_SUPPORT of the best-supported scale's stars, a coarser one must agree within SCALE_AGREE with the finest
     such scale, and then the matched filter picks (kernel FWHM closest to the stars' HFD)."""
     top = max(support[sm] for sm in hfd_det)

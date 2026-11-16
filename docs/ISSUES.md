@@ -20,6 +20,7 @@ Bug records. Entries named B-E (engine) and B-P (panel) keep the 7-step debug re
 | B-P11 | Save to Facet at a new cut changed nothing: "object tags +0 -0" | fixed | |
 | B-E1 | Small | fixed | |
 | B-E2 | A site plus a wrong camera clock | fixed | |
+| B-E3 | Quality grades twilight frames C ("1 stars, HFD None") although they plate-solve at grade A | fixed (one open frame) | |
 
 Older, unnumbered notes follow the numbered entries' index; sections run roughly oldest first.
 
@@ -230,3 +231,33 @@ the owner (verbatim): "i don't know when an album has been loaded or needs to lo
 - FIXED 2ff5948: model D with sky labels off removed per-object tags and stored nothing; status failure at start left the add-on in old-Facet mode; a failure mid-save orphaned tags; user-path tags were dropped from the ledger; a failed later annotation chunk marked stored chunks as errors.
 - FIXED 94f60e4: double-click started two exports; RAW + JPG of one stem overwrote one copy.
 - FIXED fda6c53: overlapping solve/export polls (duplicate log lines, "9 / 6"); a one-off network error said "restarted"; stale server left buttons enabled; the panel's searchable count overstated what Facet indexes.
+
+## B-E3 Quality grades twilight frames C ("1 stars, HFD None") although they plate-solve at grade A (2026-11-16, FIXED on branch twilight-cull, not merged)
+**Brief.** `quality.py` graded examples 03 (pre-dawn) and 05 (morning twilight) C with 39 and 1 stars detected, although ASTAP solves both at grade A with 1472 and 924 matched stars. In a session of the five examples the cull put 05 at `reject` ("only 1 detected") and 03 at `review`. Plan: [plans/2026-11-16-twilight-culling.md](plans/2026-11-16-twilight-culling.md).
+**Details.**
+1. Triage: engine only: `quality.measure_arrays` -> `stars.detect` on a halved frame; `grade()` and the `stars` check read `detected` only.
+2. Narrow (delta: dark examples 01/02/04 vs twilight 03/05, same code, camera and size). The difference is the sky level and gradient. Gaussian smoothing lowered the measured noise only 1.1-1.6x (white noise: ~7x), so the threshold was set by structure left after background subtraction. Counts rose steeply as the background cell shrank. Cause: `background_map` upsampled the cell medians with `ndi.zoom`, which pins them to the image edges instead of the cell centres. That shifts the mesh by up to half a cell and leaves a ramp residual on a steep sky (05: 1.56 DN smoothed, dark frames 0.7-0.9). Second factor: quality still halved a 2400 px copy (B-E1 fixed this in solve.py only), so its finest kernel was too coarse for 2-5 px stars.
+3. Documented here.
+4. Hypotheses: H1 misaligned background mesh; H2 halving small copies; H3 noise estimator; H4 luminance on a blue-clipped sky; H5 solve evidence ignored; H6 (found in 5) low-SNR stars read larger and elongated in random directions.
+5. Tests:
+   - H1 confirmed: residual 05 1.56 -> 0.13, 03 1.77 -> 0.39. Alone it is unstable on a Milky Way frame.
+   - H2 confirmed: 05 146 -> 792 stars (ASTAP matched 924).
+   - H3 refuted (< 20 %).
+   - H4 refuted: L beats R, G and B on every frame.
+   - H5 kept as a safety net.
+   - H6 confirmed: 03's SNR >= 30 stars read 2.4 px, not 8.5, and its 1.6 elongation had no common direction (coherence 0.29).
+   Fix: aligned mesh (opt-in, quality only), the solve's scale rule, SNR >= 30 stars preferred, per-region coherent elongation, and `star_count = max(detected, matched)`.
+6. Analytical review:
+   - Synthetic 2:1 / 3:1 trails read 1.77 / 2.45 (pole at the frame centre: 1.68 / 2.26), so they are still flagged.
+   - Defocused discs still use the coarse scale.
+   - Synthetic twilight ramps: 31 / 0 stars on main, ~395 now.
+   - Solve results are byte-identical.
+   - On 8 full-size 61 MP frames, the first version picked a coarse scale on the clumps of a sharp Milky Way frame (frame-7614, HFD 6.4 -> 66). Re-centred stars measure the same size from every scale and clumps do not, so `pick_scale` now requires support and size agreement.
+   - Open: frame-7620 (moonlit, trees) reads HFD 11.4 instead of 8.7, because sky-through-foliage blobs enter the measured set. It goes `keep` -> `review` for focus. Three remedies were tried and dropped; next is a foreground mask ([TODO](TODO.md)).
+7. Verify (ASTAP, the 5 examples; detected / HFD px / grade, main -> fix):
+   - 01: 645 / 5.26 / A -> 2776 / 5.12 / A
+   - 02: 855 / 4.05 / A -> 5316 / 2.69 / A
+   - 03: 39 / 8.52 / C -> 3254 / 2.39 / A
+   - 04: 479 / 2.23 / B -> 5121 / 2.30 / A
+   - 05: 1 / None / C -> 752 / 1.88 / A
+   Session of 5: 03 review -> keep; 05 reject -> review ("924 matched by the plate solve, 28 % of the session median (cloud, haze, twilight?)"). 01 is review for focus (2.2x); on main it was keep only because 03's bogus 8.5 px raised the reference. The dark-only session (01, 02, 04) is unchanged: 01 review (focus), 02 and 04 keep. pytest, node and docs checks pass.

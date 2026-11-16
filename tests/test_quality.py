@@ -193,12 +193,12 @@ def test_frame_quality_works_at_the_solve_scale(tmp_path):
 
 
 def test_scale_choice_ignores_clumps_on_a_sharp_frame():
-    # DSC07614 (61 MP, sharp, Milky Way), measured per scale with the aligned background (detection px, half size):
+    # frame-7614 (61 MP, sharp, Milky Way), measured per scale with the aligned background (detection px, half size):
     # sm 2: 133 stars, HFD 3.2; sm 6: 140 "stars" HFD 13.5 (clumps); sm 16: 10 blobs HFD 33. The matched filter
     # alone picked sm 16 (HFD 66 full px) and the frame went to review for focus.
     hfd = {2.0: 3.2, 6.0: 13.46, 16.0: 32.9}
     assert pick_scale(hfd, {2.0: 133, 6.0: 140, 16.0: 10}) == 2.0
-    # a real defocused frame (DSC07610): every scale reads the disc; the fine one has few whole stars
+    # a real defocused frame (frame-7610): every scale reads the disc; the fine one has few whole stars
     assert pick_scale({2.0: 9.9, 6.0: 10.4, 16.0: 10.6}, {2.0: 33, 6.0: 150, 16.0: 55}) == 6.0
     # synthetic 60 px discs (half size): all scales agree, the matched filter picks the coarse one
     assert pick_scale({2.0: 20.7, 6.0: 20.6, 16.0: 21.3}, {2.0: 102, 6.0: 95, 16.0: 55}) > 2.0
