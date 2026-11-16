@@ -60,6 +60,17 @@ on Linux/macOS run `./astro-label.sh photo.jpg`; or `uv run astro-id label <phot
 labelled copy `<name>_astro.jpg` next to it; `--out sidecar` writes `<name>.astro.json` instead, `--out both` writes
 both, `--to <folder>` puts them elsewhere.
 
+### Label the Moon
+
+A close-up of the Moon has no stars to solve, so it has its own command:
+`uv run astro-id moon <photo> --time 2026-11-20T06:00Z --site 32.6,-116.3`. It finds the disc, works out how the Moon
+is turned, and writes `<name>_moon.jpg` with the maria, large craters, mountain ranges and Apollo sites named on the lit
+part. The disc must be about 250 px across for craters ([manual](docs/MANUAL.md#photos-of-the-moon-astro-id-moon)).
+
+![Part of a NASA Moon frame, labeled by astro-id moon](docs/img/moon-labeled.jpg)
+
+*Crop of a labeled NASA Moon frame (NASA's Scientific Visualization Studio, public domain); more in [examples/moon](examples/README.md#moon-photos-moon).*
+
 **[Install](#install) · [Usage](#use-it-standalone) · [Confidence](#how-confidence-works) · [Facet add-on](#use-it-with-facet) · [Manual](docs/MANUAL.md)**
 
 ## What it does
@@ -69,6 +80,8 @@ both, `--to <folder>` puts them elsewhere.
 - **Draws the labels on the photo:** an annotated copy per photo plus a CSV report; originals are never changed.
 - **Fixes a wrong camera clock:** set the offset once per folder; the Moon, when in frame, pins the true time.
 - **Grades every frame:** focus, trailing and star count, with a keep / review / reject suggestion.
+- **Names the Moon's geography (new, first version):** `astro-id moon` labels maria, large craters, mountain ranges
+  and Apollo sites on a close-up of the Moon; craters need the disc about 250 px across ([Moon features](docs/REFERENCE.md#moon-features-astro-id-moon)).
 - **Tags photos in Facet:** objects become searchable object tags, plus sky labels drawn on the photo.
 - **Works offline after setup;** solves JPG or RAW.
 
@@ -198,7 +211,8 @@ Full factor table: [Confidence scale](docs/REFERENCE.md#confidence-scale). Which
 
 ## Data sources and licenses
 
-No third-party data is stored in this repository; catalogs download on first run. Full credits and terms:
+Catalogs download on first run; the only third-party data stored in this repository is public domain (a list of
+lunar feature positions and one NASA test image). Full credits and terms:
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 | Data or tool | By | License | How |
@@ -209,6 +223,7 @@ No third-party data is stored in this repository; catalogs download on first run
 | [OpenNGC](https://github.com/mattiaverga/OpenNGC) | Mattia Verga | CC BY-SA 4.0 | downloaded |
 | [IAU star names](https://www.iau.org/public/themes/naming_stars/) | IAU WGSN | CC BY | downloaded |
 | [Stellarium](https://stellarium.org/) constellation lines | Stellarium team | CC BY-SA 4.0 + Free Art License | downloaded |
+| [Lunar feature names](https://planetarynames.wr.usgs.gov/) (92 curated) | IAU WGPSN / USGS; Apollo sites NASA NSSDCA | public domain | in the repo |
 
 Labelled copies carry Stellarium figures and OpenNGC names: credit them if you publish (see the notices).
 

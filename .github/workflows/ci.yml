@@ -97,3 +97,6 @@ jobs:
             echo "attempt $i failed, retrying"; sleep 10
           done
           uv run python tests/check_examples.py solve.json examples/expected.json
+      - name: Moon example (NASA full Moon names its best-known features)
+        if: steps.has.outputs.present == 'true'
+        run: uv run pytest -q -rs tests/test_moon.py

@@ -13,7 +13,7 @@ add-on wiring) and [ANNOTATIONS.md](../ANNOTATIONS.md) (the overlay payload). Mi
 [Facet sidecar](#facet-sidecar-astro-id-facet-) · [Facet add-on](#facet-add-on-sidebar-inside-facet) ·
 [How it solves](#how-it-solves) · [Confidence scale](#confidence-scale) ·
 [Tag hierarchy and tag policy](#tag-hierarchy-and-tag-policy) · [Stacking sequences](#stacking-sequences) ·
-[astrometry.net fallback](#optional-fallback-astrometrynet)
+[Moon features](#moon-features-astro-id-moon) · [astrometry.net fallback](#optional-fallback-astrometrynet)
 
 ## ASTAP and reference data
 
@@ -400,7 +400,50 @@ diagonal it reuses the representative's objects, moved into its own pixel frame,
 `--stack-mode all` (or `"stack_mode": "all"` in `astro-id.json`) solves every frame; `--stack-gap`
 changes the 120 s window.
 
+## Moon features (`astro-id moon`)
 
+A photo of the Moon has no stars to solve, so the Moon is read from its own face. First version (plan, evidence and
+what is left: [PLAN-moon.md](PLAN-moon.md)).
+
+```powershell
+uv run astro-id moon <photo-or-folder> [--time ISO] [--site lat,lon[,elev_m]] [--timezone ZONE]
+                     [--north-angle DEG] [--mirror] [--no-fit] [--to DIR] [--no-overlay] [--overlay-scores]
+                     [--tag-style plain|kind] [--json]
+```
+
+1. **Disc.** Thresholds from the dim (eclipsed) level up to the sunlit level; a RANSAC circle on each blob's edge
+   that penalises blob pixels outside it (so the limb wins over a terminator or shadow edge); then the circle is
+   refitted to the points where each ray falls half way from the disc to the sky. Quality from the arc coverage
+   and the RMS.
+2. **State.** Sunlit = above 22 % of the bright level (the maria are 30-50 % of the highlands). A phase always lights
+   exactly half of the limb (all of it at full Moon); a lit limb under 140 deg or between 230 and 320 deg is the
+   Earth's shadow. A dim, red unlit part (above 3 % of the lit level, R/G > 1.15) is the umbra; a whole disc with
+   R/G > 1.5 is totality. With `--time`, a partial disc when the Sun lights all of it is an eclipse too. States:
+   `full`, `gibbous`, `half`, `crescent`, `eclipse-partial`, `eclipse-total`.
+3. **Orientation** (where the Moon's north pole points on the picture), first that applies: `--north-angle` plus the
+   axis angle for the time (certainty 1.0; 0.6 without a time); time + site with the camera roll assumed level
+   (image up = zenith, celestial north at minus the parallactic angle; certainty 0.75, or 0.5 with a raw EXIF time
+   that no `clock_offset` or `--time` confirms); an albedo fit (a crude
+   map of the maria correlated with the disc, the lighting flattened region by region, 2-deg steps; certainty from
+   the peak's margin over the best angle more than 30 deg away, at most 0.9; not tried under 40 px). On NASA SVS
+   frames turned and shrunk to 65-650 px, the fit was right within 5 deg in all 50 full-Moon cases (25 with a
+   synthetic eclipse shadow) and in 24 of 25 gibbous ones (the other was 9 deg off).
+4. **Libration and axis** (Meeus, *Astronomical Algorithms*, ch. 53, physical libration ignored): from the Moon's
+   apparent position (DE421). Agrees with NASA SVS within 0.03 deg (libration) and 0.15 deg (axis angle).
+5. **Features:** a curated 92 (28 maria and bays, 48 craters, 10 mountain ranges, 6 Apollo sites) from the IAU/USGS
+   Gazetteer of Planetary Nomenclature, projected orthographically. A feature is named when it is at least 6 px on
+   the image (Apollo sites count as 40 km) and on the visible part of the disc.
+6. **Confidence** = `100 x disc quality x orientation certainty x size factor x illumination`; size factor
+   `1 - exp(-(size/6 px)^2)`; illumination = the sunlit share of the spot, a spot in a visible umbra at 0.6.
+   Names under 20 stay in the JSON but are not drawn.
+
+Output: `<name>_moon.jpg` (next to the photo or in `--to`), a summary line per photo on stderr, and with `--json`
+one document `{"contract": 1, "moon": [...]}`: per photo `found`, `message`, `disc` (`cx`, `cy`, `r`,
+`diameter_px`, `rms_px`, `coverage`, `quality`), `state`, `orientation` (`method`, `certainty`, `pole_angle_deg`,
+`mirrored`, ...), `ephemeris` (sub-Earth point, axis and parallactic angles) when a time is known, `features`
+(name, kind, lat, lon, x, y, size_px, confidence, tag) and `annotations` (the [overlay payload](#annotations-payload-for-the-facet-viewer)
+with one group, `moon`). Exit 0 when a disc was found in at least one photo, 1 when none, 2 for a usage error.
+Not yet in the Facet add-on.
 
 ## Optional fallback: astrometry.net
 

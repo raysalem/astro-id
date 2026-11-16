@@ -50,8 +50,41 @@ tolerance, timezone America/Los_Angeles and the site (32.6064, -116.3239, 1100 m
 [How it solves](../docs/REFERENCE.md#how-it-solves)); the set is rebuilt with `tools/make_examples.py`
 (steps in [docs/TESTING.md](../docs/TESTING.md)).
 
+## Moon photos (`moon/`)
+
+For `astro-id moon` ([Moon features](../docs/REFERENCE.md#moon-features-astro-id-moon)). These are four frames of
+NASA's *Moon Phase and Libration, 2026* (SVS ID 5587), 730 x 730 px, each drawn celestial-north up, so a run with
+the frame's time and `--north-angle 0` has the true orientation and the result can be checked by eye.
+`moon/annotated/` holds what astro-id drew.
+
+| File | Frame, time (UTC) | Disc | What astro-id finds |
+|---|---|---|---|
+| `05-nasa-svs-full-moon.jpg` | 7861, 2026-11-24 12:00 | 690 px | `full`; 83 features at 65-100 (75 of them 80+): Tycho, Copernicus, Plato, Mare Imbrium, Mare Crisium, the Apollo sites in place. With no time at all the maria fit finds the pole at 348 deg (true 347.2, certainty 0.64), so the same names at up to 64 |
+| `06-nasa-svs-waxing-crescent.jpg` | 7573, 2026-11-12 12:00 | 620 px | `crescent`; 11 features, 6 at 80+ (Mare Undarum, Mare Spumans, Petavius, Furnerius, Vendelinus), all on the lit limb. The weakest of the four: a thin crescent is only a little of the disc, and the dark side is not labeled |
+| `07-nasa-svs-first-quarter.jpg` | 7693, 2026-11-17 12:00 | 631 px | `half`; 51 features, 38 at 80+: Mare Serenitatis, Tranquillitatis, Crisium, Fecunditatis, Nectaris, Montes Caucasus, Apollo 11 and 17 (the lit half only; a few names sit on the terminator at lower confidence) |
+| `08-nasa-svs-waxing-gibbous.jpg` | 7759, 2026-11-20 06:00 | 656 px | `gibbous`; 72 features, 62 at 80+: Tycho, Copernicus, Plato, Mare Crisium (100), Mare Imbrium (89), Apollo 11-17 |
+
+Reproduce (the time of each frame is hour N-1 after 2026-01-01 00:00 UTC):
+
+```powershell
+uv run astro-id moon examples/moon/05-nasa-svs-full-moon.jpg --time 2026-11-24T12:00Z --north-angle 0 --to examples/moon/annotated
+uv run astro-id moon examples/moon/06-nasa-svs-waxing-crescent.jpg --time 2026-11-12T12:00Z --north-angle 0 --to examples/moon/annotated
+uv run astro-id moon examples/moon/07-nasa-svs-first-quarter.jpg --time 2026-11-17T12:00Z --north-angle 0 --to examples/moon/annotated
+uv run astro-id moon examples/moon/08-nasa-svs-waxing-gibbous.jpg --time 2026-11-20T06:00Z --north-angle 0 --to examples/moon/annotated
+```
+
+These are not real camera photos: they show the method on clean, known frames. A real photo needs the same disc
+size (about 250 px for craters) and a time; see the [manual](../docs/MANUAL.md#photos-of-the-moon-astro-id-moon).
+
 ## License
 
 Example photos © Ray Salem. All rights reserved. They are included to demonstrate and test astro-id. This covers the JPGs in this folder,
-`annotated/` and `docs/img/` (including the demo video and GIF). The code is MIT (see [LICENSE](../LICENSE)); the MIT
-license does not cover the photos.
+`annotated/` and `docs/img/` (including the demo video and GIF). The
+code is MIT (see [LICENSE](../LICENSE)); the MIT license does not cover the photos.
+
+The four `moon/0*-nasa-svs-*.jpg` frames and their copies in `moon/annotated/` are not Ray Salem's: they are frames of
+*Moon Phase and Libration, 2026* by NASA's Scientific Visualization Studio (https://svs.gsfc.nasa.gov/5587; frames
+7861, 7573, 7693 and 7759 = 2026-11-24 12:00, 2026-11-12 12:00, 2026-11-17 12:00 and 2026-11-20 06:00 UTC), public
+domain ("All of our content is in the public domain", https://svs.gsfc.nasa.gov/help/); credit NASA's Scientific
+Visualization Studio. The labeled copies add feature names from the public-domain IAU/USGS Gazetteer of Planetary
+Nomenclature (see [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)).
