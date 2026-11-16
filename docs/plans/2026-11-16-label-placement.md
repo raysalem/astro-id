@@ -1,8 +1,8 @@
 # Plan: label placement without overlaps
 
 Goal: no label over another label, over another object's marker or past the image edge, in every renderer and in
-the annotation payload. Branch: `label-placement`. Started 2026-11-16. Status: done 2026-11-16 (pushed, not merged;
-the merge waits for the owner).
+the annotation payload. Branch: `label-placement`. Started 2026-11-16. Status: done and merged into main
+2026-11-16 after review attempt 2 passed (owner approved the merge).
 
 Owner's rule: near an image edge the text goes inward (on the right edge: text, then the circle), never past the
 edge, never over another label.
@@ -77,3 +77,6 @@ Tests in step 5:
     captured before `layout_payload`, and the determinism test proves the first layout.
   - `overlay.py` imports `LEVEL_BODY` from `tagpolicy`; the unused `_overlap` import left `export.py`; the sky test
     uses the obstacles `layout` returns; `ANNOTATIONS.md` says a hidden `lines` item keeps its centroid `label_at`.
+- dev-notes-reviewer, pass, 2026-11-16, attempt 2, all attempt-1 findings resolved (sort keys one shape + test,
+  pre-layout fixtures, marker and first-layout determinism tests, notes closed); 539 tests pass, dev-notes check 0
+  errors, Moon 08 re-render byte-identical.
