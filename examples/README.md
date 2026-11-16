@@ -17,6 +17,12 @@ labels green = high, amber = likely, gray = candidate). `expected.json` is what 
 solved, grade, and the tags at confidence 80 and up. `tags` are asserted by the CI check (confidence >= 85, planets
 and the Moon >= 80); `borderline` (80-84) is informational; `scores` records each listed tag's confidence in that run.
 
+## Brief
+Test input and README pictures: the five sky frames (settings in `astro-id.json`, results in `expected.json`) and four NASA Moon frames in [moon/](#moon-photos-moon).
+
+## Tests
+- CI job `examples`: solves this folder, checks it with `tests/check_examples.py`, then runs `tests/test_moon.py`. Steps: [Reproduce](#reproduce). Needs ASTAP + W08.
+
 ## Reproduce
 
 Install astro-id, ASTAP and the W08 star database first (see the main README), then from the repo root:

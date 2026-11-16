@@ -1,0 +1,18 @@
+name: dev-notes
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: dev-notes check
+        # Pull request: compare with the target branch. Push: compare with the commit before the push.
+        run: python dev-notes/tools/check.py --base "${{ github.base_ref && format('origin/{0}', github.base_ref) || github.event.before }}"
