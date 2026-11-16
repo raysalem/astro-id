@@ -1,6 +1,6 @@
 # TODO
 
-Backlog, one line each. Status as of 2026-11-15 (main = 4e494d1). Closed items and older per-work-stream detail: [archive/TODO-history-2026-11.md](archive/TODO-history-2026-11.md).
+Backlog, one line each. Status as of 2026-11-15 (main = 8c8ee5c, the Moon release). Closed items and older per-work-stream detail: [archive/TODO-history-2026-11.md](archive/TODO-history-2026-11.md).
 
 ## Needs the owner's check or call
 - [ ] Open the Astro panel in Facet; expect "Updating Astro…" then the panel at page 2026-11-15.5 (Undo link, Sky labels switch, requirements line). Then the human checks in [TESTING](TESTING.md). · opened 2026-11-15
@@ -18,7 +18,7 @@ Backlog, one line each. Status as of 2026-11-15 (main = 4e494d1). Closed items a
 - [ ] Label placement: names overlap (URSA MINOR / Little Dipper, CASSIOPEIA / W of Cassiopeia); near an edge the text should go inward; one collision pass shared by the burned copy and Facet's layer.
 - [ ] RAW without a JPG (rawpy, half size) is untested on a real RAW-only folder; RAW solve is not clearly better than the JPG.
 - [ ] astrometry.net fallback is implemented but untested (no key); Linux/macOS ASTAP discovery is minimal.
-- [ ] Moon geography: name maria and craters on a zoomed Moon photo (side idea, not started). · opened 2026-11-15
+- [ ] Moon: a real camera photo at 250+ px with EXIF time and site; eclipse and thin-crescent handling; run `moon` from `label`/`solve` when a solve fails on a large disc. The first version is done (`astro-id moon`); the full list is under "What is left" in [the Moon plan](plans/2026-11-15-moon-features.md). · opened 2026-11-15
 
 ## Facet add-on
 - [ ] Panel results are lost on a full page reload; restore the last solve from the server's job state (the held photo set already restores).

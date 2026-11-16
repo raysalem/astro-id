@@ -1,7 +1,7 @@
 # Testing
 
 1. Install uv, then `uv sync --frozen` (Python 3.12).
-2. `uv run pytest -q -rs` runs the Python suite (~380 tests); `-rs` lists what skipped and why.
+2. `uv run pytest -q -rs` runs the Python suite (489 tests on 2026-11-15); `-rs` lists what skipped and why.
 3. `node --test tests/js/bridge.test.js` and `node --test tests/js/panel.test.js` run the JS tests (Node 22 LTS).
 4. Tests that need a Facet checkout (`facet_contract`) skip when none is found; the suite does not need ASTAP.
 5. CI is `.github/workflows/ci.yml`, on push to main, pull requests and manual dispatch.

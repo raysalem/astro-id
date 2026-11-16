@@ -3,6 +3,9 @@
 ## The simplest way
 Drag a photo or folder onto `astro-label.cmd` (Windows), run `./astro-label.sh photo.jpg` (Linux/macOS), or `uv run astro-id label <photo-or-folder>`. Each photo gets a labeled copy `<name>_astro.jpg` next to it. Details: [SIMPLE](SIMPLE.md). Every option: [REFERENCE](REFERENCE.md). Full manual: [MANUAL](MANUAL.md).
 
+## A close-up of the Moon
+`uv run astro-id moon <photo> --time 2026-11-20T06:00Z --site 32.6,-116.3` writes `<name>_moon.jpg` with the maria, large craters, ranges and Apollo sites named. The disc must be about 250 px across for craters. Details: [MANUAL](MANUAL.md#photos-of-the-moon-astro-id-moon).
+
 ## Inside Facet
 Install the add-on once (`uv run astro-id facet install --facet-data <Facet data folder>`), then open **Astro** from Facet's add-on tab. The sections below describe the engine and the panel.
 
@@ -56,7 +59,7 @@ There is no **Save setup** button any more: the setup saves itself for the folde
 **Steps, in order** (only the step that matters now is open)
 1. **Location**: Google Earth / Maps, paste, **Check**, **Confirm**.
 2. **Time**: offset and ± minutes (timezone and a check of the corrected times are folded under them). **Auto**: after a solve, if the Moon was found in a solved frame, the panel says e.g. "The Moon in 2 solved frames (...) suggests the clock is +2559d11h06m ±3 min" with a **Use ...** button. Use it, then solve again. Without the Moon in a solved frame there is no suggestion (planets and the horizon do not pin the time yet).
-3. **Plate solve**: one button. Shows "Solving 3 / 18 · DSC07612.JPG solved" and a bar. The log is folded.
+3. **Plate solve**: one button. Shows "Solving 3 / 18 · IMG_0012.JPG solved" and a bar. The log is folded.
 4. **Results and object tags**: as before (ticks, "Save object tags at confidence ≥", **Save to Facet**).
 5. **Sky labels on the photo**: open a solved photo in Facet; Show, groups, "Show names at confidence ≥", Max magnitude, show scores.
 6. **Export labeled copies**: burns exactly what step 5 shows into JPG copies in "<folder>-annotated". Choose at export time: **Draw constellation stick figures**, **Show confidence numbers after the names**, **Add an info box (date, time, solve grade)**. Exports the ticked solved photos of this session, or, after a reload, every loaded photo that has sky labels in Facet (the others are listed under "Not exported"). No new solve.

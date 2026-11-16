@@ -5,15 +5,15 @@
 
 ## Engine
 - Horizon-based time pin (detect the foreground/sky boundary, fit altitude 0). Only the Moon pins `best_fit_time` today, and no Moon was in a solved frame of this batch.
-- Twilight/foreground frames (DSC07627, DSC07630) do not solve: a "bright-object solve" could match Venus/Jupiter/Mars/1st-mag stars against the sky at a known time.
-- Badly defocused frames (DSC07612) solve with RMS > 2 px: a donut-centroid detector would help.
+- Twilight/foreground frames (frame-7627, frame-7630) do not solve: a "bright-object solve" could match Venus/Jupiter/Mars/1st-mag stars against the sky at a known time.
+- Badly defocused frames (frame-7612) solve with RMS > 2 px: a donut-centroid detector would help.
 - RAW without a JPG is decoded with rawpy (half size); untested on a real RAW-only folder.
 - astrometry.net fallback is implemented but untested (no key here); on first use check the y-axis convention of its WCS (both conventions are tried and the better refit wins).
 - Linux/macOS ASTAP discovery is minimal (`ASTAP_PATH`, PATH, /opt/astap).
 - B-E1 small photos (branch small-photo-solve b156091, pushed, not merged): the owner to test, then merge. After merge: the examples branch can ship all five frames at 2400 px. `quality.py` still halves every image, so quality metrics on small copies are untested. 07626@2000 solves at grade C with a weak fit (RMS 23 px).
 
 ## Facet plugin
-- Integration: install into facet-wintest, config block, dry-run backfill on the TDS folder (later agent).
+- Integration: install into the Facet test checkout, config block, dry-run backfill on the test folder (later agent).
 - Verify on the real DB that the viewer shows the tags and the tag dropdown cache refreshes.
 - A distinct `source='astro-id'` would need a Facet schema change; deferred.
 
@@ -29,10 +29,10 @@
 - Planets fainter than mag 6 (Neptune) are level 2 and always taggable when found; revisit if false positives appear.
 
 ### Annotations, RAW source, plugin config (2026-11-10)
-- [x] Real backfill run 2026-11-10 10:01 after Facet's annotations merged into local/win-test: 15 rows. `upsert_annotation` accepts a dict or JSON text and does not commit (checked against facet-wintest `db/annotations.py`).
+- [x] Real backfill run 2026-11-10 10:01 after Facet's annotations merged into the Facet test branch: 15 rows. `upsert_annotation` accepts a dict or JSON text and does not commit (checked against the Facet test checkout `db/annotations.py`).
 - Stars group holds only the ~100 IAU-named stars; an unlabeled Hipparcos star layer (mag slider) would need Facet to draw label-less points.
 - RAW solve is not better than the JPG on the one frame tried; check a few more (defocused, wide) before recommending `auto`.
-- `raw_xmp`: not run on real originals yet (dry-run on the TDS folder first); Lightroom/Capture One do not read `<image>.<ext>.xmp` for proprietary RAW.
+- `raw_xmp`: not run on real originals yet (dry-run on the test folder first); Lightroom/Capture One do not read `<image>.<ext>.xmp` for proprietary RAW.
 - The crop offset is measured for the A7R IV only; other cameras fall back to the JPG unless sizes match.
 
 ### Astro session, quality metrics, culling (2026-11-11)
@@ -100,7 +100,7 @@
 - [x] (6b7ad5c) **Two sections in the panel:** (A) *Setup for this folder / album*: photos, location, time offset, JPG/RAW; saved per folder AND per album. (B) *Run*: plate solve → review results in the panel → **Save to Facet** (tags + sky labels); culling later (low priority).
 - [x] (6b7ad5c) Min-confidence leaves the solve step; it becomes a sky-label display setting.
 - [x] (6b7ad5c) Terms, one each: **Tags** = searchable words on the photo (gallery filter). **Sky labels** = names drawn over the photo in Facet (stored data, live). **Labeled copies** = separate JPG files with the labels burned in, for sharing outside Facet (was "overlay images"; off by default now that Facet draws live).
-- [ ] Label placement: near an edge the text goes inward (text then circle on the right edge, etc.), never past the image edge, no label over another label. Not hit on the TDS frames (one Messier at the edge). Needs per-label anchor side + a collision pass, in both the burned JPG and Facet's layer.
+- [ ] Label placement: near an edge the text goes inward (text then circle on the right edge, etc.), never past the image edge, no label over another label. Not hit on the test frames (one Messier at the edge). Needs per-label anchor side + a collision pass, in both the burned JPG and Facet's layer.
 - [ ] Clock from the sky: plate solving does not use time; time only matters for the horizon and the Moon/planets. Two frames from a fixed tripod give the interval between them to ~1 s (the sky moves ~1 px/s at 20 mm), but the absolute clock needs a ground reference (horizon in frame) or the Moon/planets (minutes, not seconds). Possible: best-fit offset per folder to ±1-2 min from frames that show the horizon. Seconds give the labels nothing.
 
 ### Follow-ups from the restructure (6b7ad5c)
@@ -177,7 +177,7 @@
 ## Public repo (2026-11-15)
 - [x] Public repo created: https://github.com/raysalem/astro-id (branch main pushed, full history, MIT). the owner asked for it.
 - [ ] README says `git clone <this repo>`: put the real URL.
-- [ ] Panel placeholder shows a private NAS path as the example folder: replace with a neutral example.
+- [ ] Panel placeholder shows a private network path as the example folder: replace with a neutral example.
 - [ ] Third-party notices: check the README lists the licenses of the data it downloads (OpenNGC CC-BY-SA, Stellarium constellation lines GPL-2, Hipparcos, DE421) before announcing the repo.
 - [ ] Work branches still local only (safe-update, p3-real-contract): push to the public repo when merged into main.
 
@@ -189,7 +189,7 @@
 ## Public repo polish (2026-11-15) - branch `integration`, NOT merged into main
 - [x] `integration` = main + version-check, cli-gaps, site-defaults, simple-label, panel-undo, sky-labels-clarity, readme, manual, examples, demo-video, ci. PAGE_VERSION 2026-11-15.3. Local: 376 pytest, 60 JS. Cloud CI green: https://github.com/raysalem/astro-id/actions/runs/43738260938
 - [ ] the owner: look at https://github.com/raysalem/astro-id/tree/integration (does the demo play? pitch line? photo license wording "All rights reserved"?), then say merge.
-- [x] small-photo-solve merged into `integration` (0c9af9e; docs moved to REFERENCE "How it solves" + README Limits line + MANUAL troubleshooting). Examples rebuilt at one size, 2400 px, all grade A (19a421e): frame 03 is now DSC07620 "dawn-orion-sirius" (replaced Taurus/Perseus/Uranus); 05 went grade C -> A (Jupiter/Mars 100). expected.json carries `scores`; demo captions show exact confidences (M45 99), legend covered, dawn shot zoomed; demo.gif (640 px, 7.5 s, 2.5 MB) inline in README, demo.webp/poster removed. Rebuild: tools/make_examples.py (steps in docs/TESTING.md). Local 420 pytest, 60 JS. Cloud CI green: https://github.com/raysalem/astro-id/actions/runs/43740733477
+- [x] small-photo-solve merged into `integration` (0c9af9e; docs moved to REFERENCE "How it solves" + README Limits line + MANUAL troubleshooting). Examples rebuilt at one size, 2400 px, all grade A (19a421e): frame 03 is now frame-7620 "dawn-orion-sirius" (replaced Taurus/Perseus/Uranus); 05 went grade C -> A (Jupiter/Mars 100). expected.json carries `scores`; demo captions show exact confidences (M45 99), legend covered, dawn shot zoomed; demo.gif (640 px, 7.5 s, 2.5 MB) inline in README, demo.webp/poster removed. Rebuild: tools/make_examples.py (steps in docs/TESTING.md). Local 420 pytest, 60 JS. Cloud CI green: https://github.com/raysalem/astro-id/actions/runs/43740733477
 - [ ] Label placement: names overlap (URSA MINOR / Little Dipper, CASSIOPEIA / W of Cassiopeia) - visible on the public examples.
 - [x] `astro-id label` now uses require_astap() like `solve` (9721576; test covers missing, too old, fallback, --no-fallback).
 - [x] gallery-4/5 removed (strip = 3 non-hero frames, frame 02 linked); README 212 lines.

@@ -18,20 +18,10 @@ solved, grade, and the tags at confidence 80 and up. `tags` are asserted by the 
 and the Moon >= 80); `borderline` (80-84) is informational; `scores` records each listed tag's confidence in that run.
 
 ## Brief
-Five example frames with their settings (`astro-id.json`) and expected results (`expected.json`). The files are the test input for the CI `examples` job and the pictures in the README.
-
-Public surface:
-
-| Name | Kind | Use |
-|---|---|---|
-| `astro-id.json` | config | site, clock offset and tolerance for the set |
-| `expected.json` | data | what must be found, with confidences |
-| `annotated/` | folder | the labeled copies |
+Test input and README pictures: the five sky frames (settings in `astro-id.json`, results in `expected.json`) and four NASA Moon frames in [moon/](#moon-photos-moon).
 
 ## Tests
-- Covered by: `tests/check_examples.py` (CI job `examples`).
-- Run just these: see [Reproduce](#reproduce).
-- Gaps: needs ASTAP and the W08 database.
+- CI job `examples`: solves this folder, checks it with `tests/check_examples.py`, then runs `tests/test_moon.py`. Steps: [Reproduce](#reproduce). Needs ASTAP + W08.
 
 ## Reproduce
 

@@ -1,18 +1,13 @@
 # tools: docs check and builders
 
 ## Brief
-Helper scripts for the repo itself: the docs link check, and the builders for the example photos and the demo video.
+Scripts for the repo itself, not part of the installed package.
 
-Public surface:
-
-| Name | Kind | Use |
-|---|---|---|
-| `check_docs.py` | command | every relative link, image and anchor in the docs resolves; no personal paths |
-| `make_examples.py` | command | prepares the example set, its `expected.json` and composites |
-| `make_demo.py` | command | rebuilds `docs/img/demo.mp4` and `demo.gif` |
-
-Depends on: Pillow, ASTAP (for the builders). Used by: CI (`check_docs.py`), the maintainer.
+- `check_docs.py`: every relative link, image and anchor in the docs resolves, and no personal text slipped in. Runs in CI.
+- `make_examples.py` and `make_demo.py`: rebuild the example set, its `expected.json`, the composites and the demo video/GIF. They need ASTAP and the source photos (not in the repo).
+- `make_moon_catalog.py`: regenerates `astro_id/moon_catalog.py` from the public-domain IAU/USGS gazetteer; download steps are in its header.
+- Depends on: Pillow, ASTAP (builders only). Used by: CI (`check_docs.py`), the maintainer.
 
 ## Tests
-- `check_docs.py` runs in CI: `uv run python tools/check_docs.py`.
-- Gaps: the builders are run by hand ([TESTING](../docs/TESTING.md)).
+- `uv run python tools/check_docs.py` (CI job `tests`, Linux).
+- Gaps: the builders are run by hand ([TESTING](../docs/TESTING.md)); `make_moon_catalog.py` has no test of its own, `tests/test_moon.py` checks the catalog it produced.

@@ -13,6 +13,12 @@
 - `astro-id site <folder>`: Google Maps pin -> lat/lon -> USGS elevation -> name -> confirm -> `astro-id.json`.
 - `astro-id setup`: downloads reference data, reports ASTAP + databases.
 - astrometry.net fallback only when ASTAP fails and `ASTROMETRY_API_KEY` is set (private upload).
+- `astro-id label <photo-or-folder>`: the one-step labeler behind `astro-label.cmd` / `astro-label.sh` ([SIMPLE](SIMPLE.md)).
+- `astro-id check` (alias `doctor`): minimum requirements (Python, uv, ASTAP + database, optionally a Facet), exit 0 when all required ones pass; the Facet panel shows the same rules as one line when something is missing.
+
+## Moon close-ups (2026-11-15, first version)
+- `astro-id moon <photo-or-folder> [--time] [--site] [--north-angle] [--mirror] [--to] [--json]`: fits the disc, reads the phase or an eclipse, finds the orientation (given angle, time + site with a level camera, or a maria fit), and names maria, large craters, mountain ranges and Apollo sites on the lit part, 0-100 each, in `<name>_moon.jpg`.
+- Limits: craters need a disc of about 250 px, maria about 60 px; not wired into `solve`, `label` or the Facet add-on yet. Method, measurements and what is left: [the Moon plan](plans/2026-11-15-moon-features.md); examples: [examples/moon](../examples/README.md#moon-photos-moon).
 
 ## Facet plugin
 - `facet_plugin/astro_id.py`: Facet plugin, `on_score_complete` queues astro photos (category astro, astro tags, or under `roots`) to one background worker that runs the engine and writes tags.
@@ -54,7 +60,7 @@
 - `astro-id facet status` (ledger dump), `undo` (remove ledger tags + our annotations), `adopt` (TEMPORARY one-time: read the old plugin's `created_by='astro-id'` tags and annotation rows, read-only, into the ledger).
 - Optional `facet_plugin/astro_notify.py.example` (under 70 lines): appends scored astro paths to a spool file; never touches the DB.
 - Credentials from env: `FACET_EDITION_PASSWORD` | `FACET_USERNAME` + `FACET_PASSWORD` | `FACET_TOKEN`; `FACET_URL`. One login per run (Facet rate-limits logins: 429). No stats_cache writes.
-- Removed: `facet_plugin/astro_id.py` (kept in git history), its hardlink in facet-wintest/plugins + the `.git/info/exclude` line, the atexit catch-up + lock file, `DEFAULT_UV` and other Windows-only defaults, the `plugins.astro_id` block in Facet's config. Dropped with it, not ported yet: `tag_targets: raw_xmp` (RAW XMP keywords), see TODO.
+- Removed: `facet_plugin/astro_id.py` (kept in git history), its hardlink in the Facet test checkout plugins folder + the `.git/info/exclude` line, the atexit catch-up + lock file, `DEFAULT_UV` and other Windows-only defaults, the `plugins.astro_id` block in Facet's config. Dropped with it, not ported yet: `tag_targets: raw_xmp` (RAW XMP keywords), see TODO.
 
 ## Facet add-on (2026-11-11)
 - `astro-id facet install --facet-data <dir>` / `uninstall`: writes or deletes `<dir>/addons/astro-id/addon.json` and nothing else (spec §4). `start.argv` holds the absolute `uv` (from `UV`, PATH or `~/.local/bin`) and the checkout path; `--uv` / `--project` override.
@@ -96,7 +102,7 @@ Workflow (the owner): pick folder -> location -> time (with Auto) -> see it with
 | Loaded line: what is loaded, saved setup summary, "Photos (18)" list + JPG/RAW | 2 | Confirms what you are working on; the per-photo list is detail | Line visible; list folded |
 | 1. Location | 3 (1 when missing) | Planets, Moon and horizon need it; once saved it is done | Open when the folder/album has no saved site; else folded with the site in its header |
 | 2. Time (offset, ±, timezone, **Auto** after a solve) | 3 (1 when missing) | Same: once per folder; Auto only after a solve and only from frames that pin the time (today: the Moon) | Open when no offset saved; folded otherwise; opens itself when Auto has a suggestion that differs |
-| 3. Plate solve: one button, counter "Solving 3 / 18 · DSC07612.JPG" + bar, log folded | 1 once setup is ready | The job itself; no options to decide | Open when the setup is ready |
+| 3. Plate solve: one button, counter "Solving 3 / 18 · IMG_0012.JPG" + bar, log folded | 1 once setup is ready | The job itself; no options to decide | Open when the setup is ready |
 | 4. Results and tags: rows with ticks, "Save names at confidence ≥", **Save to Facet** | 1 after a solve | Review what was found, then write tags + sky labels | Opens when a solve finishes |
 | 5. Sky labels on the photo (the annotator: Show, groups, show-names confidence, max magnitude, scores) | 2 after a save | "See it": what Facet draws, and what Export burns | Opens when the photo open in Facet has sky labels |
 | 6. Export labeled copies (plain-language options at export time) | 3 | Sharing outside Facet: occasional, last | Folded; status in header |
