@@ -1,16 +1,9 @@
 # <Project>: details
 
+What the code cannot tell you. Do not re-describe code here: an agent reads the code for that.
+
 ## Architecture
-<diagram: ASCII, or docs/img/architecture.svg>
-<one paragraph: the parts and how they talk>
-
-## Data flow
-1. <input> -> <step> -> <output>
-
-## Interfaces
-| Interface | Direction | Spec |
-|---|---|---|
-| <CLI / HTTP API / file format> | in / out | <link> |
+<one paragraph or an ASCII diagram: the parts and how they talk>
 
 ## Decisions
 | Date | Decision | Why | Rejected |

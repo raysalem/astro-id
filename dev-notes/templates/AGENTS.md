@@ -1,15 +1,31 @@
 # AGENTS.md
 
-<!-- dev-notes:begin v1.0.0 -->
-## Dev notes (docs first)
-This repo follows dev-notes v1.0.0 (dev-notes/STANDARD.md).
-1. Read docs/BRIEF.md, then docs/PLAN.md, docs/TODO.md, and the README.md of each folder you will touch.
-2. Docs first: write your plan into docs/PLAN.md before you open any code.
-3. Open code only through the plan, with your language server (LSP) or a text search. Never browse code to get oriented.
-4. If the docs for your area are missing or wrong, fix them first or stop and say so (STANDARD.md 1.1).
-5. Update every doc your change touches in the same change; run `python dev-notes/tools/check.py`.
+<!-- dev-notes:begin v1.1.0 -->
+## Dev notes (plan before edits)
+This repo follows dev-notes v1.1.0 (dev-notes/STANDARD.md).
+1. Read this file, the open plans in docs/plans/, and the Decisions and Gotchas in docs/DETAILS.md.
+2. Look at the code your task touches (language server or text search). Code is the truth: where a doc disagrees with it, fix the doc.
+3. Write your plan to docs/plans/ (one file per task, named by date and slug) before you edit any code. Leave other open plans alone.
+4. A plan that changes design (a Decision in docs/DETAILS.md) waits for the owner's OK.
+5. In the same change: record new decisions and gotchas in docs/DETAILS.md and bugs in docs/ISSUES.md, set the plan's status, run `python dev-notes/tools/check.py`.
 6. Do not push to shared branches, merge, or open PRs unless the owner says so.
 <!-- dev-notes:end -->
 
+## Brief
+<What it is, one sentence.>
+<Who uses it and for what, one sentence.>
+<How it works at the top level, one or two sentences.>
+
+| Part | Folder | Job |
+|---|---|---|
+| <part> | `<folder>/` | <one line> |
+
+## Commands
+| Do | Command |
+|---|---|
+| Install | `<install command>` |
+| Test | `<test command>` |
+| Lint / type check | `<lint command>` |
+
 ## Repo-specific rules
-- <build and test commands, conventions, anything this repo adds>
+- <conventions, anything this repo adds>

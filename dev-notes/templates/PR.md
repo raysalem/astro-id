@@ -4,14 +4,14 @@
 - <change, one line each>
 
 ## Why
-<one or two sentences; link ISSUES I-n or the PLAN>
+<one or two sentences; link ISSUES I-n or the plan in docs/plans/>
 
 ## Tests run
 - `<command>`: <N passed, M skipped>
 - CI: <run link or "pending">
 
 ## Docs updated
-- <docs/FEATURES.md, <folder>/README.md, ...>
+- <docs/DETAILS.md (decision), docs/plans/<plan>.md, ...>
 
 ## Human checks (at most 3)
 1. <one line>

@@ -1,33 +1,20 @@
 # templates: files copied into adopting repos
 
-## Brief
-One template per doc in the standard, plus the pieces `adopt.py init` writes. Placeholders are in angle brackets. Template headings are kept so agents can find sections.
+Placeholders are in angle brackets. A doc line left identical to a template placeholder line fails the check (D10). Keep each template's headings so agents can find sections.
 
-Public surface:
-
-| Name | Kind | Use |
+| Name | Becomes | Written by |
 |---|---|---|
-| `BRIEF.md` | doc | `docs/BRIEF.md` |
-| `DETAILS.md` | doc | `docs/DETAILS.md` |
-| `FEATURES.md` | doc | `docs/FEATURES.md` |
-| `USAGE.md` | doc | `docs/USAGE.md` |
-| `SETUP.md` | doc | `docs/SETUP.md` |
-| `REQUIREMENTS.md` | doc | `docs/REQUIREMENTS.md` |
-| `TESTING.md` | doc | `docs/TESTING.md` |
-| `PLAN.md` | doc | `docs/PLAN.md` |
-| `TODO.md` | doc | `docs/TODO.md` |
-| `ISSUES.md` | doc | `docs/ISSUES.md` |
-| `AGENTS.md` | doc | root `AGENTS.md`, with the marked block |
-| `CLAUDE.md` | doc | root `CLAUDE.md`, one line |
-| `ROOT-README.md` | doc | root `README.md`, the marketing page (you write it) |
-| `FOLDER-README.md` | doc | `<folder>/README.md` for each code folder (you write it) |
-| `PR.md` | doc | pull request text |
-| `dev-notes.yml` | CI | `.github/workflows/dev-notes.yml` |
-| `dev-notes.toml` | config | `.dev-notes.toml`, optional |
+| `AGENTS.md` | root `AGENTS.md`: marked block, brief, commands | `adopt.py init` |
+| `CLAUDE.md` | root `CLAUDE.md`, one line | `adopt.py init` |
+| `DETAILS.md` | `docs/DETAILS.md`: decisions and gotchas | `adopt.py init` |
+| `ISSUES.md` | `docs/ISSUES.md`: debug records | `adopt.py init` |
+| `PLANS-README.md` | `docs/plans/README.md` | `adopt.py init` |
+| `dev-notes.yml` | `.github/workflows/dev-notes.yml` | `adopt.py init` |
+| `PLAN.md` | `docs/plans/YYYY-MM-DD-<slug>.md`, one per task | you, per task |
+| `PR.md` | pull request text | you, per change |
+| `ROOT-README.md` | root `README.md`, the marketing page | you |
+| `FEATURES.md` `USAGE.md` `SETUP.md` `REQUIREMENTS.md` `TESTING.md` `TODO.md` | the optional docs in `docs/` | you, when the repo needs one |
+| `FOLDER-README.md` | `<folder>/README.md`, optional | you, when a folder needs one |
+| `dev-notes.toml` | `.dev-notes.toml`, optional | you |
 
-Depends on: nothing. Used by: `tools/adopt.py`, the example agent.
-
-## Tests
-- Covered by: `tests/test_adopt.py` (init copies them; the marked block is stamped with `VERSION`).
-- Run just these: `python -m unittest tests.test_adopt -v`.
-- Gaps: placeholders are not validated.
+Tests: `python -m unittest tests.test_adopt -v` (init copies them; the marked block is stamped with `VERSION`).

@@ -8,7 +8,7 @@
 ## CI
 | Job | Runs | OS | Trigger |
 |---|---|---|---|
-| docs | `python dev-notes/tools/check.py` | ubuntu | PR, push to main |
+| dev-notes | `python dev-notes/tools/check.py` | ubuntu | PR, push to main |
 
 ## Gaps
 - <what no test covers, and why>

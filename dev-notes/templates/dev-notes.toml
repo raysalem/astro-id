@@ -1,7 +1,8 @@
 # .dev-notes.toml (optional, repo root): settings for dev-notes/tools/check.py
-skip_folders = ["docs", "docs/img", "node_modules", ".venv", "build", "dist"]
-code_extensions = [".py", ".ts", ".js", ".go", ".rs"]
+skip_folders = []         # added to the built-in list; files in these folders never count as code (D6)
+# code_extensions = [".py", ".ts"]   # replaces the built-in list
 extra_required_docs = []   # e.g. ["docs/CONTRACT.md"]
 
 [size_limits]              # overrides STANDARD.md 2.4
 # "docs/USAGE.md" = 600
+# "AGENTS.md" = 150

@@ -1,126 +1,119 @@
 # dev-notes standard
 
-Version 1.0.0 · 2026-11-15 · License: see LICENSE
+Version 1.1.0 · 2026-11-15 · License: see LICENSE
 
-A documentation-first way for AI agents (and people) to work on a code repo. It works with any agent: Claude Code, Codex, Gemini, Copilot, Cursor, or a human.
+A small way for AI agents (and people) to work on a code repo: plan before edits, and write down what the code cannot tell the next session. It works with any agent: Claude Code, Codex, Gemini, Copilot, Cursor, or a human.
 
-## 1. The rule: docs first
+## 1. The rule: plan before edits
 
-**An agent reads the docs and writes its plan into the docs before it opens code.**
+**An agent reads the notes, looks at the code, and writes its plan before it changes anything.**
 
-1. Read `README.md`, `docs/BRIEF.md`, `docs/PLAN.md`, `docs/TODO.md`, the `docs/ISSUES.md` index, and the `README.md` of each folder the task touches.
-2. Write the plan into `docs/PLAN.md`: goal, steps, the files and symbols each step touches.
-3. Open code only through the plan: the files and symbols it names, found with a language server (LSP) where one runs, with a stated fallback where none does (section 5, step 3).
-4. Never "jump into code": no browsing source to get oriented, no edits before the plan exists.
-5. Bring the docs back in line in the same change as the code.
+1. Read `AGENTS.md` (brief, commands, rules), the open plans in `docs/plans/`, and the Decisions and Gotchas in `docs/DETAILS.md`. For a bug, the `docs/ISSUES.md` index too.
+2. Look at the code the task touches, read-only: with a language server (LSP) where one runs, a text search where none does. **Code is the truth.** Where a doc disagrees with the code, the doc is wrong: fix the doc.
+3. Write the plan to `docs/plans/YYYY-MM-DD-<slug>.md`: goal, steps, the files and symbols each step touches.
+4. No edits before the plan exists. A plan that changes design waits for the owner.
+5. In the same change as the code: record what the code cannot say (decisions, gotchas, bugs) and set the plan's status.
 
-**Why.** The docs are the shared memory between sessions and between agents. Every session starts cold. An agent that reads code without the docs re-derives the design from scratch: slowly, expensively, and often wrongly, then acts on the wrong picture. Writing the plan first also gives the human one place to check direction before any code moves.
+**Why.** Every session starts cold. Code shows what the program does, never why it is that way, what was tried and rejected, or what is half done. Those three things are what the notes hold. Everything else an agent reads from the code, which is always current. Writing the plan first gives the owner one place to check direction before any code moves.
+
+**What changed from 1.0.0, and why.** 1.0.0 required ten docs, a README in every code folder, and planning before reading code. A two-model review found the required set cost more to keep current than it saved, the planning rule made agents plan from summaries instead of the code, one shared plan file blocked parallel sessions, and the check passed on unfilled templates. 1.1.0 keeps the parts with no substitute and makes the rest optional.
 
 ### 1.1 Stop conditions
 
-Stop and fix the docs first, or say so and stop, when:
+Stop and say so when:
 
-1. `docs/BRIEF.md` or `docs/PLAN.md` is missing. Create them (adoption, section 7) before any code task.
-2. The folder you need has no `README.md`, or its "Public surface" does not match the code you find while planning. Fix the folder doc first.
-3. The docs contradict each other or the code. Record the conflict in PLAN, decide which is true (ask the owner if unsure), fix the doc, then go on.
-4. The goal is unclear, or PLAN.md holds a different task still in progress. Ask; do not overwrite someone else's plan.
-5. The work needs code outside the files the plan names. Update the plan first, then open them.
-6. The drift check (section 6) fails before you start. Fix it or report it before adding more change.
-7. The plan changes design (a decision in DETAILS) and the owner has not agreed to it. Stop after writing the plan.
-8. You cannot tell from the docs where to start. That is a doc gap: write the missing doc, then plan.
+1. `AGENTS.md` or `docs/DETAILS.md` is missing. Adopt first (section 7).
+2. The goal is unclear.
+3. An open plan names the files or symbols you need. Ask its owner; never edit someone else's open plan.
+4. The work needs code outside what your plan names. Update the plan first.
+5. The plan changes design (a Decision in DETAILS) and the owner has not agreed. Stop after writing the plan.
+6. The check (section 6) reports errors before you start. Fix them or report them before adding more change.
 
 ## 2. Repo layout
 
 ```
 README.md               marketing page
-AGENTS.md               "this repo follows dev-notes": read this first (section 7.3)
+AGENTS.md               rules, brief, commands: read first (section 7.3)
 CLAUDE.md               one line: @AGENTS.md (Claude Code reads CLAUDE.md, not AGENTS.md)
-LICENSE  CHANGELOG.md  THIRD_PARTY_NOTICES.md   root, by convention
 docs/
-  BRIEF.md  DETAILS.md  FEATURES.md  USAGE.md  SETUP.md  REQUIREMENTS.md
-  TESTING.md  PLAN.md  TODO.md  ISSUES.md
-  img/                  images for README and docs
-  archive/              finished plans, old issues (archive, never delete)
-  <SPEC>.md             optional specs: CONTRACT, REFERENCE, file formats
-<code folder>/README.md one per package or code folder: brief + tests
+  DETAILS.md            decisions and gotchas
+  ISSUES.md             debug records
+  plans/                one plan per task; finished plans stay
+  <optional docs>       FEATURES USAGE SETUP REQUIREMENTS TESTING TODO, specs
 dev-notes/              this standard, vendored (section 7)
-.dev-notes.toml         optional config for the drift check
+.dev-notes.toml         optional config for the check
 ```
 
-### 2.1 README.md is a marketing page
-
-Holds: one-line pitch, badges, one to three images, one demo (GIF or short video), a quick start of at most five commands, five to eight feature bullets, links into `docs/`, a license line.
-Does not hold: option tables, architecture, test procedures, changelogs, plans. Those live in `docs/`.
-Template: [templates/ROOT-README.md](templates/ROOT-README.md).
-
-### 2.2 The docs/ files
+### 2.1 Required
 
 | File | Holds | Update when |
 |---|---|---|
-| [BRIEF](templates/BRIEF.md) | What it is in five lines, the main parts, a status line, the doc map | parts are added or removed; status changes |
-| [DETAILS](templates/DETAILS.md) | Architecture, data flow, interfaces, decisions (date, choice, why, rejected), gotchas | structure, data flow or a decision changes |
-| [FEATURES](templates/FEATURES.md) | One section per feature: what, limits, since, folder, tests; for UI, the panel priority table | a feature is added, changed or removed |
-| [USAGE](templates/USAGE.md) | End-user manual: tasks in the order a user meets them, examples, errors, troubleshooting | user-visible behavior or options change |
-| [SETUP](templates/SETUP.md) | Install, developer setup, config keys, env var names (never values) | a dependency, config key or env var changes |
-| [REQUIREMENTS](templates/REQUIREMENTS.md) | Runtime minimums and what happens below them; promises other code relies on | a dependency or promise changes |
-| [TESTING](templates/TESTING.md) | How to run each suite, what CI runs, gaps, at most three human checks | tests, CI or human checks change |
-| [PLAN](templates/PLAN.md) | The current task: goal, steps with files and symbols, status, decisions, open items for the next dev | at the start, at each step, at the end |
-| [TODO](templates/TODO.md) | Backlog across tasks, one line each, with a pointer | an item opens or closes |
-| [ISSUES](templates/ISSUES.md) | Known bugs: index, then one section per bug in the 7-step debug record | a bug is found, narrowed, fixed, closed |
+| `README.md` | The marketing page: pitch, quick start, links into `docs/` | the pitch or quick start changes |
+| [AGENTS.md](templates/AGENTS.md) | The marked block (the rules), a brief of a few lines, the main parts, the install / test / lint commands, repo rules. It is loaded into every session, so keep it short | parts or commands change |
+| [docs/DETAILS.md](templates/DETAILS.md) | Decisions (date, choice, why, rejected) and gotchas. Not a description of the code | a decision is made or reversed; something surprised you |
+| [docs/ISSUES.md](templates/ISSUES.md) | Known bugs: an index, then one section per bug in the debug record (5.1) | a bug is found, narrowed, fixed, closed |
+| [docs/plans/](templates/PLAN.md) | One file per task, `YYYY-MM-DD-<slug>.md`: goal, steps with files and symbols, status, what is open for the next dev | at the start, at each step, at the end |
 
-- **ISSUES.md and an issue tracker.** ISSUES.md is the engineering record (how a bug was narrowed and why the fix is right). The tracker (GitHub Issues etc.) holds outside reports. Cross-link by number; do not mirror.
-- **Where other docs go.** A long manual is USAGE. A "simplest way" page is the top of USAGE and the README quick start. Exhaustive option lists go in `docs/REFERENCE.md`, generated from `--help` where possible. Interfaces other programs rely on go in `docs/CONTRACT.md`, versioned. LICENSE, CHANGELOG and THIRD_PARTY_NOTICES stay at the root.
-- **Moving a file others link to:** leave a one-line stub at the old path for one release.
+- **One plan per task.** Two sessions never share a plan file, so parallel work does not collide. A finished plan stays where it is: `docs/plans/` is also the archive.
+- **ISSUES.md and an issue tracker.** ISSUES.md is the engineering record (how a bug was narrowed and why the fix is right). The tracker holds outside reports. Cross-link by number; do not mirror.
 
-### 2.3 One doc per folder: `<folder>/README.md`
+### 2.2 Optional
 
-Every package (has `__init__.py`, `package.json`, `go.mod`, `Cargo.toml`, ...) and every top-level code or data folder (`tests/`, `tools/`, `examples/`, plugins) has a `README.md` with two sections:
+Add one when the repo needs it; an empty or stale doc is worse than none. The check treats a doc that exists like any other (links, size, unfilled lines).
 
-- `## Brief`: what the folder is for, its public surface (a table of names), what it depends on, what uses it.
-- `## Tests`: which tests cover it, the command to run just those, known gaps.
+| File | Worth having when |
+|---|---|
+| [FEATURES](templates/FEATURES.md) | users need a list of what it does and its limits; a UI needs panel priority tables |
+| [USAGE](templates/USAGE.md) | there are end users and more to say than the README quick start |
+| [SETUP](templates/SETUP.md) | install or configuration is more than the commands in AGENTS.md |
+| [REQUIREMENTS](templates/REQUIREMENTS.md) | other code relies on promises, or minimum versions matter |
+| [TESTING](templates/TESTING.md) | there are several suites, CI jobs, or human checks to list |
+| [TODO](templates/TODO.md) | there is a backlog and no issue tracker holds it |
+| [folder README](templates/FOLDER-README.md) | a folder has a purpose or gotcha its code does not show |
+| `docs/CONTRACT.md`, `docs/REFERENCE.md` | other programs rely on an interface; there is an exhaustive option list |
 
-README.md, not another name, because code hosts show it when you open the folder and every agent looks for it first. Only the root README is marketing. Not needed for `docs/`, image folders, caches, fixtures and static-asset subfolders (the parent covers them). Template: [templates/FOLDER-README.md](templates/FOLDER-README.md).
+Do not keep tables of function or class names in docs. A language server or a search reads them from the code, and a copy goes stale.
 
-### 2.4 Size rules
+### 2.3 Size rules
 
 | File | Max lines | When over |
 |---|---|---|
 | root README.md | 250 | move detail to USAGE |
-| folder README.md | 80 | move detail to DETAILS, or split the folder |
-| BRIEF.md | 60 | move detail to DETAILS |
-| PLAN.md | 150 | finished plans to `docs/archive/PLAN-YYYY-MM-DD-<slug>.md` |
+| AGENTS.md | 120 | move detail to DETAILS or an optional doc |
+| a plan | 150 | split the task |
 | ISSUES.md | 300 | closed bugs older than 30 days to `docs/archive/ISSUES-YYYY.md` |
+| folder README.md | 80 | it is describing code; cut it |
 | any other doc | 400 | split into `docs/<name>/` with its own README.md index |
 
-### 2.5 Writing rules
+### 2.4 Writing rules
 
 - Answer first, named items, short sentences. No padding.
 - One topic, one file. Link instead of repeating.
 - Dates YYYY-MM-DD. Status words: `open`, `in progress`, `blocked (why)`, `done YYYY-MM-DD`.
 - Relative links. No absolute local paths, private addresses, personal data or secrets in a public repo. Env var names only, never values.
-- Keep each template's headings so agents can find sections.
+- Archive, never delete: superseded docs go to `docs/archive/`.
 
 ## 3. Private notes (optional)
 
-Some notes must not ship: a maintainer's local paths, live test setups, unpublished plans, notes on other private work. Keep them outside the repo, or in a folder listed in `.gitignore` (your own repo) or `.git/info/exclude` (someone else's repo). The public docs then link to nothing private; the private notes point at the public docs. Before private text moves into a public doc, scrub it: paths, network addresses, names, private project names, unpublished plans, secrets. The drift check can scan for patterns kept in a file outside the repo (`--scrub-file`).
+Some notes must not ship: a maintainer's local paths, live test setups, unpublished plans, notes on other private work. Keep them outside the repo, or in a folder listed in `.gitignore` (your own repo) or `.git/info/exclude` (someone else's repo). Do not name that folder `dev-notes/`: that name is the vendored standard's. If it is a link (symlink, junction), the tools never follow it. Before private text moves into a public doc, scrub it. The check can scan tracked files for patterns kept in a file outside the repo (`--scrub-file`).
 
-In a fork of someone else's project, the upstream owns `docs/`. Keep your dev-notes privately under these names and change upstream docs only inside a feature PR, in their style.
+In a fork of someone else's project, the upstream owns `docs/`. Keep your notes privately under these names and change upstream docs only inside a feature PR, in their style.
 
 ## 4. Roles
 
 - **Owner (human):** approves plans that change design, does at most three judgment checks per change, decides merges and anything public (upstream PRs, releases, new repos).
-- **Agent:** everything else, including tests and docs. It never pushes to a shared branch, merges, or opens a PR on someone else's repo unless the owner says so. Never force-push or rewrite shared history.
+- **Agent:** everything else, including tests and notes. It never pushes to a shared branch, merges, or opens a PR on someone else's repo unless the owner says so. Never force-push or rewrite shared history.
 
 ## 5. The development loop
 
-1. **Read, then state the big picture.** The files in rule 1.1. Write five lines: what the project is; where the task sits; which parts it touches; what is open nearby (TODO, ISSUES ids); the main risk. List the files and symbols to open next, at most ten.
-2. **Plan in the docs.** Write `docs/PLAN.md` (archive the previous finished plan). For UI work, write each panel's priority table first: what the user needs most is visible, secondary is compact, the rest is folded. For a bug, open the ISSUES entry with steps 1-3 of the debug record first.
-3. **Detailed planning with LSP.** Use the language server to open only what matters: workspace symbol search for entry points, go to definition, find references to size the change, call hierarchy for callers, diagnostics for what is already broken. Record the symbols in the plan.
-   - Fallback when no language server runs: the folder README's public surface and "used by", then a text search for the definition (`def <name>`, `class <name>`, `function <name>`) and for references (`<name>(`), then file globs. For diagnostics, run the project's linter or type checker. Say which method you used.
+1. **Read.** `AGENTS.md`, open plans, DETAILS decisions and gotchas.
+2. **Look at the code.** Language server: workspace symbols for entry points, definition, references, call hierarchy, diagnostics. No language server: text search for the definition and its references, then file globs; the project's linter or type checker for diagnostics.
+3. **Write the plan** in `docs/plans/`. Five lines of big picture (project; where the task sits; parts touched; open plans and issues nearby; the main risk), then the steps with files and symbols. For a bug, open the ISSUES entry with steps 1-3 of the debug record first.
 4. **Execute in a branch or worktree.** Never in a checkout a running service uses. One branch per task. For a bug: the failing test first, then the fix.
-5. **Update the docs in the same change:** folder READMEs, FEATURES, USAGE, SETUP, REQUIREMENTS, TESTING, DETAILS, TODO, ISSUES, PLAN status and "open for the next dev".
-6. **Verify.** Tests for the touched folders, then the full suite, then CI. UI changes get a scripted browser run and a screenshot review by an agent. The owner gets at most three one-line judgment checks, listed in TESTING.md.
-7. **Draft the PR** from [templates/PR.md](templates/PR.md). Push and merge only as the owner's rules allow (section 4). Follow the target project's rules on commit trailers and AI attribution.
+5. **Close the notes in the same change.** New decisions and gotchas into DETAILS. ISSUES current. AGENTS.md if parts or commands changed. Any optional doc the change made wrong. The plan's status and "open for the next dev".
+6. **Review for truth.** Reread what you wrote in step 5 against the diff. The check cannot do this; it is the step that keeps the notes honest.
+7. **Verify.** Tests, then CI. UI changes get a scripted browser run and a screenshot review by an agent. The owner gets at most three one-line judgment checks.
+8. **Draft the PR** from [templates/PR.md](templates/PR.md). Push and merge only as the owner's rules allow (section 4). Follow the target project's rules on commit trailers and AI attribution.
 
 ### 5.1 Debug record (ISSUES.md)
 
@@ -134,74 +127,45 @@ In a fork of someone else's project, the upstream owns `docs/`. Keep your dev-no
 
 ### 5.2 Definition of done
 
-- [ ] PLAN.md status current; "open for the next dev" filled.
-- [ ] Each touched folder's README matches its public surface and tests.
-- [ ] FEATURES, USAGE, SETUP, REQUIREMENTS, TESTING, DETAILS updated where behavior, setup or structure changed.
-- [ ] TODO and ISSUES current.
+- [ ] The plan's status is current; "open for the next dev" is filled.
+- [ ] New decisions and gotchas are in DETAILS; ISSUES is current.
+- [ ] AGENTS.md and any optional doc still match the code the change touched.
 - [ ] New behavior has a test; local suite and CI green.
-- [ ] UI checked by script and screenshots; at most three human checks listed.
-- [ ] Drift check passes; no private data in public docs.
+- [ ] The check passes; no private data in public docs.
 - [ ] PR text drafted.
 
-## 6. Drift check: `dev-notes/tools/check.py`
+## 6. The check: `dev-notes/tools/check.py`
 
 ```
 python dev-notes/tools/check.py [--repo PATH] [--base REF] [--strict] [--config FILE] [--scrub-file FILE] [--format text|json]
 ```
 
 - Python 3.9+, standard library only, so CI needs no install.
-- Exit 0 = clean (warnings may print), 1 = errors (or warnings with `--strict`), 2 = bad usage.
+- Exit 0 = clean (warnings may print), 1 = errors (or warnings with `--strict`), 2 = bad usage or bad config.
 - One line per finding: `ERROR|WARN <check-id> <path>:<line> <message>`.
+- **It is mechanical.** It can tell that a note exists, is filled in and links correctly. It cannot tell whether a note is true. That is loop step 6.
 
 | Id | Check | Level |
 |---|---|---|
-| D1 | Required files exist: README.md, AGENTS.md, docs/ BRIEF ... ISSUES | error |
-| D2 | Every package/code folder has README.md with `## Brief` and `## Tests` | error |
+| D1 | Required files exist: README.md, AGENTS.md, docs/DETAILS.md, docs/ISSUES.md | error |
 | D3 | Relative links, images and #anchors resolve in all docs | error |
-| D4 | Size limits (2.4) | warn |
-| D5 | With `--base`: code changed under folder X but X/README.md and docs/ did not | warn |
-| D6 | With `--base`: code changed but docs/PLAN.md not touched; new test file not named in TESTING.md or a folder README | warn |
-| D7 | Names in a folder README "Public surface" table exist in that folder's code | warn |
-| D8 | Scrub patterns (from `--scrub-file`) absent from tracked docs | error |
-| D9 | `dev-notes/VERSION` matches the version AGENTS.md states | warn |
+| D4 | Size limits (2.3) | warn |
+| D6 | With `--base`: code changed but no plan under `docs/plans/` was added or updated | warn |
+| D8 | Scrub patterns (from `--scrub-file`) absent from tracked files | error |
+| D9 | The version in the AGENTS.md block matches `dev-notes/VERSION` | warn |
+| D10 | No doc line is still identical to a template placeholder line | error |
 
-`.dev-notes.toml` (optional): `skip_folders`, `code_extensions`, `extra_required_docs`, size limit overrides.
+D2, D5 and D7 (folder READMEs and their name tables) were retired in 1.1.0; the ids are not reused. D9 catches a half-applied update. To see whether a repo is behind the latest version, run `adopt.py status`. Links and junctions are never followed.
 
-GitHub Actions, `.github/workflows/dev-notes.yml`:
+`.dev-notes.toml` (optional): `skip_folders`, `code_extensions`, `extra_required_docs`, `[size_limits]` overrides.
 
-```yaml
-name: dev-notes
-on:
-  pull_request:
-  push:
-    branches: [main]
-jobs:
-  docs:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Drift check
-        run: python dev-notes/tools/check.py --base "origin/${{ github.base_ref || 'main' }}"
-```
+GitHub Actions, `.github/workflows/dev-notes.yml`: [templates/dev-notes.yml](templates/dev-notes.yml). On a pull request it compares with the target branch; on a push, with the commit before the push.
 
 ## 7. Adopting the standard
 
-### 7.1 Mechanism: a vendored copy with a version stamp (recommended)
+### 7.1 Mechanism: a vendored copy with a version stamp
 
 `tools/adopt.py` copies the standard into the repo's `dev-notes/` folder and stamps the version. Later, `update` replaces that folder with a newer version as an ordinary, reviewable commit.
-
-Why this and not the others:
-- **Every agent sees it.** A plain `git clone` has the files. Submodules come up empty unless cloned with `--recurse-submodules`, and many cloud agents and CI checkouts skip that.
-- **No contributor friction.** No detached submodule HEADs, no subtree merges, nothing for a fork's upstream to learn.
-- **Updates are explicit.** Each repo moves to a new version when its owner merges the update commit, and the diff shows what changed.
-- **It works for existing repos.** A template repo only helps on day one and cannot push later versions.
-
-Costs: a small duplicated folder per repo, and versions can lag. D9 flags the lag.
 
 | Option | Good | Bad |
 |---|---|---|
@@ -218,28 +182,16 @@ python <dev-notes clone>/tools/adopt.py update --repo PATH   # move to the clone
 python <dev-notes clone>/tools/adopt.py status --repo PATH   # vendored vs latest version, missing files
 ```
 
-`init` writes: `dev-notes/` (STANDARD.md, templates/, tools/check.py, VERSION); `AGENTS.md` (or adds the marked block to an existing one); `CLAUDE.md` (`@AGENTS.md`) if absent; every missing `docs/` file from templates; `.github/workflows/dev-notes.yml` if absent. It never overwrites an existing doc.
-`update` replaces only `dev-notes/` and the marked block in AGENTS.md. It never touches `docs/` or folder READMEs.
+`init` writes: `dev-notes/` (STANDARD.md, templates/, tools/check.py, VERSION, LICENSE); `AGENTS.md` (or adds the marked block to an existing one); `CLAUDE.md` (`@AGENTS.md`) if absent; `docs/DETAILS.md`, `docs/ISSUES.md` and `docs/plans/README.md` if absent; `.github/workflows/dev-notes.yml` if absent. It never overwrites an existing doc. The check then fails (D10) until the copied templates are filled in.
+`update` replaces only `dev-notes/` and the marked block in AGENTS.md. It never touches `docs/`, and it does not refresh the workflow file.
+Both refuse a `dev-notes/` that is a link, or a folder without a VERSION file: that is someone's own notes, not a vendored copy.
 
-### 7.3 Files the adopting repo carries
+**Coming from 1.0.0:** run `update`; move `docs/PLAN.md` to `docs/plans/` under a dated name; fold `docs/BRIEF.md` into the Brief section of `AGENTS.md` and archive it; keep the other docs only if they earn their place (2.2); copy the new workflow file by hand. Until then the check still accepts `docs/PLAN.md` as a plan.
 
-`AGENTS.md` (the cross-agent convention: Codex, Copilot and Cursor read it; Gemini CLI can be pointed at it with `contextFileName`; Claude Code reads it through CLAUDE.md). The marked block, from [templates/AGENTS.md](templates/AGENTS.md):
+### 7.3 AGENTS.md
 
-```markdown
-<!-- dev-notes:begin v1.0.0 -->
-## Dev notes (docs first)
-This repo follows dev-notes v1.0.0 (dev-notes/STANDARD.md).
-1. Read docs/BRIEF.md, then docs/PLAN.md, docs/TODO.md, and the README.md of each folder you will touch.
-2. Docs first: write your plan into docs/PLAN.md before you open any code.
-3. Open code only through the plan, with your language server (LSP) or a text search. Never browse code to get oriented.
-4. If the docs for your area are missing or wrong, fix them first or stop and say so (STANDARD.md 1.1).
-5. Update every doc your change touches in the same change; run `python dev-notes/tools/check.py`.
-6. Do not push to shared branches, merge, or open PRs unless the owner says so.
-<!-- dev-notes:end -->
-```
-
-`CLAUDE.md`: one line, `@AGENTS.md`. Repo-specific rules go in AGENTS.md outside the marked block.
+`AGENTS.md` is the cross-agent convention: Codex, Copilot and Cursor read it; Gemini CLI can be pointed at it with `contextFileName`; Claude Code reads it through `CLAUDE.md` (`@AGENTS.md`). The marked block comes from [templates/AGENTS.md](templates/AGENTS.md); `update` rewrites only that block. Everything outside it (brief, commands, repo rules) is yours.
 
 ### 7.4 Example agent
 
-[agents/claude/dev-notes.md](agents/claude/dev-notes.md) is a Claude Code subagent with three modes: `init` (set a repo up from what exists), `brief` (big picture + plan before a task), `close` (update docs, run the drift check, draft the PR). Copy it to `.claude/agents/` in a repo or `~/.claude/agents/`. Other agents can follow the same three modes from this text.
+[agents/claude/dev-notes.md](agents/claude/dev-notes.md) is a Claude Code subagent with three modes: `init` (set a repo up from what exists), `brief` (big picture and plan before a task), `close` (close the notes, review them against the diff, run the check, draft the PR). Its rules are in its own text, so it does not reread this file on every run. Copy it to `.claude/agents/` in a repo or `~/.claude/agents/`.
