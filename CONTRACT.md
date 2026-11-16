@@ -153,7 +153,7 @@ The JSON document keeps `"contract": 1` (the major version; v1.1 only adds field
 }
 ```
 
-Size and shape use stars within 60 % of the half diagonal when there are at least 15 (wide-angle corner coma is not trailing), and prefer stars with a peak at least 30x their local noise when there are 25 or more (faint stars read too large). Of the three detection scales, one counts only with at least 30 % of the best-supported scale's stars, and a coarser one only when its stars measure within 1.5x the size seen at the finest such scale (real stars, defocused discs included, measure the same from any scale; Milky Way clumps do not); among those the kernel closest to the stars' size wins. Stars are detected after subtracting a background mesh interpolated from its cell centres, so a twilight sky gradient is not read as noise. `elongation` is the axis ratio of the median ellipticity vector in each region of a 3 x 3 grid, then the median over regions: a direction the stars share (trailing, wind) counts; the random shapes noise gives faint stars cancel. The grade is absolute and lens-dependent; session-relative verdicts are the cull rule's job.
+Size and shape use stars within 60 % of the half diagonal when there are at least 15 (wide-angle corner coma is not trailing), and prefer stars with a peak at least 30x their local noise when there are 25 or more (faint stars read too large). Of the three detection scales, the finest holding at least 30 % of the best-supported scale's stars is used when its stars are compact (HFD at most 1.35x its kernel FWHM: a sharp frame); otherwise the scale whose kernel is closest to the stars' size wins (defocus discs). Stars are detected after subtracting a background mesh interpolated from its cell centres, so a twilight sky gradient is not read as noise. `elongation` is the axis ratio of the median ellipticity vector in each region of a 3 x 3 grid, then the median over regions: a direction the stars share (trailing, wind) counts; the random shapes noise gives faint stars cancel. The grade is absolute and lens-dependent; session-relative verdicts are the cull rule's job.
 
 ### Culling (`astro_id/cull.py`, pure functions)
 
@@ -240,7 +240,7 @@ Events, solve:
 
 - `photo` events come as frames finish (a sequence's representative first); `index` = position in the input. `objects` = taggable objects at or above `--min-confidence`. `quality` = the frame's `quality` object; `result` (the full frame result) only with `--results`.
 - `time.suggest_tolerance_min` = ceil(max |best_fit_delta_min| + 2) when that is tighter than the tolerance used; `null` otherwise (no Moon-pinned frame).
-- `astro-id cull` prints one JSON document `{"reference", "rule", "frames": {path: <cull_rank result>}}` from `{path: quality}` or `{"metrics": {...}, "solved": {...}}`; nothing is solved.
+- `astro-id cull` prints one JSON document `{"reference", "rule", "frames": {path: <cull_rank result>}, "warnings": [...]}` (a warning when the metrics mix `quality.version` values) from `{path: quality}` or `{"metrics": {...}, "solved": {...}}`; nothing is solved.
 
 ### Tolerance and solving cost
 

@@ -16,9 +16,12 @@ off). Checks: ``focus`` (half-flux diameter vs the session's best), ``trailing``
 """
 from __future__ import annotations
 
+import logging
 import math
 
 from .quality import star_count
+
+log = logging.getLogger("astro_id")
 
 CHECKS = ("focus", "trailing", "stars", "solve")
 DEFAULT_THRESHOLDS = {
@@ -153,9 +156,24 @@ def cull_rank(metrics: dict | None, rule: dict | None = None, reference: dict | 
     return {"decision": decision, "reasons": [ch["reason"] for ch in checks], "checks": checks, "enabled": True}
 
 
+def mixed_versions(metrics: list[dict | None]) -> list:
+    """The distinct ``quality.version`` values in a session when there is more than one, else []."""
+    v = sorted({m.get("version") for m in metrics if m}, key=lambda x: (x is None, x))
+    return v if len(v) > 1 else []
+
+
 def cull_session(metrics_by_key: dict, rule: dict | None = None, solved_by_key: dict | None = None) -> dict:
-    """{"reference": {...}, "rule": <merged rule>, "frames": {key: cull_rank(...)}} for one session."""
+    """{"reference": {...}, "rule": <merged rule>, "frames": {key: cull_rank(...)}, "warnings": [...]} for one
+    session. A session mixing quality versions gets a warning: version 2 counts several times more stars and
+    reads sizes differently, so older frames would be ranked against the wrong baseline (B-E3)."""
     ref = session_reference(list(metrics_by_key.values()))
     solved_by_key = solved_by_key or {}
+    warnings = []
+    mixed = mixed_versions(list(metrics_by_key.values()))
+    if mixed:
+        warnings.append("quality metrics from different versions (" + ", ".join(map(str, mixed)) + ") in one "
+                        "session: star counts and sizes are not comparable; re-measure the older frames")
+        log.warning("%s", warnings[-1])
     return {"reference": ref, "rule": merge_rule(rule),
-            "frames": {k: cull_rank(m, rule, ref, solved_by_key.get(k)) for k, m in metrics_by_key.items()}}
+            "frames": {k: cull_rank(m, rule, ref, solved_by_key.get(k)) for k, m in metrics_by_key.items()},
+            "warnings": warnings}

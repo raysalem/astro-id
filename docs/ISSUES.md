@@ -252,7 +252,8 @@ the owner (verbatim): "i don't know when an album has been loaded or needs to lo
    - Defocused discs still use the coarse scale.
    - Synthetic twilight ramps: 31 / 0 stars on main, ~395 now.
    - Solve results are byte-identical.
-   - On 8 full-size 61 MP frames, the first version picked a coarse scale on the clumps of a sharp Milky Way frame (frame-7614, HFD 6.4 -> 66). Re-centred stars measure the same size from every scale and clumps do not, so `pick_scale` now requires support and size agreement.
+   - On full-size 61 MP frames, the first version picked a coarse scale on the clumps of a sharp Milky Way frame (frame-7614, HFD 6.4 -> 66). A size-agreement guard fixed that but broke frame-7612 (stack copy, ~85 px defocus discs: 15 px from rim fragments). `pick_scale` therefore checks whether the finest well-supported scale's stars are compact (HFD <= 1.35x its kernel FWHM; sharp 0.7-1.2, fragments >= 1.5): if so it is used, else the v1 matched filter decides. Both frames are pinned by a test. Synthetic donuts (40-120 px) measure within 3 %.
+   - A session mixing quality v1 and v2 metrics (re-culled with `astro-id cull --metrics-file`) gets a warning: the numbers are not comparable.
    - Open: frame-7620 (moonlit, trees) reads HFD 11.4 instead of 8.7, because sky-through-foliage blobs enter the measured set. It goes `keep` -> `review` for focus. Three remedies were tried and dropped; next is a foreground mask ([TODO](TODO.md)).
 7. Verify (ASTAP, the 5 examples; detected / HFD px / grade, main -> fix):
    - 01: 645 / 5.26 / A -> 2776 / 5.12 / A
@@ -261,3 +262,10 @@ the owner (verbatim): "i don't know when an album has been loaded or needs to lo
    - 04: 479 / 2.23 / B -> 5121 / 2.30 / A
    - 05: 1 / None / C -> 752 / 1.88 / A
    Session of 5: 03 review -> keep; 05 reject -> review ("924 matched by the plate solve, 28 % of the session median (cloud, haze, twilight?)"). 01 is review for focus (2.2x); on main it was keep only because 03's bogus 8.5 px raised the reference. The dark-only session (01, 02, 04) is unchanged: 01 review (focus), 02 and 04 keep. pytest, node and docs checks pass.
+   All 18 frames of the night (full size, quality only, session of 18; main -> fix): decisions change on 4.
+   - frame-7620: keep -> review (focus 1.7x). This is the only regression.
+   - frame-7625: review -> keep (twilight star count).
+   - frame-7617: review -> keep (focus 1.52x -> 1.48x, on the 1.5x line).
+   - frame-7615: review either way (a black frame), but for stars only; its hot-pixel trailing flag is gone.
+   The other 14 keep their decision. frame-7612 reads 84.5 px at sm 16 (v1: 84.0); frame-7614 reads 6.39 (= v1).
+   Other bright-sky frames drift like 7620 but stay `keep`: frame-7618 HFD 7.8 -> 9.3, frame-7622 5.2 -> 7.0.

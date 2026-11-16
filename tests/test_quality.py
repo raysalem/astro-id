@@ -202,3 +202,34 @@ def test_scale_choice_ignores_clumps_on_a_sharp_frame():
     assert pick_scale({2.0: 9.9, 6.0: 10.4, 16.0: 10.6}, {2.0: 33, 6.0: 150, 16.0: 55}) == 6.0
     # synthetic 60 px discs (half size): all scales agree, the matched filter picks the coarse one
     assert pick_scale({2.0: 20.7, 6.0: 20.6, 16.0: 21.3}, {2.0: 102, 6.0: 95, 16.0: 55}) > 2.0
+    # frame-7612 (stack copy, ~120 px defocus discs): sm 2 measures rim fragments (7.3 px, not compact), so the
+    # matched filter decides and finds the discs at sm 16 (43.6 detection px = 87 full px; v1 read 84)
+    assert pick_scale({2.0: 7.28, 6.0: 23.91, 16.0: 43.61}, {2.0: 150, 6.0: 120, 16.0: 64}) == 16.0
+
+
+def render_donut(D, hole, n=60, seed=1):
+    """Full-size uint8 frame of hollow defocused stars (annulus of outer diameter D, central hole hole x D)."""
+    rng = np.random.default_rng(seed)
+    img = np.full((H, W), 30.0)
+    rad = int(D) // 2 + 3
+    yy, xx = np.mgrid[-rad:rad + 1, -rad:rad + 1]
+    r = np.hypot(xx, yy)
+    psf = ((r <= D / 2) & (r >= hole * D / 2)).astype(float)
+    psf /= psf.sum()
+    step = max(2 * rad + 20, int(math.sqrt((W - 2 * rad) * (H - 2 * rad) / n)))
+    pts = [(gx, gy) for gy in range(rad + 15, H - rad - 15, step) for gx in range(rad + 15, W - rad - 15, step)][:n]
+    for x, y in pts:
+        img[y - rad:y + rad + 1, x - rad:x + rad + 1] += rng.uniform(1500, 4000) * (D / 4) ** 1.2 * psf
+    img += rng.normal(0, 3.0, img.shape)
+    return np.clip(img, 0, 255).astype(np.uint8)
+
+
+@pytest.mark.parametrize("D,hole", [(60, 0.5), (120, 0.35)])
+@pytest.mark.parametrize("reduce", [1, 2])
+def test_hollow_defocus_measures_the_ring(D, hole, reduce):
+    # a donut's half-flux diameter: the radius enclosing half the annulus area, D x sqrt((1 + hole^2) / 2)
+    full = render_donut(D, hole)
+    gray = full.astype(np.float32) if reduce == 1 else full.reshape(H // 2, 2, W // 2, 2).mean(axis=(1, 3))
+    q = measure_arrays(gray.astype(np.float32), full, max_value=255, reduce=reduce)
+    assert q["detect_scale"] > 2.0
+    assert q["fwhm_px"] == pytest.approx(D * math.sqrt((1 + hole * hole) / 2), rel=0.1)

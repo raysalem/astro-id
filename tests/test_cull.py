@@ -81,3 +81,11 @@ def test_session_reference_uses_star_evidence():
     ref = session_reference([{"detected": 10, "matched": 900}, {"detected": 1000, "matched": 800},
                              {"detected": 2000, "matched": None}])
     assert ref["detected"] == 1000
+
+
+def test_session_warns_on_mixed_quality_versions():
+    v1 = {"version": 1, "fwhm_px": 5.0, "elongation": 1.1, "detected": 900}
+    v2 = {"version": 2, "fwhm_px": 5.0, "elongation": 1.1, "detected": 5000}
+    out = cull_session({"a": v1, "b": v2, "c": None})
+    assert len(out["warnings"]) == 1 and "different versions (1, 2)" in out["warnings"][0]
+    assert cull_session({"a": v2, "b": dict(v2)})["warnings"] == []

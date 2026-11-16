@@ -55,9 +55,10 @@ Ruled out: the noise estimator (MAD vs lower-half MAD changes counts by under 20
 
 5. **Scale choice fooled by clumps.** With the cleaner background, a coarse scale on a sharp Milky Way frame
    (frame-7614) measured clumps (HFD 27-66 px) that fit its kernel better than the 6 px stars fit the fine one, and
-   the frame went to `review` for focus. Re-centred stars measure the same size from every scale (real defocus
-   frame-7610: 19.8 / 20.9 / 21.2 px; synthetic discs agree within 5 %), so `pick_scale` lets a coarse scale
-   compete only with >= 30 % of the best support and a size within 1.5x of the finest qualified scale.
+   the frame went to `review` for focus. A first guard (coarse scales must agree in size with the fine one)
+   broke frame-7612, whose ~85 px discs read 15 px from rim fragments at sm 2 (found re-measuring all 18 frames).
+   `pick_scale` now asks whether the finest well-supported scale's stars are compact (HFD <= 1.35x its kernel
+   FWHM; sharp frames 0.7-1.2, fragments >= 1.5): if so it is used, else the v1 matched filter decides.
 6. **Open: frame-7620 (moonlit, Moon and trees in frame)** reads HFD 11.4 instead of 8.7: the cleaner mesh admits
    sky-through-foliage blobs into the brightest-150 set (stars common to both versions: 7.3 vs 7.0 px). Tried and
    dropped (no effect, or disturbed other frames): an aperture-isolation test, ranking by peak, a footprint gate.
@@ -77,5 +78,24 @@ Ruled out: the noise estimator (MAD vs lower-half MAD changes counts by under 20
 
 ## Verify
 
-`uv run pytest -q`, `node --test` (both files), `uv run python tools/check_docs.py`, the example before/after
-table in BUGS B-E3, then push `twilight-cull` and run `ci.yml` on it. No merge into main.
+`uv run pytest -q`, `node --test` (both files), `uv run python tools/check_docs.py`, `python dev-notes/tools/check.py`,
+the example before/after table in [ISSUES](../ISSUES.md) B-E3, then push `twilight-cull` and run `ci.yml` on it.
+No merge into main.
+
+   All 18 frames of the night (full size, quality only, session of 18; main -> fix): decisions change on 4.
+   - frame-7620: keep -> review (focus 1.7x). This is the only regression.
+   - frame-7625: review -> keep (twilight star count).
+   - frame-7617: review -> keep (focus 1.52x -> 1.48x, on the 1.5x line).
+   - frame-7615: review either way (a black frame), but for stars only; its hot-pixel trailing flag is gone.
+   The other 14 keep their decision. frame-7612 reads 84.5 px at sm 16 (v1: 84.0); frame-7614 reads 6.39 (= v1).
+   Other bright-sky frames drift like 7620 but stay `keep`: frame-7618 HFD 7.8 -> 9.3, frame-7622 5.2 -> 7.0.
+
+## Review
+- dev-notes-reviewer, changes needed, 2026-11-16, attempt 1. Code and tests sound; docs to fix. Fixes:
+  DETAILS quality section rewritten for v2 (v1 kept as history); Decision row for the per-region elongation;
+  Gotcha on v1/v2 numbers not being comparable, with a `cull_session` warning for mixed versions (and a test);
+  REFERENCE trailing wording; this Verify section; the remaining 10 night frames re-measured, which found the
+  frame-7612 defocus regression and replaced the size-agreement guard with the compactness rule (test with
+  7612's numbers); a hollow-defocus (donut) test.
+- Owner OK: Ray, 2026-11-16, both Decisions approved.
+

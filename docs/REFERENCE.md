@@ -128,20 +128,21 @@ The legend reads like `2026-11-07 21:57 PST +-15 min . ASTAP grade A . 2452 star
 
 Every frame result carries `quality` (CONTRACT.md v1.1): detected and matched star counts, focus as the median
 half-flux diameter of isolated unsaturated stars (`fwhm_px`, full-resolution px; equals the FWHM for a sharp star
-and measures the disc of a defocused one), trailing as the median elongation (major/minor axis), sky background
-and noise, and an A/B/C quality grade. Stars are detected at three smoothing scales; the scale whose kernel matches
-the stars is used, so a badly defocused frame is measured on whole discs, not fragments. `--no-quality` skips it
+and measures the disc of a defocused one), trailing as the elongation (major/minor axis) of the direction the
+stars share, sky background and noise, and an A/B/C quality grade. Stars are detected at three smoothing scales:
+a sharp frame is measured at the finest, a badly defocused one on whole discs, not fragments. `--no-quality` skips it
 (about 5-15 s per 61 MP frame, mostly JPEG decoding).
 
 Detection works at the solve's scale (the frame's own pixels below a 6000 px long edge, half size above) after
 subtracting a background mesh interpolated from its cell centres, so the steep sky gradient of a twilight frame is
-not taken for noise. Size and shape prefer clean stars (peak at least 30x the local noise), and a coarse detection
-scale is used only when its stars measure the same size as the fine one sees (a defocused frame), never for Milky
-Way clumps on a sharp frame. Elongation counts only
-the direction the stars share, per region of a 3 x 3 grid: trailing and wind shake have one; the grain of a noisy
+not taken for noise. Size and shape prefer clean stars (peak at least 30x the local noise). When the finest
+well-supported scale finds compact stars the frame is sharp and that scale is used, so Milky Way clumps found at a
+coarse scale cannot read as defocus; otherwise the scale whose kernel best fits the stars wins. Elongation counts
+only the direction the stars share, per region of a 3 x 3 grid: trailing and wind shake have one; the grain of a noisy
 frame does not. The grade and the `stars` check count max(detected, matched), so a frame the plate solve matched
 hundreds of stars in is never "too few stars". Twilight frames still hold fewer stars than dark ones: in a mixed
-session they can be `review` for stars (the reason says so), never `reject` when they solved well.
+session they can be `review` for stars (the reason says so), never `reject` when they solved well. Metrics carry
+`version` 2; re-culling a session that mixes versions warns that the numbers are not comparable.
 
 `astro_id/cull.py` turns the metrics into `keep | review | reject` with reasons against the session's own
 baseline (best-focus quartile, median star count). Defocused frames are `review`, never `reject` (stacking).

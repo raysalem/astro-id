@@ -42,8 +42,8 @@ MAX_STARS = 150              # brightest usable stars measured per detection sca
 CENTER_RHO = 0.6             # central region used for focus/trailing when >= MIN_CENTER stars sit in it
 MIN_CENTER = 15
 MIN_MEASURED = 5
-MIN_SUPPORT = 0.3            # a scale competes only with >= this share of the best-supported scale's stars ...
-SCALE_AGREE = 1.5            # ... and when its median HFD is <= this x that of the finest such scale
+MIN_SUPPORT = 0.3            # pick_scale: the finest scale with >= this share of the best support decides ...
+COMPACT = 1.35               # ... when its stars' HFD <= this x its kernel FWHM (sharp 0.7-1.2, fragments >= 1.5)
 SNR_GOOD = 30.0              # peak / local noise: stars this clean are preferred for size and shape ...
 MIN_GOOD = 25                # ... when at least this many of them were measured at a scale (B-E3)
 TILES = 3                    # elongation: coherent ellipticity per region of a TILES x TILES grid ...
@@ -186,16 +186,18 @@ def pick_scale(hfd_det: dict, support: dict) -> float:
     """Detection scale whose stars give the frame's size and shape. ``hfd_det`` = {scale: median HFD of the stars
     measured from it, in detection px}; ``support`` = {scale: stars usable at it}.
 
-    Re-centred stars measure the same size from any scale (defocused discs included); a coarse scale that reads
-    much larger is measuring clumps (Milky Way knots), not stars. On a sharp 61 MP frame the cleaner background
-    let sm 6 / 16 find such clumps and read HFD 27-66 px instead of 6 (B-E3, frame-7614). So a scale needs
-    MIN_SUPPORT of the best-supported scale's stars, a coarser one must agree within SCALE_AGREE with the finest
-    such scale, and then the matched filter picks (kernel FWHM closest to the stars' HFD)."""
+    The finest scale holding at least MIN_SUPPORT of the best-supported scale's stars decides first: when its
+    stars are compact (HFD <= COMPACT x its kernel FWHM, 2.355 x sigma), the frame is in focus and that scale is
+    used, whatever coarser scales find. On a sharp 61 MP Milky Way frame the cleaner background let sm 6 / 16
+    measure clumps that matched their kernels better than the 6 px stars matched sm 2 (HFD 27-66 px instead of
+    6; B-E3, frame-7614). Otherwise the fine-scale "stars" are rim fragments or soft blobs, and the matched filter
+    picks among all scales (kernel FWHM closest to the stars' HFD), as in quality v1: it finds the ~85 px discs
+    of frame-7612, whose fragments read 15 px at sm 2."""
     top = max(support[sm] for sm in hfd_det)
-    qualified = sorted(sm for sm in hfd_det if support[sm] >= MIN_SUPPORT * top)
-    ref = hfd_det[qualified[0]]
-    return min((sm for sm in qualified if hfd_det[sm] <= SCALE_AGREE * ref),
-               key=lambda sm: abs(math.log(max(hfd_det[sm], 0.5) / (2.3548 * sm))))
+    fine = min(sm for sm in hfd_det if support[sm] >= MIN_SUPPORT * top)
+    if hfd_det[fine] <= COMPACT * 2.3548 * fine:
+        return fine
+    return min(hfd_det, key=lambda sm: abs(math.log(max(hfd_det[sm], 0.5) / (2.3548 * sm))))
 
 
 def grade(q: dict) -> str | None:
