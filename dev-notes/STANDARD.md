@@ -1,22 +1,24 @@
 # dev-notes standard
 
-Version 1.1.0 · 2026-11-15 · License: see LICENSE
+Version 1.2.0 · 2026-11-15 · License: see LICENSE
 
-A small way for AI agents (and people) to work on a code repo: plan before edits, and write down what the code cannot tell the next session. It works with any agent: Claude Code, Codex, Gemini, Copilot, Cursor, or a human.
+A small way for AI agents (and people) to work on a code repo: draft a plan, read the code, finalize the plan, execute, update the notes, get it reviewed. The notes hold what the code cannot tell the next session. It works with any agent: Claude Code, Codex, Gemini, Copilot, Cursor, or a human.
 
-## 1. The rule: plan before edits
+## 1. The rule: plan, read, finalize, execute, review
 
-**An agent reads the notes, looks at the code, and writes its plan before it changes anything.**
+**Plan. Read code via LSP. Finalize the plan. Execute. Update docs. Review. Iterate.**
 
-1. Read `AGENTS.md` (brief, commands, rules), the open plans in `docs/plans/`, and the Decisions and Gotchas in `docs/DETAILS.md`. For a bug, the `docs/ISSUES.md` index too.
-2. Look at the code the task touches, read-only: with a language server (LSP) where one runs, a text search where none does. **Code is the truth.** Where a doc disagrees with the code, the doc is wrong: fix the doc.
-3. Write the plan to `docs/plans/YYYY-MM-DD-<slug>.md`: goal, steps, the files and symbols each step touches.
-4. No edits before the plan exists. A plan that changes design waits for the owner.
-5. In the same change as the code: record what the code cannot say (decisions, gotchas, bugs) and set the plan's status.
+1. **Plan (draft).** Read `AGENTS.md` (brief, commands, rules), the open plans in `docs/plans/`, and the Decisions and Gotchas in `docs/DETAILS.md`; for a bug, the `docs/ISSUES.md` index. Write a draft plan to `docs/plans/YYYY-MM-DD-<slug>.md` from the notes alone: goal, big picture, the steps as you understand them, and what you need to look at. No code is open yet.
+2. **Read the code the draft names.** Through a language server (LSP): workspace symbols, definition, references, call hierarchy, diagnostics. Where no server runs, a text search, and say so. Read-only and bounded: what the draft names, about ten files or symbols; if you need more, add it to the draft first. **Code is the truth.** Where a doc disagrees with the code, the doc is wrong: note it in the plan and fix the doc in step 5.
+3. **Finalize the plan.** Replace guesses with the real files and symbols. Split the work into subtasks. Where several agents will work, give each subtask one owner and say what it depends on (1.2). A plan that changes design waits for the owner. **No code edits before the plan is final.** The plan itself, and for a bug the ISSUES entry, are the only files written before that.
+4. **Execute.** Branch or worktree; for a bug, the failing test first.
+5. **Update the docs in the same change.** Decisions, gotchas, bugs, and the plan's status.
+6. **Review.** A reviewer that did not write the change reviews each subtask before it is marked done, and the whole change before the PR (1.3).
+7. **Iterate.** When the code, a test or the reviewer proves the plan wrong, update the plan first, then the code. Repeat 4-6 until the review passes.
 
-**Why.** Every session starts cold. Code shows what the program does, never why it is that way, what was tried and rejected, or what is half done. Those three things are what the notes hold. Everything else an agent reads from the code, which is always current. Writing the plan first gives the owner one place to check direction before any code moves.
+**Why this order.** Every session starts cold. The draft comes first so the agent enters the code with a question and a boundary, not to wander: reading code to "get oriented" is slow and rebuilds the design from accidents. The code is read before the plan is final so the plan rests on real signatures, not on a summary that may be stale. The reviewer is a second reader because the author of a change is the worst judge of whether its notes are true.
 
-**What changed from 1.0.0, and why.** 1.0.0 required ten docs, a README in every code folder, and planning before reading code. A two-model review found the required set cost more to keep current than it saved, the planning rule made agents plan from summaries instead of the code, one shared plan file blocked parallel sessions, and the check passed on unfilled templates. 1.1.0 keeps the parts with no substitute and makes the rest optional.
+**History.** 1.0.0 planned without reading code and required ten docs. 1.1.0 cut the required set and let agents read code before any plan existed. 1.2.0 keeps the 1.1.0 set and sets the order above (the owner's call, 2026-11-15).
 
 ### 1.1 Stop conditions
 
@@ -24,10 +26,34 @@ Stop and say so when:
 
 1. `AGENTS.md` or `docs/DETAILS.md` is missing. Adopt first (section 7).
 2. The goal is unclear.
-3. An open plan names the files or symbols you need. Ask its owner; never edit someone else's open plan.
+3. Another task's open plan names the files or symbols you need. Ask its planner; never edit another task's plan. (In your own task's plan you edit only your own row, 1.2.)
 4. The work needs code outside what your plan names. Update the plan first.
-5. The plan changes design (a Decision in DETAILS) and the owner has not agreed. Stop after writing the plan.
+5. The plan changes design (a Decision in DETAILS) and the owner has not agreed. Stop after finalizing the plan.
 6. The check (section 6) reports errors before you start. Fix them or report them before adding more change.
+7. The reviewer has sent the same subtask back three times. The plan is wrong, not the code: stop and ask.
+
+### 1.2 Plans for several agents
+
+One plan can drive several agents. The agent that writes the plan is the planner.
+
+- Each subtask has one owner, a list of files and symbols, and the subtasks it depends on.
+- Two subtasks run at the same time only if their file lists do not overlap **and** neither changes a symbol or interface the other uses. Otherwise the plan orders them.
+- Agents that run at the same time each work in their own worktree (or clone), on their own branch. Never two agents in one checkout.
+- An agent edits only the files its subtask names, and in the plan only the Status of its own row.
+- The shared notes have one writer, the planner: `docs/DETAILS.md`, `docs/ISSUES.md`, `AGENTS.md`, optional docs, and every part of the plan outside an agent's own row (steps, Decisions, Review cells, the whole-change review, "Open for the next dev"). An agent reports its new decisions, gotchas and bugs to the planner in its result; the planner writes them when integrating. With one agent, that agent is the planner.
+- An agent that needs a file outside its subtask stops and reports to the planner, who updates the plan.
+
+### 1.3 Review
+
+The reviewer is an agent (or a person) that did not write the change. It has read access only.
+
+- **When:** before a subtask is marked done, and once more over the whole change before the PR is drafted.
+- **What it checks:** the diff does what the subtask says and nothing else; the tests exist and pass (it runs them); every doc line the change wrote or could have made false is true against the diff; no private data.
+- **What it returns:** `pass`, or `changes needed` with findings that name a file and line. It does not fix anything.
+- **Record:** the reviewer edits nothing. The planner (or a single author) copies its verdict into the plan: the subtask's Review cell as reviewer, verdict, date, attempt number; the whole-change review into the plan's "Review of the whole change" section.
+- **After a plan change:** when step 7 changes a subtask, its earlier review no longer counts. Review it again, and the whole change again at the end.
+
+The check (section 6) is not the review. The check is mechanical and cannot tell whether a note is true.
 
 ## 2. Repo layout
 
@@ -52,9 +78,9 @@ dev-notes/              this standard, vendored (section 7)
 | [AGENTS.md](templates/AGENTS.md) | The marked block (the rules), a brief of a few lines, the main parts, the install / test / lint commands, repo rules. It is loaded into every session, so keep it short | parts or commands change |
 | [docs/DETAILS.md](templates/DETAILS.md) | Decisions (date, choice, why, rejected) and gotchas. Not a description of the code | a decision is made or reversed; something surprised you |
 | [docs/ISSUES.md](templates/ISSUES.md) | Known bugs: an index, then one section per bug in the debug record (5.1) | a bug is found, narrowed, fixed, closed |
-| [docs/plans/](templates/PLAN.md) | One file per task, `YYYY-MM-DD-<slug>.md`: goal, steps with files and symbols, status, what is open for the next dev | at the start, at each step, at the end |
+| [docs/plans/](templates/PLAN.md) | One file per task, `YYYY-MM-DD-<slug>.md`: goal, the code read, subtasks with files, symbols, owner and review, status, what is open for the next dev | as a draft at the start, when finalized, at each subtask, at the end |
 
-- **One plan per task.** Two sessions never share a plan file, so parallel work does not collide. A finished plan stays where it is: `docs/plans/` is also the archive.
+- **One plan per task.** Two tasks never share a plan file, so parallel work does not collide. Agents working on the same task share its plan under the rules in 1.2. A finished plan stays where it is: `docs/plans/` is also the archive.
 - **ISSUES.md and an issue tracker.** ISSUES.md is the engineering record (how a bug was narrowed and why the fix is right). The tracker holds outside reports. Cross-link by number; do not mirror.
 
 ### 2.2 Optional
@@ -89,7 +115,7 @@ Do not keep tables of function or class names in docs. A language server or a se
 
 - Answer first, named items, short sentences. No padding.
 - One topic, one file. Link instead of repeating.
-- Dates YYYY-MM-DD. Status words: `open`, `in progress`, `blocked (why)`, `done YYYY-MM-DD`.
+- Dates YYYY-MM-DD. Plan status: `draft`, `final`, `in progress`, `blocked (why)`, `done YYYY-MM-DD`. Subtasks and backlog items also use `open`.
 - Relative links. No absolute local paths, private addresses, personal data or secrets in a public repo. Env var names only, never values.
 - Archive, never delete: superseded docs go to `docs/archive/`.
 
@@ -106,14 +132,24 @@ In a fork of someone else's project, the upstream owns `docs/`. Keep your notes 
 
 ## 5. The development loop
 
-1. **Read.** `AGENTS.md`, open plans, DETAILS decisions and gotchas.
-2. **Look at the code.** Language server: workspace symbols for entry points, definition, references, call hierarchy, diagnostics. No language server: text search for the definition and its references, then file globs; the project's linter or type checker for diagnostics.
-3. **Write the plan** in `docs/plans/`. Five lines of big picture (project; where the task sits; parts touched; open plans and issues nearby; the main risk), then the steps with files and symbols. For a bug, open the ISSUES entry with steps 1-3 of the debug record first.
-4. **Execute in a branch or worktree.** Never in a checkout a running service uses. One branch per task. For a bug: the failing test first, then the fix.
-5. **Close the notes in the same change.** New decisions and gotchas into DETAILS. ISSUES current. AGENTS.md if parts or commands changed. Any optional doc the change made wrong. The plan's status and "open for the next dev".
-6. **Review for truth.** Reread what you wrote in step 5 against the diff. The check cannot do this; it is the step that keeps the notes honest.
-7. **Verify.** Tests, then CI. UI changes get a scripted browser run and a screenshot review by an agent. The owner gets at most three one-line judgment checks.
-8. **Draft the PR** from [templates/PR.md](templates/PR.md). Push and merge only as the owner's rules allow (section 4). Follow the target project's rules on commit trailers and AI attribution.
+| # | Step | Output |
+|---|---|---|
+| 1 | Plan (draft): read the notes, write the draft plan | `docs/plans/<plan>.md`, status `draft` |
+| 2 | Read the code the draft names, via LSP | the plan's "Code read" list |
+| 3 | Finalize the plan: files, symbols, subtasks, owners | status `final`; owner's OK if design changes |
+| 4 | Execute each subtask in a branch or worktree | code and tests |
+| 5 | Update docs in the same change (several agents: the planner writes the shared notes) | DETAILS, ISSUES, AGENTS.md, optional docs, the plan's status |
+| 6 | Review each subtask, then the whole change | the plan's Review cells and whole-change review |
+| 7 | Iterate: plan first, then code, until the review passes | |
+| 8 | Verify, then draft the PR | tests, CI, the check, PR text |
+
+Diagram: [docs/img/loop.drawio](docs/img/loop.drawio) (open with draw.io / diagrams.net). Three lanes: documentation, work, review. Work moves only when the docs say so and a second reader agrees.
+
+- **Step 1.** Five lines of big picture (project; where the task sits; parts touched; open plans and issues nearby; the main risk), then the steps as the notes suggest them. For a bug, open the ISSUES entry with steps 1-3 of the debug record first; with the plan, it is the only file written before the plan is final.
+- **Step 2.** No language server: text search for the definition and its references, then file globs; the project's linter or type checker for diagnostics. Write in the plan which you used.
+- **Step 4.** Never in a checkout a running service uses. One branch per subtask owner. For a bug: the failing test first, then the fix.
+- **Step 5.** New decisions and gotchas into DETAILS. ISSUES current. AGENTS.md if parts or commands changed. Any optional doc the change made wrong.
+- **Step 8.** Tests, then CI. UI changes get a scripted browser run and a screenshot review by an agent. The owner gets at most three one-line judgment checks. Draft the PR from [templates/PR.md](templates/PR.md). Push and merge only as the owner's rules allow (section 4). Follow the target project's rules on commit trailers and AI attribution.
 
 ### 5.1 Debug record (ISSUES.md)
 
@@ -127,7 +163,8 @@ In a fork of someone else's project, the upstream owns `docs/`. Keep your notes 
 
 ### 5.2 Definition of done
 
-- [ ] The plan's status is current; "open for the next dev" is filled.
+- [ ] The plan is final, its status is current, and "open for the next dev" is filled.
+- [ ] Every subtask has a passing review in its Review cell; the whole change has one too.
 - [ ] New decisions and gotchas are in DETAILS; ISSUES is current.
 - [ ] AGENTS.md and any optional doc still match the code the change touched.
 - [ ] New behavior has a test; local suite and CI green.
@@ -143,7 +180,7 @@ python dev-notes/tools/check.py [--repo PATH] [--base REF] [--strict] [--config 
 - Python 3.9+, standard library only, so CI needs no install.
 - Exit 0 = clean (warnings may print), 1 = errors (or warnings with `--strict`), 2 = bad usage or bad config.
 - One line per finding: `ERROR|WARN <check-id> <path>:<line> <message>`.
-- **It is mechanical.** It can tell that a note exists, is filled in and links correctly. It cannot tell whether a note is true. That is loop step 6.
+- **It is mechanical.** It can tell that a note exists, is filled in and links correctly. It cannot tell whether a note is true. That is the review (1.3).
 
 | Id | Check | Level |
 |---|---|---|
@@ -186,12 +223,17 @@ python <dev-notes clone>/tools/adopt.py status --repo PATH   # vendored vs lates
 `update` replaces only `dev-notes/` and the marked block in AGENTS.md. It never touches `docs/`, and it does not refresh the workflow file.
 Both refuse a `dev-notes/` that is a link, or a folder without a VERSION file: that is someone's own notes, not a vendored copy.
 
+**Coming from 1.1.0:** run `update`; nothing in `docs/` has to move. New plans use the 1.2.0 template.
+
 **Coming from 1.0.0:** run `update`; move `docs/PLAN.md` to `docs/plans/` under a dated name; fold `docs/BRIEF.md` into the Brief section of `AGENTS.md` and archive it; keep the other docs only if they earn their place (2.2); copy the new workflow file by hand. Until then the check still accepts `docs/PLAN.md` as a plan.
 
 ### 7.3 AGENTS.md
 
 `AGENTS.md` is the cross-agent convention: Codex, Copilot and Cursor read it; Gemini CLI can be pointed at it with `contextFileName`; Claude Code reads it through `CLAUDE.md` (`@AGENTS.md`). The marked block comes from [templates/AGENTS.md](templates/AGENTS.md); `update` rewrites only that block. Everything outside it (brief, commands, repo rules) is yours.
 
-### 7.4 Example agent
+### 7.4 Example agents
 
-[agents/claude/dev-notes.md](agents/claude/dev-notes.md) is a Claude Code subagent with three modes: `init` (set a repo up from what exists), `brief` (big picture and plan before a task), `close` (close the notes, review them against the diff, run the check, draft the PR). Its rules are in its own text, so it does not reread this file on every run. Copy it to `.claude/agents/` in a repo or `~/.claude/agents/`.
+Two Claude Code subagents, in `agents/claude/`. Each carries its rules in its own text, so it does not reread this file on every run. Copy them to `.claude/agents/` in a repo or `~/.claude/agents/`.
+
+- [dev-notes](agents/claude/dev-notes.md): `init` (set a repo up from what exists), `brief` (draft the plan, read the code, finalize the plan), `close` (update the notes, run the check, draft the PR).
+- [dev-notes-reviewer](agents/claude/dev-notes-reviewer.md): read-only. Reviews one subtask or the whole change against the plan and returns `pass` or `changes needed`.

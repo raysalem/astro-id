@@ -10,6 +10,9 @@
 - `<command>`: <N passed, M skipped>
 - CI: <run link or "pending">
 
+## Review
+- <reviewer, verdict, date; what was sent back and fixed>
+
 ## Docs updated
 - <docs/DETAILS.md (decision), docs/plans/<plan>.md, ...>
 
