@@ -701,7 +701,7 @@ def legend(res: MoonResult, state: str, orient: dict) -> str:
 
 
 def build_payload(res: MoonResult, d: Disc, state: str, orient: dict, feats: list[Feature]) -> dict:
-    from .annotations import SCORE, VERSION, cap_size, slug
+    from .annotations import SCORE, VERSION, cap_size, layout_payload, slug
 
     items = []
     used: dict[str, int] = {}
@@ -717,10 +717,10 @@ def build_payload(res: MoonResult, d: Disc, state: str, orient: dict, feats: lis
         else:                                  # maria, ranges, sites: a mark at the centre (a mare's outline
             it["shape"], it["r"] = "point", 2.0   # is not a circle)
         items.append(it)
-    return cap_size({"version": VERSION, "source": "astro-id", "title": "Moon features",
-                     "image": {"width": int(res.width), "height": int(res.height)},
-                     "legend": legend(res, state, orient), "groups": [dict(GROUP)], "metrics": [],
-                     "score": dict(SCORE), "items": items})
+    return layout_payload(cap_size({"version": VERSION, "source": "astro-id", "title": "Moon features",
+                                    "image": {"width": int(res.width), "height": int(res.height)},
+                                    "legend": legend(res, state, orient), "groups": [dict(GROUP)], "metrics": [],
+                                    "score": dict(SCORE), "items": items}))
 
 
 def render(src: Path, out: Path, res: MoonResult, scores: bool = False) -> str:

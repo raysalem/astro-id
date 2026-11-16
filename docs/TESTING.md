@@ -22,3 +22,6 @@
     times into `build/demo/` (site + offset, offset only, site only, neither), renders each scene with
     `astro_id.export.render` for the view the card beside it shows, and writes the numbers it used to
     `build/demo/numbers.json`. It stops if a run no longer matches a caption. `--reuse` skips the solves.
+13. Label placement (`tests/test_labels.py`) runs on the real label inputs of the 5 sky and 4 Moon examples in
+    `tests/fixtures/labels/`; after a change to detection or the examples, rebuild them with
+    `uv run python tools/make_label_fixtures.py` (needs ASTAP + W08, like step 9).

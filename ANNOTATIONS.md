@@ -22,6 +22,12 @@ sidecar sends it with `PUT /api/photo/annotations` when Facet has that route (se
   frame, rounded to 0.1 px) with `label_at`. `id` is the slugged tag; `member_of` is the `id` of the cluster or
   asterism item a star belongs to.
 - Labels are plain names; the score is never in the label.
+- Label places (astro-id, 2026-11-16; additive, Facet keeps unknown fields): astro-id lays the labels out at
+  Facet's label size (font 1.3 % of the long edge, 0.58 font sizes per character) so no two overlap, none covers
+  another marker and none runs past the frame. `label_at` = [centre x, baseline y] of the label, on every `lines`
+  item and on every point/circle item shown by default (Facet today places point labels itself and ignores it
+  there). `label_hidden: true` when no spot fits (the marker still draws); `label_text` when only a shorter form
+  fits (`M45`, `NGC 869`, `M. Tranquillitatis`). Items shown by default are placed first.
 - Size: under about 500 KB (the lowest-confidence items are dropped first). Facet caps a row at 2 MB / 20 000 items.
 
 ## Top-level `quality` (astro-id, 2026-11-11)
